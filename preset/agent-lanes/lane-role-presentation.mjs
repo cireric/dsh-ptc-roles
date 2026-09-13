@@ -22,7 +22,7 @@
 // here would need a createRequire/"npm root -g" workaround. This plugin only
 // touches the cordis context and the agent, so it needs none of that.
 //
-// ── depth criterion (hardened 2026-09-13, HANDOFF §8 G2) ──────────────────────
+// ── depth criterion (hardened 2026-09-13; decision: docs/decisions/0001) ──────
 // Two independent signals identify a delegated child, because either one alone
 // has a silent failure mode:
 //

@@ -1,5 +1,5 @@
 name: agent-lanes
 description: >-
-  角色化子代理编排：orchestrator 主 agent + explorer / librarian / oracle / fixer
-  四个命名角色。子代理切 native（toolFilter 是硬边界），主 agent 保持 PTC（省 token）。
+  角色化子代理编排：orchestrator 主 agent + explorer / librarian / oracle / implementer /
+  designer 五个命名角色。子代理切 native（toolFilter 是硬边界），主 agent 保持 PTC（省 token）。
   角色行、maxDepth 与白名单见 agent.cordis.yml 末尾的 "agent-lanes additions" 段。

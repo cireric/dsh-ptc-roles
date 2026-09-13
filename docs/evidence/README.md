@@ -1,6 +1,13 @@
 # 证据归档（agent-lanes）
 
-六份 JSON 是 2026-09-13 的原始输出（两份探针 + 一份冒烟证据 + 一份 v1 复验证据 + 一份插件加固证据 + 一份提权结案证据），**只读证据**，不需要重跑就能复用结论。
+> 各探针的原始输出与复现方法在下方分节；**逐轮验证记录 / 结清状态**见文末「附 · 轮次与结清状态」。
+>
+> ⚠️ 部分 2026-09-13 的记录里引用了 `HANDOFF §x` —— 那是**文档重构前**的旧引用。那些内容今天在
+> `docs/pitfalls.md`（机制 / 坑 / 排障）与 `docs/decisions/0001`（决策）里。**记录本身不改**（历史原样）。
+>
+> 另外：**2026-09-13 第 6 轮**把角色 `fixer` 改名为 `implementer`，所以旧记录里的 `fixer` 即今日的 `implementer`。
+
+八份 JSON 都是 2026-09-13 的原始输出（①–⑥ 是探针与冒烟证据，⑦⑧ 是第 4/5 轮的改动记录），**只读证据**，不需要重跑就能复用结论。
 
 ## 1. `2026-09-13-restrict-scope-and-presentAs.json`
 
@@ -52,7 +59,7 @@ agent 自己的 scope 层**；而自身层注册插在掩码循环之后（`core
 
 ## 4. `2026-09-13-v1-reverify.json`
 
-**它证明了什么**：HANDOFF §2 步骤 1 的三处改动**复验通过，v1 成立**。同一会话内并行派出 4 个角色子代理（explorer / librarian / oracle / fixer），全部 native 且工具面与白名单**精确匹配**。
+**它证明了什么**：第 1 轮那三处修复（explorer / librarian 派不出去、工具面泄漏、孙代升级）**复验通过，v1 成立**。同一会话内并行派出 4 个角色子代理（explorer / librarian / oracle / fixer），全部 native 且工具面与白名单**精确匹配**。
 
 | 字段 | 值 | 含义 |
 |---|---|---|
@@ -71,7 +78,7 @@ agent 自己的 scope 层**；而自身层注册插在掩码循环之后（`core
 
 ## 5. `2026-09-13-lane-role-presentation-hardening.json`
 
-**它证明了什么**：HANDOFF §8 G2 的加固**有效且非空转** —— 插件改用框架统一的深度口径后 **11/11 通过**，
+**它证明了什么**：G2 那次加固（决策见 `docs/decisions/0001-*.md`）**有效且非空转** —— 插件改用框架统一的深度口径后 **11/11 通过**，
 而**旧版作阴性对照只有 6/11**（失败的 5 条恰好就是这次堵上的路径）。
 
 | 字段 | 值 | 含义 |
@@ -86,10 +93,21 @@ agent 自己的 scope 层**；而自身层注册插在掩码循环之后（`core
 **怎么得到的**（复现方法）：
 
 ```bash
-node scripts/verify-lane-role-presentation.cjs                                        # 11/11
-LANE_PLUGIN_PATH=/tmp/lane-role-presentation.PREV.mjs node scripts/verify-lane-role-presentation.cjs   # 6/11（旧版对照）
-dev_reload_preset preset=agent-lanes                                                  # 输出里必须出现 -> ?v=N
+node scripts/verify-lane-role-presentation.cjs            # 11/11（当前插件）
+node scripts/verify-lane-role-presentation.cjs --control  # 6/11（冻结旧版对照，期望恰好 5 项失败）
+dev_reload_preset preset=agent-lanes                      # 输出里必须出现 -> ?v=N
 ```
+
+冻结旧版 = `scripts/fixtures/lane-role-presentation.prev.mjs`，sha256 `eb123c76…`（与本 JSON 的
+`sha256.previousRevisionControl` 一致）。它**已入库**，所以阴性对照不再依赖 `/tmp`。
+
+
+**⚠️ 关联已变动（2026-09-13 文档重构）**：本节的 `sha256.current`（`408a8ca0…`）记录的是**取证当时**的字节。
+同日的文档重构为消除「外部文档引用 HANDOFF」而改了插件里的**一行注释**（`HANDOFF §8 G2` → 指向 ADR），
+所以**当前工作树的 sha256 已变为** `cab14ad812715753860128b9881b533f832c65bf5888f9ef50737530bc1902f8` —— **行为完全不变**（纯注释）。
+含义：①这条关联的**时间点**是取证时，不是今天；②宿主仍按 `?v=1` 缓存着旧字节，
+要让它吃到新注释需 `dev_reload_preset` + 新会话（HANDOFF 接手清单里那一步本来就会做）。
+**冻结的阴性对照**（`scripts/fixtures/lane-role-presentation.prev.mjs`，`eb123c76…`）**未改动**，对照关系仍然成立。
 
 **边界（别误读）**：这个单元校验不依赖宿主，所以**在本会话就能下结论**；但插件**在宿主里真正生效**
 仍需**新会话**（`?v=1` 已 bump，已运行会话保持旧代）。要确认生效，新会话里派一个角色子代理，
@@ -97,7 +115,7 @@ dev_reload_preset preset=agent-lanes                                            
 
 ## 6. `2026-09-13-sandbox-escalation-closure.json`
 
-**它证明了什么**：HANDOFF §5 原先那条「sandbox-strip 缺口」**不成立** —— 子代理 schema 确实暴露
+**它证明了什么**：排障表原先那条「sandbox-strip 缺口」**不成立** —— 子代理 schema 确实暴露
 `sandbox_permissions`/`justification`（**暴露是真的**），但提权通道**构造上关闭**，原症状在本机**零证据**。
 结论：**不做**这个守卫，改为**检测**。
 
@@ -128,6 +146,71 @@ zstd -dc ~/.dsh/sessions/<slug>/<id>/session.v3.jsonl.zstd | grep approval/polic
 
 **重开条件**：角色子代理的提权计数**持续非零** ⇒ 此时 pre-execute 守卫才成立（钩子与字段名已在
 `findings` 里定位好）。
+
+## 7. `2026-09-13-designer-and-platform-compat.json`
+
+**它证明了什么**：①上游 `oh-my-dsh-slim` 确有的 `designer` 角色被本方案**静默丢掉**（无文档记录原因），
+现按本方案 idiom **补全为第 5 个命名角色**；②`fixer`/`designer` 的 shell 由硬编码 `bash` 改为
+**平台择一**（win32=`pwsh`）。**根因与依据**都记在 `why` / `upstreamDesigner` 两节（含上游 6 角色清单、
+A 版 70 行 design 宣言 vs B 版 5 行规划 persona 的取舍理由）。
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `mechanism.answer` | `YES` | `!!js` **可以**做**序列元素**（`toolFilter.allow` 的一项），不只是标量行字段 |
+| `mechanism.loaderSource` | 3 条 | `vendor/include/src/index.ts:9`（tag 定义）+ `cordis-plugin-loader/lib/index.js` 的 `interpolate()` —— 其中 `Array.isArray(value) → value.map(interpolate)` 就是数组元素被求值的证据 |
+| `mechanism.quotingTrap.unquotedResult` | `{'[object Object]':'bash'}` | **陷阱**：不带引号的 `? … : …` 是**合法 YAML**，但解析成**复合 mapping key**，静默产出**非字符串** allow 项 |
+| `mechanism.quotingTrap.quotedResult` | `['read','bash','lsp']` | **正解**：带引号才得到表达式节点；写法同 `presets/cordis/agent.cordis.yml:260` |
+| `verifiedThisRound` | 6 条 | 真 yml **过软链**解析 + **全部 `!!js` 求值成功**、25 行、五个角色 allow 实测值、`node --check` 通过、全仓库平台点审计 |
+| `notVerifiableThisRound` | 3 条 | 宿主是否挂载新角色行 / win32 分支 / 未知名拒绝的前提 —— **本轮都没测**，别当成已验证 |
+
+**怎么得到的**（复现方法）：用 loader 自己的 js-yaml dialect（`vendor/include/src/index.ts:9` 的 `JsExpr` Type）
++ `interpolate()` 的复刻，读**软链后的真文件** `~/.dsh/.agent-presets/agent-lanes/agent.cordis.yml`，
+打印每一行 `role-*` 的 `toolFilter.allow`。**宿主挂载**必须在**新会话**里验证：
+工具面出现 `designer` → 派一个 → `node scripts/verify-agent-lanes.cjs` 应显示
+`role=designer ptc=no` 且白名单精确匹配（6 项 + 2 项已知泄漏）。
+
+**边界（别误读）**：本记录证明的是**机制与解析**；`designer` 这一行**从未在任何宿主里挂载过**，
+所以它**尚未**出现在 §4/§5 那两份「实跑基准」里。macOS 上这次改动对 `fixer` 是**行为等价**的
+（表达式求值仍是 `bash`），真正变化的只有 win32 分支。
+
+## 8. `2026-09-13-orchestrator-discipline-port.json`
+
+**它证明了什么**：核实「orchestrator 有没有 Sisyphus 纪律大脑」这个问题，并把**缺的那一层补上**。
+①按 `cireric-oh-my-dsh-slim` spec §2.1 自列的「大脑四项」，本 preset 的 persona **4/4 全有**；
+②按上游 `oh-my-openagent` **v4.19.4** 的**实际**提示词，还缺一层**操作性纪律** —— 本轮已移植 9 项
+（见 `ported`），并**刻意不移植** 5 项（见 `notPorted`，含上游的 `Default Bias: DELEGATE` —— 本方案有意反向）。
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `upstreamVerification.commit` | `b072d2791…` | **与你 spec 引的 commit 一致**；且在 `origin/*` 里可达（不是本地伪造 tag） |
+| `upstreamVerification.twoIndependentSources` | 2 条 | 本地 clone 的 `git show v4.19.4:` 与 librarian 的上游抓取**逐字互证** |
+| `upstreamVerification.notAsingleFile` | 拼装式 | 由 4 个 `sisyphus-dynamic-prompt-*.ts` 按固定顺序拼接 + 12 个模型家族 body（10–32 KB） |
+| `ported` | 9 项 | 5 段委派结构、结果验证、Anti-Duplication、3 连败恢复、Hard blocks、分类桶、完成清单、诊断证据门、Specialists 6 列表 |
+| `notPorted` | 5 项 | 反向的 `Default Bias: DELEGATE`、`task(category/load_skills)`/skills/model-core/ultrawork、12 个模型分身、Tool Call Format、todo 强化 |
+| `decisions.continuableNotOneShot` | `continuable` | spec §2.1(4)/§7.5 的 one-shot 行是孤例，已按上游 Session Continuity 对齐 |
+| `measurements` | 40 行/3523 B → **75 行/7034 B** | persona 体积约翻倍（主 agent 每轮系统提示词，靠前缀缓存摊平） |
+
+**怎么得到的**（复现方法）：`cd ~/Project/source/AI/oh-my-openagent && git rev-parse v4.19.4` 后逐文件
+`git show v4.19.4:<path>` 读上游原文；再用 loader dialect 解析**软链后的真 yml** 确认 persona 仍能解析。
+**宿主是否把新 persona 发给主 agent 必须开新会话**（本轮只到「解析 + 标记 + 脚本」这一层）。
+
+**边界（别误读）**：本记录证明的是**移植了哪些条**与**上游原文长什么样**；它**不**证明这些纪律
+会改变模型行为 —— **效用**是另一个问题，会话日志测不出来。
+
+## 附 · 轮次与结清状态（从 HANDOFF 搬迁至此：逐轮验证记录）
+
+> HANDOFF 只留**当前要做什么**；逐轮历史归这里，因为它本来就是「验证账本」。
+> 证据编号 ①–⑧ 对应该文件上方 `## 1`–`## 8` 各分节。
+
+| 轮 | 内容 | 状态 | 证据 |
+|---|---|---|---|
+| 1–2 | v1 装配 + 行为冒烟；首轮逮到 explorer/librarian 派不出去、工具面泄漏 + 孙代升级已被利用 | ✅ 已修并复验通过 | ③④ |
+| 3 | 翻转插件深度判据加固 + `.mjs` 引用引号坑；宿主内确认「加固那一代真的被挂载」 | ✅ 债清零（含**代次证明链**：loader 保留 query ⇒ `?v=1` 是独立缓存键，且该 URL 首次出现于加固写盘之后） | ⑤ 的 `hostMountConfirmation` |
+| 4 | 补全被静默丢掉的 `designer`（第 5 角色）+ 平台兼容（shell 平台择一）；旁及审计全仓库 | ⏳ **宿主内待验**（见 `HANDOFF.md` 的接手清单） | ⑦ |
+| 4 | 首轮 dogfooding：explorer 清点 + oracle 对抗评判 ⇒ 白名单**零漂移**，逮到 3 处真实缺陷（悬空 designer 引用、leaf-node 口径错、README 模型档漂移） | ✅ 均已修 | ⑧ |
+| 5 | 核实 Sisyphus 覆盖度（上游 v4.19.4）并补全操作性纪律；Specialists 改表；`continuable` 定案 | ⏳ **宿主内待验**（见 `HANDOFF.md` 的接手清单） | ⑧ |
+
+**仍未做**：`skills` 细粒度分发（推迟 v1.1）；~~sandbox-strip~~ **结案不做**（证据 ⑥）。
 
 ## 注意
 

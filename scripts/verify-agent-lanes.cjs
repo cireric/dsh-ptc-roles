@@ -5,13 +5,13 @@
 //   角色（从子代理的 persona 标记识别）/ 模型 / **模型可见工具面** / 是否仍是 PTC。
 // 并与期望白名单逐项比对，给出 PASS / FAIL / WARN。
 //   * 两个**已知自身层泄漏**工具（KNOWN_SELF_LAYER）被容忍，但会**显式标注** ⊘ 且不计入 FAIL ——
-//     它们掩不掉（见 HANDOFF §7.7），恒 FAIL 只会淹没真正的问题。
+//     它们掩不掉（见 docs/pitfalls.md #7），恒 FAIL 只会淹没真正的问题。
 //   * depth≥2 且无角色 persona 的跳过行会提示「疑似孙代升级复发」，但**只对 BOUND_ADDED_AT
 //     之后创建的会话**提示：那之前的那批是修复前的遗留，不该永久报警。
 //   * **提权请求计数**（escalations）：数一数每个会话里模型真的发起了几次沙箱提权
 //     （`sandbox_permissions` / `justification`，只认真实参数键，不扫文本）。角色子代理的会话带
 //     `approval/policy {"policy":"never","source":"delegation"}`，提权会被**确定性拒绝且不可能弹给
-//     用户**，所以这个计数不是 FAIL 而是**触发信号**：什么时候该做 sandbox-strip（HANDOFF §5）。
+//     用户**，所以这个计数不是 FAIL 而是**触发信号**：什么时候该做 sandbox-strip（docs/pitfalls.md C 节）。
 //     ⚠️ 口径：**seeded 子会话继承父日志的事件**，其计数可能包含父的调用（输出里标 `(seeded)`）；
 //     而已知自身层泄漏 / 角色子代理的判定不受影响。
 //
@@ -36,12 +36,28 @@ const PTC_MARK = 'is the only tool you can call directly'
 const PROJECT_CWD = '/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes'
 const SESSIONS_ROOT = path.join(os.homedir(), '.dsh', 'sessions')
 
-/** 期望的模型可见工具面（顺序无关）。角色行改白名单后，这里要同步改。 */
+/**
+ * 期望的模型可见工具面（顺序无关）。
+ *
+ * 这里与 yml 的 `toolFilter.allow` 是**两处来源**，改角色白名单后要同步。刻意不做「从 yml 读」：
+ * 这个脚本是**零依赖**的 CJS，要读 yml 就得手写正则解析一个嵌套 block —— 解析器一歪，**判定结论**
+ * 就跟着歪（比手工同步更糟）。而漂移本来就**不会静默**：少同步一项立刻表现为 `✗ FAIL … 多出/缺失`，
+ * 修就行。所以双份手工同步在这里是可接受的代价，不加解析器。
+ */
+/**
+ * 本平台的 shell 工具名。yml 的 shell 段里 `tool-bash` 在 win32 禁用、
+ * `tool-pwsh` 在非 win32 禁用 —— 所以带 shell 的角色**恰好**只拿到这两个名字中的一个。
+ * 角色行用平台表达式（`!!js "process.platform === 'win32' ? 'pwsh' : 'bash'"`）解析，
+ * 这里用同一个表达式在 JS 侧复算，两处必须同口径。
+ */
+const SHELL = process.platform === 'win32' ? 'pwsh' : 'bash'
+
 const EXPECTED = {
   explorer: ['read', 'grep', 'glob', 'lsp', 'mcp__codegraph__codegraph_explore'],
   librarian: ['read', 'web_search', 'web_fetch', 'mcp__context7__resolve-library-id', 'mcp__context7__query-docs', 'mcp__gh-grep__searchGitHub', 'mcp__exa__web_search_exa', 'mcp__exa__web_fetch_exa'],
   oracle: ['read', 'grep', 'glob', 'lsp', 'explorer', 'librarian'],
-  fixer: ['read', 'write', 'edit', 'glob', 'grep', 'bash', 'lsp', 'todo_write'],
+  implementer: ['read', 'write', 'edit', 'glob', 'grep', SHELL, 'lsp', 'todo_write'],
+  designer: ['read', 'write', 'edit', 'glob', 'grep', SHELL],
 }
 /** 保留传输：任何角色都不该看到它（native 模式本来就不注入）。 */
 const RESERVED = 'run_code'
@@ -79,6 +95,18 @@ const ESCALATION_TOOLS = new Set(['bash', 'pwsh', 'edit', 'write'])
  * 判成「疑似复发」。用时间界定把它们排除，提示才只对**修复之后新出现**的孙代说话。
  */
 const BOUND_ADDED_AT = Date.parse('2026-09-13T09:10:48Z')
+
+/**
+ * round-5「Sisyphus 纪律补全」persona 的时间锚与标记。
+ *
+ * persona 是在**挂载时**读取的，所以「纪律补全到底有没有生效」在**数据面**上只有这一条信号：
+ * 主 agent 的 system prompt 里有没有那段新纪律（见 docs/decisions/0001，第 5 轮追加节）。标记取 `Delegation contract`
+ * —— 它在 round-5 之前的 persona 里**不存在**，且只会出现一次。
+ * 与 BOUND_ADDED_AT 同理：脚本扫全部历史会话，所以只对 PERSONA_V2_SINCE **之后创建**的会话判定；
+ * 之前的会话本来就跑旧 persona，永久报错没有意义。
+ */
+const PERSONA_V2_SINCE = Date.parse('2026-09-13T14:39:29Z')
+const PERSONA_V2_MARK = 'Delegation contract'
 
 function findSessionFiles() {
   const out = []
@@ -137,7 +165,11 @@ function analyze(raw) {
   }
   result.ptc = result.systemText.includes(PTC_MARK)
   // 角色开场句式要求后面跟逗号，避免命中 orchestrator 车道表里的 '**explorer** — ...'
-  const m = result.systemText.match(/You are \*\*(explorer|librarian|oracle|fixer)\*\*,/)
+  // 刻意**不**在此枚举角色名：那会是除 yml 与 EXPECTED 之外的**第三处**手工登记点，
+  // 新角色漏登记时会走 `!r.role` 分支报「认不出角色」，与 EXPECTED 的 `!want` 分支混在一起、难定位
+  // （2026-09-13 新增 designer 时实测踩中）。这里只做**通用**捕获，登记与否交给 EXPECTED 判定：
+  // 未登记的角色会得到明确的「新角色没登记进 EXPECTED？」WARN。
+  const m = result.systemText.match(/You are \*\*([a-z][a-z0-9-]*)\*\*,/)
   result.role = m ? m[1] : undefined
   // 本 preset 的编排器 persona 独有标记；子代理的 role persona 会遮蔽它，所以只用于识别主 agent
   result.isPresetRoot = result.systemText.includes('Phase 0 — Intent Gate')
@@ -208,19 +240,31 @@ function main() {
       console.log('   ' + (depth === 0 ? 'ℹ' : '⚠') + ' 沙箱提权请求 ' + esc.length + ' 次: ' + detail
         + (depth === 0
           ? '（编排器可用，属正常）'
-          : ' ← HANDOFF §5：子代理的 approval policy 是 never，必被确定性拒绝且不会弹给用户；'
+          : ' ← docs/pitfalls.md C 节：子代理的 approval policy 是 never，必被确定性拒绝且不会弹给用户；'
             + '只有在角色子代理上**持续出现**才值得做 sandbox-strip'))
     }
 
     if (depth === 0) {
       console.log(r.ptc ? '   ✓ 主 agent 保持 PTC（预期）' : '   ! 主 agent 不是 PTC —— 检查底座 tool-presentation 行')
+      // round-5 persona 断言：persona 不生效是**静默**的（没有日志通道，见 docs/pitfalls.md #9），
+      // 所以这条数据面信号就是「纪律补全是否真的加载」的唯一可查证途径。
+      if ((r.header.createdAt || 0) >= PERSONA_V2_SINCE) {
+        if (r.systemText.includes(PERSONA_V2_MARK)) {
+          console.log('   ✓ 主 agent 载入 round-5 纪律 persona（含 "' + PERSONA_V2_MARK + '"）')
+          pass += 1
+        } else {
+          console.log('   ✗ FAIL 主 agent 未载入 round-5 persona：system prompt 里没有 "' + PERSONA_V2_MARK + '"')
+          console.log('     ⇒ 纪律补全没生效。检查 ~/.dsh/.agent-presets/agent-lanes/personas 软链在位，且本会话是 PERSONA_V2_SINCE 之后新开的。')
+          fail += 1
+        }
+      }
       console.log('   工具面: ' + (rawOut ? tools.join(', ') : tools.slice(0, 8).join(', ') + (tools.length > 8 ? ' …' : '')))
       continue
     }
     if (r.ptc) { console.log('   ✗ FAIL 子代理仍是 PTC：run_code 逃逸还在，白名单不是硬边界'); fail += 1; continue }
     if (!r.role) { console.log('   ! WARN 认不出角色（persona 没注入？）'); warn += 1; continue }
     const want = EXPECTED[r.role]
-    if (!want) { console.log('   ! WARN 没有 ' + r.role + ' 的期望白名单（designer 已从本方案移除？）'); warn += 1; continue }
+    if (!want) { console.log('   ! WARN 没有 ' + r.role + ' 的期望白名单（新角色没登记进 EXPECTED？）'); warn += 1; continue }
     const d = compare(tools, want)
     const note = d.known.length > 0 ? ' | ⊘ 已知自身层泄漏（非白名单问题）: ' + d.known.join(', ') : ''
     if (d.extra.length === 0 && d.missing.length === 0) { console.log('   ✓ PASS native + 白名单精确匹配（' + want.length + ' 项）' + note); pass += 1 }

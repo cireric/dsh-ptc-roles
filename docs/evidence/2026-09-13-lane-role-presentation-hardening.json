@@ -2,7 +2,7 @@
   "probe": "agent-lanes — lane-role-presentation depth-criterion hardening + dev_reload_preset quoting fix (2026-09-13, HANDOFF §8 G2)",
   "capturedAt": "2026-09-13T09:43:05.495Z",
   "verdict": "PASS — hardened plugin 11/11; previous revision as negative control 6/11 (the 5 closed paths fail); session-log regression still ✓6 ✗0 !0.",
-  "howToReproduce": "node scripts/verify-lane-role-presentation.cjs (expect 11/11). Negative control: copy the previous revision to /tmp and run LANE_PLUGIN_PATH=/tmp/lane-role-presentation.PREV.mjs node scripts/verify-lane-role-presentation.cjs (expect 5 failures). Reload the preset generation with dev_reload_preset preset=agent-lanes and confirm its output names lane-role-presentation.mjs -> ?v=N.",
+  "howToReproduce": "node scripts/verify-lane-role-presentation.cjs (expect 11/11). Negative control: node scripts/verify-lane-role-presentation.cjs --control -- the frozen previous revision is committed at scripts/fixtures/lane-role-presentation.prev.mjs (sha256 eb123c76..., identical to sha256.previousRevisionControl below); expect exactly 5 failures. Reload the preset generation with dev_reload_preset preset=agent-lanes and confirm its output names lane-role-presentation.mjs -> ?v=N.",
   "environment": {
     "preset": "agent-lanes",
     "workspace": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes",
@@ -40,7 +40,42 @@
     "current": "408a8ca0c806caba5de184c43b75c89fc0bf8deef4eaa8ded15dd88fadb4ae03",
     "previousRevisionControl": "eb123c762aeff8d62e7d4c7a9bf4d09b9f18bc63ccc2de7cdfa895120f0581a0"
   },
+  "negativeControlFixture": "scripts/fixtures/lane-role-presentation.prev.mjs - byte-identical (shasum-verified) to sha256.previousRevisionControl, committed 2026-09-13 so the control outlives /tmp. Do not edit it: the hash is this evidence's linkage. rawNegativeControlOutput below was captured from a /tmp copy of the same revision and is left verbatim.",
+  "preMountCheck": {
+    "when": "2026-09-13, end of the round that produced this file (added to this record afterwards)",
+    "what": "Resolved and imported the preset's .mjs THROUGH the symlink at ~/.dsh/.agent-presets/agent-lanes/, with and without the ?v=1 query.",
+    "method": "node --input-type=module -e 'import{pathToFileURL}from\"node:url\";const h=pathToFileURL(\"/Users/eric/.dsh/.agent-presets/agent-lanes/lane-role-presentation.mjs\").href;const a=await import(h+\"?v=1\");const b=await import(h);console.log(a.name,typeof a.apply,a!==b)'",
+    "observed": "lane-role-presentation function true -- correct exports, distinct module instance per query (the cache-busting mechanism works), and the loaded source contains resolveDepth/Number.isSafeInteger, i.e. this hardened revision.",
+    "hashRecheck": "plugin sha256 re-verified as 408a8ca0c806caba5de184c43b75c89fc0bf8deef4eaa8ded15dd88fadb4ae03, equal to sha256.current above - the evidenced artifact is the installed artifact.",
+    "notCovered": "Whether the HOST mounts this generation into a new session. That is the one step only a new session can prove; verify-agent-lanes.cjs reporting ptc=no for a freshly delegated child is the signal."
+  },
   "rawCurrentOutput": "plugin: /Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes/preset/agent-lanes/lane-role-presentation.mjs\nsha256: 408a8ca0c806caba5de184c43b75c89fc0bf8deef4eaa8ded15dd88fadb4ae03\n\n  ✓ orchestrator (depth 0, no origin) keeps PTC\n  ✓ child with header depth 1 flips to native\n  ✓ child whose depth lives only in options.subagentDepth flips (Math.max)\n  ✓ child with origin 'subagent' but depth 0 flips AND warns\n  ✓ malformed options.subagentDepth warns, falls back to header, still flips\n  ✓ malformed depth on an orchestrator still warns but does not flip\n  ✓ negative zero is rejected as malformed\n  ✓ child without ctx.tools warns instead of throwing\n  ✓ presentAs failure is caught and warned\n  ✓ repeated agent/created flips once\n  ✓ undefined agent is a no-op\n\n汇总: 11/11 通过  ✓ 全绿\n[exit 0]",
   "rawNegativeControlOutput": "plugin: /tmp/lane-role-presentation.PREV.mjs\nsha256: eb123c762aeff8d62e7d4c7a9bf4d09b9f18bc63ccc2de7cdfa895120f0581a0\n\n  ✓ orchestrator (depth 0, no origin) keeps PTC\n  ✓ child with header depth 1 flips to native\n  ✗ child whose depth lives only in options.subagentDepth flips (Math.max) — presentAs=0 warns=[]\n  ✗ child with origin 'subagent' but depth 0 flips AND warns — presentAs=0 warns=[]\n  ✗ malformed options.subagentDepth warns, falls back to header, still flips — presentAs=1 warns=[]\n  ✗ malformed depth on an orchestrator still warns but does not flip — presentAs=0 warns=[]\n  ✗ negative zero is rejected as malformed — presentAs=1 warns=[]\n  ✓ child without ctx.tools warns instead of throwing\n  ✓ presentAs failure is caught and warned\n  ✓ repeated agent/created flips once\n  ✓ undefined agent is a no-op\n\n汇总: 6/11 通过  ✗ 5 项失败\n[exit 1]",
-  "sessionLogRegression": "node scripts/verify-agent-lanes.cjs -> 汇总: ✓6  ✗0  !0 (unchanged after the plugin edit; it reads the session log, so it still shows the live previous generation)"
+  "sessionLogRegression": "node scripts/verify-agent-lanes.cjs -> 汇总: ✓6  ✗0  !0 (unchanged after the plugin edit; it reads the session log, so it still shows the live previous generation)",
+  "hostMountConfirmation": {
+    "when": "2026-09-13, the NEXT new session after the round that produced this file - i.e. the session this record's preMountCheck.notCovered was waiting for.",
+    "what": "Closed the one open step: does the HOST actually mount this hardened generation into a new session.",
+    "checks": [
+      "1. Preset mounted: the session's own tool surface exposes the four named role tools (explorer / librarian / oracle / fixer) as SDK bindings inside run_code, and run_code is the only directly callable tool.",
+      "2. A role child was delegated from that session: explorer a101be52-e1a9-4984-8 (model meituan/LongCat-2.0:free) -> ptc=no, tools=7.",
+      "3. node scripts/verify-agent-lanes.cjs -> 汇总: ✓8  ✗0  !0, and that freshly delegated row reads 'role=explorer ptc=no tools=7' + '✓ PASS native + 白名单精确匹配（5 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent'."
+    ],
+    "generationProof": {
+      "why": "The handoff's own acceptance ('ptc=no for a freshly delegated child') does NOT discriminate generations: the PREVIOUS revision also flips a child whose header carries depth 1, which every real spawn does. That row proves the plugin is loaded and effective; it does not prove WHICH revision. The chain below does.",
+      "chain": [
+        "The loader preserves the query, so ?v=1 is a distinct ESM cache key rather than a cosmetic suffix: packages/preset/agent-presets/src/discovery.ts:161 resolves a relative row with `new URL(row.specifier, presetBase)`, and the mount entry tree imports against its own baseUrl (mount.ts:75 and 93-103).",
+        "?v=1 first came into existence with this round's bump: agent.cordis.yml mtime 2026-09-13 17:40:18. Before the bump the reference was quoted and dev_reload_preset silently no-op'd (finding G2-b), so the host had never resolved a ?v=1 URL at all.",
+        "The hardened plugin file was written at 2026-09-13 17:38:25 (lane-role-presentation.mjs mtime) - 1m53s BEFORE the bump - and has not been edited since (sha256 re-verified now as 408a8ca0..., equal to sha256.current above).",
+        "Therefore the first import of the ?v=1 URL - necessarily at or after 17:40:18 - could only read the frozen hardened bytes. The instance the host serves to every new session is sha256 408a8ca0, the revision this record evidences."
+      ],
+      "residual": "No zero-cost independent confirmation exists: no session event records the resolved plugin URL, and ctx.logger.warn has no disk sink in this deployment (HANDOFF §7.9). The chain above is source + mtime based, not a runtime read-back of the loaded URL."
+    },
+    "recheck_this_session": {
+      "unitCheck": "node scripts/verify-lane-role-presentation.cjs -> 11/11 通过  ✓ 全绿",
+      "negativeControl": "node scripts/verify-lane-role-presentation.cjs --control -> 6/11, exactly the 5 documented failures - the assertions are not vacuous.",
+      "symlinkLayout": "~/.dsh/.agent-presets/agent-lanes is a REAL directory (not a symlink) holding 4 internal symlinks: agent.cordis.yml, lane-role-presentation.mjs, preset.yml, personas."
+    },
+    "verdict": "PASS - the verification debt HANDOFF §2 opened is cleared: mount OK, the hardened generation is the one live, behaviour ✓8 ✗0 !0 with the fresh child on an exact whitelist match.",
+    "driftNotTouched": "HANDOFF §6 and AGENTS.md both still assert 'this directory is not a git repository'. A git repo was initialised afterwards (.git created 2026-09-13 18:06:43, single commit b1c2ecf 'repository init'), the working tree is dirty, and scripts/fixtures/ is untracked. Left unedited on purpose - it is a constraint line, and an AGENTS.md write needs the user's confirmation."
+  }
 }

@@ -1,0 +1,71 @@
+{
+  "probe": "agent-lanes — verify Sisyphus discipline coverage against oh-my-openagent v4.19.4, then port the missing operational layer into the orchestrator persona (2026-09-13, round 5)",
+  "capturedAt": "2026-09-13T13:50:00Z",
+  "verdict": "PORTED + MECHANISM VERIFIED, HOST MOUNT PENDING — the persona now covers the operational discipline layer the upstream prompt has and ours lacked. The new text parses and resolves through the real composition; whether the host serves it to a main agent is a NEW-SESSION question and was NOT claimed here.",
+  "theQuestion": "Does the orchestrator agent have the 'Sisyphus discipline brain' that cireric-oh-my-dsh-slim's spec claims to adopt?",
+  "answerTwoLayers": {
+    "layer1_againstOurOwnSpec": "YES, 4/4. spec §2.1 item 2 lists four brain elements — Phase 0 Intent Gate (surface→intent→routing table + per-turn verbalized routing line + turn-local intent reset + Context-Completion Gate), Implementation Gate (turn-local), delegate-by-domain-and-size-not-by-default, and verification-as-evidence-gate. All four were already present in orchestrator.md, the routing table byte-identical.",
+    "layer2_againstUpstreamPrompt": "PARTIAL, roughly one third. The upstream prompt carries a further OPERATIONAL discipline layer that our persona lacked (delegation-prompt structure, delegated-result verification, anti-duplication, failure recovery, hard blocks, request-type buckets, completion checklist). That layer is what this round ported."
+  },
+  "upstreamVerification": {
+    "tag": "v4.19.4",
+    "commit": "b072d279110bdda2c6ac2525d0d24dc54d16148a",
+    "commitMatchesSpecCitation": true,
+    "specSaid": "cireric-oh-my-dsh-slim/docs/specs/2026-09-03-oh-my-dsh-slim-design.md §2 cites tag v4.19.4, commit b072d2791",
+    "twoIndependentSources": [
+      "LOCAL: ~/Project/source/AI/oh-my-openagent, remote git@github.com:code-yeongyu/oh-my-openagent.git — git rev-parse v4.19.4 returns the commit above; extracted with git show v4.19.4:<path>.",
+      "UPSTREAM: a librarian subagent fetched the same tag over the network; its verbatim text and composition order match the local extraction, and it independently confirmed the same commit."
+    ],
+    "notAsingleFile": "The Sisyphus prompt is assembled from sisyphus-dynamic-prompt-{role,exploration,execution,style,sections}.ts via sisyphus-dynamic-prompt-builder.ts in the order renderRoleAndIntentSections → renderExplorationSection → renderExecutionSections → renderToneAndConstraintsSection, plus 12 model-family bodies of 10-32 KB each (sisyphus/claude-*.ts, gpt-*.ts, kimi-*.ts, gemini.ts, glm-5-2.ts, default.ts).",
+    "policySections": "the Hard Blocks / Anti-Patterns / Anti-Duplication text lives in dynamic-agent-policy-sections.ts (6306 bytes at that tag)"
+  },
+  "ported": [
+    "Specialists as a 6-column table (Agent | Domain | Delegate when | Don't delegate when | Topology | Mode) — leaf-ness moved off the trailing footnote and onto each row. That footnote/row separation was the direct cause of the round-4 contradiction.",
+    "Delegation contract: the five parts every delegation prompt must carry (TASK / EXPECTED OUTCOME / MUST DO / MUST NOT DO / CONTEXT). Upstream's sixth part, REQUIRED TOOLS, was dropped as redundant: each role's tool surface is already fixed by the preset allow-list.",
+    "Delegated-result verification: never accept a returned report as evidence; check it works, matches patterns, produced the expected outcome, and respected MUST-(NOT-)DO; on failure return it to the SAME continuable child.",
+    "Anti-Duplication rule: once exploration is delegated, do not run the same search; if the next step depends on it, end the turn and wait for the notice rather than polling.",
+    "Failure recovery: root causes not symptoms, no shotgun debugging, and the 3-consecutive-failure protocol (STOP → REVERT → DOCUMENT → consult oracle → ASK the user).",
+    "Hard blocks (orchestration-specific only, deduped against the global AGENTS.md): never leave a failed attempt broken, never answer while a depended-on delegated result is running, never redo delegated work, never poll a running child, never fire a specialist at a one-line typo.",
+    "Step 1 request-type buckets (Trivial / Explicit / Exploratory / Open-ended / Ambiguous).",
+    "Phase 3 completion checklist plus 'fix what your changes broke; report pre-existing problems instead of silently fixing them'.",
+    "The evidence gate now names diagnostics-on-changed-files explicitly (DSH exposes the official lsp tool)."
+  ],
+  "notPorted": [
+    "'Default Bias: DELEGATE. WORK YOURSELF ONLY WHEN IT IS SUPER SIMPLE.' — DELIBERATELY INVERTED by this preset: the spec's §7.2 'do small work yourself' and the persona's 'Small work ... is YOURS' are the intended refinement. The persona now states this divergence so a future reader does not 'fix' it.",
+    "task(category=..., load_skills=[...]) / the skills catalogue / the model-core resolution pipeline / ultrawork (RED-GREEN + scenario contract + boulder) — DSH has no equivalent mechanism; the spec's §2.2 already ruled them explicitly out.",
+    "The 12 model-family prompt bodies — DSH is pinned to the DeepSeek family.",
+    "Tool Call Format section (do not emit tool calls as text) — the DSH transport already handles this.",
+    "Todo-management ramping ('OBSESSIVELY TRACK') — the global AGENTS.md and the tool description already govern todo use; restating it would be duplicate prompt weight."
+  ],
+  "decisions": {
+    "continuableNotOneShot": "cireric-oh-my-dsh-slim spec §2.1(4)/§7.5 said named experts are one-shot (no session reuse), which contradicts the implementation (all four role rows are backgroundMode: continuable and the persona reuses them via send_message). Resolved in favour of the implementation, because upstream Sisyphus carries a MANDATORY Session Continuity rule (NEVER start fresh; 70%+ token saving), making the spec's line the outlier. Both spec lines were updated to match.",
+    "personaTableIsRoutingOnly": "The new Specialists table records routing facts only (domain / when to delegate / topology / read-only vs writable) and deliberately carries no tool names: yml allow-lists, the verifier EXPECTED map and the README role table are already three copies of role capability, and this project has been bitten by copy drift twice (README model tiers; the hidden third role registry). Recorded as AGENTS.md pit 11."
+  },
+  "measurements": {
+    "personaBefore": "40 lines / 3523 bytes",
+    "personaAfter": "75 lines / 7034 bytes",
+    "personaAsResolvedThroughComposition": "6922 chars (the newline handling of the !!js readFileSync round-trip accounts for the difference)",
+    "requiredMarkersRetained": ["Phase 0 — Intent Gate (the verifier's main-agent marker)", "no line matches the verifier's role-detection regex You-are-double-star pattern"]
+  },
+  "verifiedThisRound": [
+    "The real composition read THROUGH the installed symlink still parses under the loader dialect and ALL !!js nodes interpolate: 25 rows, roles = explorer, librarian, oracle, fixer, designer.",
+    "The rewritten persona resolves to 6922 chars through !!js and contains all six new section markers.",
+    "The verifier's main-agent marker is intact and no line of the new persona falsely matches the role-detection regex.",
+    "node scripts/verify-agent-lanes.cjs -> summary ✓12 ✗0 !0 (the dogfood children from round 4 now count as passing role sessions).",
+    "node scripts/verify-lane-role-presentation.cjs -> 11/11."
+  ],
+  "notVerifiableThisRound": [
+    "Whether the host serves the new persona to a main agent — preset config is read at mount, so this needs a NEW session.",
+    "Whether the discipline actually changes model behaviour — that is an efficacy question, unmeasurable from a session log and out of scope for this record."
+  ],
+  "sha256": {
+    "preset/agent-lanes/personas/orchestrator.md": "f0f8690048ad1103d710a17ab7c8dfef1ee395ea37c9fb1d3dc19213893dedb0",
+    "preset/agent-lanes/agent.cordis.yml": "a984b5c9dab45243b666a0302459f74755e7a3e2fb5b820e9812c338a5a1242e",
+    "scripts/verify-agent-lanes.cjs": "c3b67fecf6d0c48f372ddc9eb898d63b1235358ba56ddd26bbc05b63482cce7f"
+  },
+  "howToReproduce": [
+    "Resolve and read the upstream prompt at the pinned tag from the local clone: cd ~/Project/source/AI/oh-my-openagent && git rev-parse v4.19.4 && git show v4.19.4:packages/omo-opencode/src/agents/sisyphus-dynamic-prompt-role.ts (and -exploration/-execution/-style, plus dynamic-agent-policy-sections.ts for Hard Blocks and Anti-Duplication).",
+    "Confirm the composition still resolves: parse ~/.dsh/.agent-presets/agent-lanes/agent.cordis.yml with the loader dialect (vendor/include/src/index.ts:9 Type + the interpolate replica) and print the persona row.",
+    "Host effect (requires a NEW session): the main agent should still be PTC and its system prompt should contain the Specialists table and the Delegation contract section."
+  ]
+}

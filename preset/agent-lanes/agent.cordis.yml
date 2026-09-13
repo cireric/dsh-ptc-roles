@@ -59,6 +59,13 @@
   name: '@deepseek-ai/dsh-tool-pwsh'
   disabled: !!js process.platform !== 'win32'
 
+# Consequence for the role allow-lists below: a role may NOT hard-code `bash`.
+# On win32 that name is not registered, and an unknown allow-list name fails the
+# child start LOUDLY (deliberate — fail visible). Each shell-bearing role row
+# therefore picks its shell with a platform expression. Keep that expression
+# QUOTED: an unquoted `? … : …` ternary is valid YAML but parses as a complex
+# MAPPING KEY, silently yielding a non-string allow entry (measured 2026-09-13).
+
 # ── filesystem ──────────────────────────────────────────────────────────────
 
 # Both register into the host `tools` registry and provide nothing, so
@@ -295,9 +302,10 @@
 #
 #   • persona.prefix (patched above)      — orchestrator persona: Phase-0 intent
 #     gate, lane table, delegation discipline, evidence gate.
-#   • four named role tools               — explorer / librarian / oracle / fixer.
-#     Named tools are what let `toolFilter.allow` express the JOB BOUNDARY:
-#     oracle's allow-list names explorer+librarian, so fixer is invisible to it.
+#   • five named role tools               — explorer / librarian / oracle /
+#     implementer / designer. Named tools are what let `toolFilter.allow` express
+#     the JOB BOUNDARY: oracle's allow-list names explorer+librarian, so
+#     implementer (and designer) are invisible to it.
 #   • lane-role-presentation.mjs          — flips every delegated child to
 #     `native` so `run_code` disappears and the allow-list becomes a real
 #     capability boundary. The main agent keeps the base's PTC presentation.
@@ -310,14 +318,15 @@
 #   depth), so each leaf role's allow-list also omits every role tool name.
 #     explorer / librarian : maxDepth 2  -> the orchestrator (depth 0) AND oracle
 #                            (depth 1) may call them; a depth-2 explorer cannot.
-#     oracle / fixer       : maxDepth 1  -> only the orchestrator may call them.
+#     oracle /
+#     implementer / designer : maxDepth 1 -> only the orchestrator may call them.
 #
 # Tool names below were checked against the live agent-scoped registry (157
 # tools / 81 mcp__*). An unknown name fails the child start LOUDLY — that is
 # deliberate (fail visible), so re-check this list after any MCP server change.
 # NOT included on purpose: `skill` (roles get no skills in v1), `run_code`
 # (reserved, unmaskable — see the presentation plugin), and role tool names for
-# the three leaf roles.
+# the four leaf roles (explorer / librarian / implementer / designer).
 # ─────────────────────────────────────────────────────────────────────────────
 
 - id: lane-role-presentation
@@ -399,18 +408,21 @@
         - explorer
         - librarian
 
-- id: role-fixer
+- id: role-implementer
   name: '@deepseek-ai/dsh-tool-subagent'
   config:
     provider: spawn
-    toolName: fixer
+    toolName: implementer
     backgroundMode: continuable
     maxDepth: 1
     agentOptions:
       provider: commandcode
       model: deepseek/deepseek-v4.1-flash
-      reasoningEffort: high
-    persona: !!js "process.getBuiltinModule('node:fs').readFileSync(new URL('personas/fixer.md', baseUrl), 'utf8')"
+      # effort `low` on purpose: this role executes an ALREADY-DECIDED plan — no architecture,
+      # no planning, no research — so deep reasoning here is wasted spend. It used to sit at
+      # `high` (the same tier as oracle), which contradicted the job it is given.
+      reasoningEffort: low
+    persona: !!js "process.getBuiltinModule('node:fs').readFileSync(new URL('personas/implementer.md', baseUrl), 'utf8')"
     toolFilter:
       allow:
         - read
@@ -418,6 +430,39 @@
         - edit
         - glob
         - grep
-        - bash
+        # Platform-guarded shell (see the shell section above): `bash` is not
+        # registered on win32, where `pwsh` is the only shell tool.
+        - !!js "process.platform === 'win32' ? 'pwsh' : 'bash'"
         - lsp
         - todo_write
+
+- id: role-designer
+  name: '@deepseek-ai/dsh-tool-subagent'
+  config:
+    provider: spawn
+    toolName: designer
+    backgroundMode: continuable
+    # Leaf role: only the orchestrator (depth 0) may call it, and its allow-list
+    # names no role tool, so it cannot delegate further.
+    maxDepth: 1
+    agentOptions:
+      provider: commandcode
+      # Same route as oracle/implementer — already proven to spawn in this deployment,
+      # so this row introduces no new provider/effort preflight risk. (The older
+      # oh-my-dsh-slim plan used opencode-go/mimo-v2.5 at effort `medium`; that
+      # pairing would need its own effort-support check.)
+      model: deepseek/deepseek-v4.1-flash
+      # effort `low` like role-implementer: designer is the other bounded-implementation role.
+      # Raise to `high` only if real UI work shows this budget is too thin.
+      reasoningEffort: low
+    persona: !!js "process.getBuiltinModule('node:fs').readFileSync(new URL('personas/designer.md', baseUrl), 'utf8')"
+    toolFilter:
+      allow:
+        - read
+        - write
+        - edit
+        - glob
+        - grep
+        # Platform-guarded shell, same reasoning as role-implementer above.
+        - !!js "process.platform === 'win32' ? 'pwsh' : 'bash'"
+

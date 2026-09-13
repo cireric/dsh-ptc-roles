@@ -1,0 +1,79 @@
+{
+  "probe": "agent-lanes — restore the designer role + platform-guard the shell in role allow-lists (2026-09-13, round 4)",
+  "capturedAt": "2026-09-13T13:28:41Z",
+  "verdict": "CHANGES APPLIED, MECHANISM VERIFIED, HOST MOUNT PENDING — the new role row and both platform expressions parse and evaluate correctly through the loader's own dialect; whether the host mounts them is a NEW-SESSION question and was NOT claimed here.",
+  "why": {
+    "trigger": "A dogfood audit (explorer recon + oracle adversarial review, this same round) found the orchestrator persona routing implementation/UI intent to a designer specialist that does not exist, a leaf-node claim contradicted by oracle's allow-list, and README model-tier drift.",
+    "rootCauseOfDesigner": "Upstream oh-my-dsh-slim ships 6 roles (orchestrator/oracle/designer/fixer/explorer/librarian + a reserved, disabled observer). This preset silently dropped designer AND observer with NO document recording the reason: the ADR never mentions designer, and the only traces are the two vestigial orchestrator-persona references plus a WARN branch in verify-agent-lanes.cjs asking why designer was removed. The user confirmed restoring designer as a 5th role."
+  },
+  "upstreamDesigner": {
+    "A. oh-my-dsh-slim (third-party, implemented)": {
+      "persona": "~70-line design-principles document (typography / color / motion / spatial composition / visual depth / styling approach / review duties)",
+      "model": "deepseek-official / deepseek-v4-flash, effort high",
+      "tools": "deny-only policy (inherits global), maxDepth 1",
+      "temperature": "0.7 at config-loader.js:42 — not portable to DSH agentOptions"
+    },
+    "B. cireric-oh-my-dsh-slim (user's variant, docs-only, never implemented)": {
+      "persona": "5-line terse persona (role / capabilities / behavior / constraints)",
+      "model": "opencode-go / mimo-v2.5, effort medium",
+      "tools": "explicit allow-list [read, write, edit, glob, grep, shell], maxDepth 0",
+      "note": "This planned allow-list is what the restored role uses."
+    },
+    "decision": "Chose the user's own 5-line allow-list lineage, NOT upstream's 70-line declaration, to match this preset's terse persona house style. Model reuses the ALREADY-PROVEN route commandcode/deepseek/deepseek-v4.1-flash @ high (same as oracle and fixer) instead of the plan's opencode-go/mimo-v2.5 @ medium, whose effort tier would need its own support check. observer stays dropped: upstream ships it disabled and nothing needs it."
+  },
+  "changes": {
+    "preset/agent-lanes/personas/designer.md": "NEW — 7 lines, this repo's house style. Starts with 'You are **designer**, ...' so the verifier's persona-based role detection keeps working.",
+    "preset/agent-lanes/agent.cordis.yml": "NEW role-designer row (toolName designer, maxDepth 1, allow = read/write/edit/glob/grep/<shell>); role-fixer shell entry changed from hard-coded bash to a platform expression; header comments updated (five named role tools, four leaf roles, maxDepth table); a platform note added at the shell section.",
+    "preset/agent-lanes/personas/orchestrator.md": "designer entry now says it is write-capable and presentation-scoped; the claim 'Specialists are leaf nodes — they cannot delegate further' corrected to name the oracle exception.",
+    "scripts/verify-agent-lanes.cjs": "new SHELL constant (process.platform === 'win32' ? 'pwsh' : 'bash'); EXPECTED.fixer uses it; EXPECTED.designer added; the stale WARN parenthetical about designer removed.",
+    "docs sync": "preset.yml, README.md, AGENTS.md, HANDOFF.md, docs/decisions/0001-*.md — role roster, role table (including the explorer/librarian effort drift and the fixer whitelist), the git-repo fact, two new pitfalls, mechanism section 7.11."
+  },
+  "mechanism": {
+    "question": "Can !!js be used as a SEQUENCE ELEMENT (an entry inside toolFilter.allow), not just as a scalar row field? vendor/include's own doc comment only promises '!!js SCALARS'.",
+    "answer": "YES.",
+    "loaderSource": [
+      "vendor/include/src/index.ts:9 — const JsExpr = new yaml.Type('tag:yaml.org,2002:js', { kind: 'scalar', construct: (data) => ({ __jsExpr: data }) }). A tagged scalar inside a sequence is still a scalar node, so the tag applies.",
+      "cordis-plugin-loader/lib/index.js — function interpolate(ctx, value) { if (isJsExpr(value)) return evaluate(ctx, value.__jsExpr); ... else if (Array.isArray(value)) return value.map((item) => interpolate(ctx, item)); ... } — array elements are interpolated explicitly.",
+      "cordis-plugin-loader/lib/index.js:296 — if (isJsExpr(value)) return evaluate(ctx, value.__jsExpr)."
+    ],
+    "precedent": "Shipped preset packages/preset/agent-presets/presets/cordis/agent.cordis.yml:260 already uses a tagged !!js node as a list element; the user's dsh-programming-mode preset does the same.",
+    "quotingTrap": {
+      "unquoted": "- !!js process.platform === 'win32' ? 'pwsh' : 'bash'",
+      "unquotedResult": "PARSES AS VALID YAML BUT NOT AS AN EXPRESSION NODE — it becomes a COMPLEX MAPPING KEY. Measured with the loader's own js-yaml schema: allow = ['read', {'[object Object]':'bash'}, 'lsp']. Silent, and it produces a NON-STRING allow entry.",
+      "quoted": "- !!js \"process.platform === 'win32' ? 'pwsh' : 'bash'\"",
+      "quotedResult": "allow = ['read', 'bash', 'lsp'] on darwin — a proper string. This is the form shipped, matching presets/cordis/agent.cordis.yml:260.",
+      "whyItMatters": "The unquoted form fails SILENTLY at the YAML layer and would surface only as an obscure allow-list type error later — the exact class of invisible failure this project's 'fail visible' constraint exists to prevent."
+    }
+  },
+  "verifiedThisRound": [
+    "Real composition (read THROUGH the installed symlink ~/.dsh/.agent-presets/agent-lanes/agent.cordis.yml) parsed with the loader's own dialect, and ALL !!js nodes interpolated without error: 25 rows (was 24).",
+    "role-designer allow(6) = ['read','write','edit','glob','grep','bash'] — the platform expression yields a STRING on darwin.",
+    "role-fixer allow(8) = ['read','write','edit','glob','grep','bash','lsp','todo_write'] — unchanged behaviour on this platform, so the win32 change is a no-op here.",
+    "All five role personas resolve through the symlink: explorer=594, librarian=624, oracle=1149, fixer=424, designer=634 bytes; orchestrator persona.prefix=3467 bytes.",
+    "node --check on scripts/verify-agent-lanes.cjs passes.",
+    "Platform audit across the repo for hard-coded platform tool names: the only occurrences are the tool-bash/tool-pwsh disabled gates (already platform-aware), the verifier's ESCALATION_TOOLS (already contains both bash and pwsh), and the two role rows fixed here. No other hard-coded shell name found."
+  ],
+  "notVerifiableThisRound": [
+    "Whether the HOST mounts the new role row and the new tool name designer — preset config is read at mount, so this needs a NEW session.",
+    "The win32 branch itself: this machine is darwin, so pwsh was never produced. Verified is the mechanism (expression node, string result) and the darwin value; the win32 value follows from the same one-line expression.",
+    "That the runtime rejects an unknown allow name (the premise making the platform guard necessary) is documented by this preset's own comment and by evidence 1 (names unknown global tool ...), not re-measured here."
+  ],
+  "sha256": {
+    "preset/agent-lanes/agent.cordis.yml": "a984b5c9dab45243b666a0302459f74755e7a3e2fb5b820e9812c338a5a1242e",
+    "preset/agent-lanes/personas/designer.md": "6239a7a62e04cc970d419937361e4e912f14bef1dd3f5e884df0b62af3ebc287",
+    "preset/agent-lanes/personas/orchestrator.md": "ce666051879439d667565ea56130ef511aad797e75468fb983bcf26a439692e9",
+    "scripts/verify-agent-lanes.cjs": "02da70ddbf1ac0ae457af196ce0f872b04f0fb5b80635439d165cee5464c08d1"
+  },
+  "findingThisRound": {
+    "id": "hidden-third-role-registry",
+    "claim": "The verifier enumerated role names INSIDE its role-detection regex — a third hand-maintained registry besides the yml allow-lists and EXPECTED, with no comment marking it.",
+    "evidence": "scripts/verify-agent-lanes.cjs:156 previously matched a regex whose alternation literally listed (explorer|librarian|oracle|fixer). Adding EXPECTED.designer alone would NOT have been enough: a designer session would have fallen into the no-role branch and printed the persona-injection WARN, so EXPECTED.designer would never have been consulted.",
+    "whyItMatters": "Silent misdiagnosis: that WARN blames persona injection rather than the missing registry entry, and it is emitted in the same bucket as genuinely unregistered new roles.",
+    "fix": "Replaced the alternation with a generic lowercase-role capture; registration is now decided solely by EXPECTED, and an unregistered role gets the explicit new-role WARN.",
+    "verified": "The new regex discriminates correctly on four cases: designer -> designer, explorer -> explorer, a brandnew unregistered role -> brandnew (then the EXPECTED WARN), and the orchestrator lane-table text -> undefined (the You-are anchor still prevents false matches)."
+  },
+  "howToReproduce": [
+    "Mechanism test (zero cost): parse the real composition with the loader dialect and interpolate it — the source lines to copy are vendor/include/src/index.ts:9 (the js-yaml Type) and cordis-plugin-loader/lib/index.js (interpolate).",
+    "Host mount (requires a NEW session): confirm designer appears in the orchestrator's delegation tool surface, delegate one designer, then run node scripts/verify-agent-lanes.cjs — the designer row must read role=designer ptc=no with the whitelist exact match (6 items + the two known self-layer leaks)."
+  ]
+}
