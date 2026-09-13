@@ -1,0 +1,46 @@
+{
+  "probe": "agent-lanes — lane-role-presentation depth-criterion hardening + dev_reload_preset quoting fix (2026-09-13, HANDOFF §8 G2)",
+  "capturedAt": "2026-09-13T09:43:05.495Z",
+  "verdict": "PASS — hardened plugin 11/11; previous revision as negative control 6/11 (the 5 closed paths fail); session-log regression still ✓6 ✗0 !0.",
+  "howToReproduce": "node scripts/verify-lane-role-presentation.cjs (expect 11/11). Negative control: copy the previous revision to /tmp and run LANE_PLUGIN_PATH=/tmp/lane-role-presentation.PREV.mjs node scripts/verify-lane-role-presentation.cjs (expect 5 failures). Reload the preset generation with dev_reload_preset preset=agent-lanes and confirm its output names lane-role-presentation.mjs -> ?v=N.",
+  "environment": {
+    "preset": "agent-lanes",
+    "workspace": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes",
+    "note": "The live host still runs the previous plugin generation for THIS session; the new generation is mounted by the next new session (?v=1)."
+  },
+  "findings": [
+    {
+      "id": "G2-a",
+      "claim": "The plugin resolved delegation depth from session.header.delegationDepth alone, while the harness authority is Math.max(header, options.subagentDepth) (packages/subagent/subagent/src/depth.ts:28-36).",
+      "whyItMatters": "Today both fields are written from the same resolveChildDepth (child-agent.ts:49, options at :114, header at :152-154), so they agree. Any creation path that records only the runtime option would have left a real child in PTC with zero warning — a silent run_code escape, i.e. exactly what the whole preset exists to prevent.",
+      "fix": "Resolve with Math.max(header ?? 0, options.subagentDepth ?? 0), and additionally treat origin === 'subagent' (written in the same childSessionMeta, child-agent.ts:138-156) as a child signal. A malformed options.subagentDepth is reported and the header is used (the harness throws a TypeError there; failing loud but still flipping is the safe direction for a security boundary)."
+    },
+    {
+      "id": "G2-b",
+      "claim": "dev_reload_preset silently did nothing for this preset: its matcher /(name: \\.\\/[A-Za-z0-9._-]+\\.mjs)(\\?v=\\d+)?/g requires an UNQUOTED reference, and the yml had name: './lane-role-presentation.mjs'.",
+      "evidence": "Tool output before the fix: \"[agent-lanes] 无相对 .mjs 引用（无需热更新）\". After removing the quotes: \"[agent-lanes] lane-role-presentation.mjs -> ?v=1\".",
+      "whyItMatters": "Without the ?v= bump the host's ESM URL cache keeps serving the OLD plugin generation to every new session, so HANDOFF §4's documented loop ('reload, then open a new session') would have appeared to work while verifying stale code.",
+      "fix": "Reference is now bare (name: ./lane-role-presentation.mjs) and the yml carries ?v=1; yml re-parsed successfully (24 top-level rows, 4 role rows intact)."
+    }
+  ],
+  "assertions": [
+    "orchestrator (depth 0, no origin) keeps PTC",
+    "child with header depth 1 flips to native",
+    "child whose depth lives only in options.subagentDepth flips (Math.max)  [FAILS on the previous revision]",
+    "child with origin 'subagent' but depth 0 flips AND warns                  [FAILS on the previous revision]",
+    "malformed options.subagentDepth warns, falls back to header, still flips  [FAILS on the previous revision]",
+    "malformed depth on an orchestrator still warns but does not flip          [FAILS on the previous revision]",
+    "negative zero is rejected as malformed                                    [FAILS on the previous revision]",
+    "child without ctx.tools warns instead of throwing",
+    "presentAs failure is caught and warned",
+    "repeated agent/created flips once",
+    "undefined agent is a no-op"
+  ],
+  "sha256": {
+    "current": "408a8ca0c806caba5de184c43b75c89fc0bf8deef4eaa8ded15dd88fadb4ae03",
+    "previousRevisionControl": "eb123c762aeff8d62e7d4c7a9bf4d09b9f18bc63ccc2de7cdfa895120f0581a0"
+  },
+  "rawCurrentOutput": "plugin: /Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes/preset/agent-lanes/lane-role-presentation.mjs\nsha256: 408a8ca0c806caba5de184c43b75c89fc0bf8deef4eaa8ded15dd88fadb4ae03\n\n  ✓ orchestrator (depth 0, no origin) keeps PTC\n  ✓ child with header depth 1 flips to native\n  ✓ child whose depth lives only in options.subagentDepth flips (Math.max)\n  ✓ child with origin 'subagent' but depth 0 flips AND warns\n  ✓ malformed options.subagentDepth warns, falls back to header, still flips\n  ✓ malformed depth on an orchestrator still warns but does not flip\n  ✓ negative zero is rejected as malformed\n  ✓ child without ctx.tools warns instead of throwing\n  ✓ presentAs failure is caught and warned\n  ✓ repeated agent/created flips once\n  ✓ undefined agent is a no-op\n\n汇总: 11/11 通过  ✓ 全绿\n[exit 0]",
+  "rawNegativeControlOutput": "plugin: /tmp/lane-role-presentation.PREV.mjs\nsha256: eb123c762aeff8d62e7d4c7a9bf4d09b9f18bc63ccc2de7cdfa895120f0581a0\n\n  ✓ orchestrator (depth 0, no origin) keeps PTC\n  ✓ child with header depth 1 flips to native\n  ✗ child whose depth lives only in options.subagentDepth flips (Math.max) — presentAs=0 warns=[]\n  ✗ child with origin 'subagent' but depth 0 flips AND warns — presentAs=0 warns=[]\n  ✗ malformed options.subagentDepth warns, falls back to header, still flips — presentAs=1 warns=[]\n  ✗ malformed depth on an orchestrator still warns but does not flip — presentAs=0 warns=[]\n  ✗ negative zero is rejected as malformed — presentAs=1 warns=[]\n  ✓ child without ctx.tools warns instead of throwing\n  ✓ presentAs failure is caught and warned\n  ✓ repeated agent/created flips once\n  ✓ undefined agent is a no-op\n\n汇总: 6/11 通过  ✗ 5 项失败\n[exit 1]",
+  "sessionLogRegression": "node scripts/verify-agent-lanes.cjs -> 汇总: ✓6  ✗0  !0 (unchanged after the plugin edit; it reads the session log, so it still shows the live previous generation)"
+}

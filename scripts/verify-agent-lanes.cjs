@@ -1,0 +1,238 @@
+#!/usr/bin/env node
+// verify-agent-lanes.cjs — 零模型成本地验证 agent-lanes preset 的实际行为。
+//
+// 它只读 ~/.dsh/sessions 下的会话文件（解压后解析 JSONL），报告每一个会话：
+//   角色（从子代理的 persona 标记识别）/ 模型 / **模型可见工具面** / 是否仍是 PTC。
+// 并与期望白名单逐项比对，给出 PASS / FAIL / WARN。
+//   * 两个**已知自身层泄漏**工具（KNOWN_SELF_LAYER）被容忍，但会**显式标注** ⊘ 且不计入 FAIL ——
+//     它们掩不掉（见 HANDOFF §7.7），恒 FAIL 只会淹没真正的问题。
+//   * depth≥2 且无角色 persona 的跳过行会提示「疑似孙代升级复发」，但**只对 BOUND_ADDED_AT
+//     之后创建的会话**提示：那之前的那批是修复前的遗留，不该永久报警。
+//   * **提权请求计数**（escalations）：数一数每个会话里模型真的发起了几次沙箱提权
+//     （`sandbox_permissions` / `justification`，只认真实参数键，不扫文本）。角色子代理的会话带
+//     `approval/policy {"policy":"never","source":"delegation"}`，提权会被**确定性拒绝且不可能弹给
+//     用户**，所以这个计数不是 FAIL 而是**触发信号**：什么时候该做 sandbox-strip（HANDOFF §5）。
+//     ⚠️ 口径：**seeded 子会话继承父日志的事件**，其计数可能包含父的调用（输出里标 `(seeded)`）；
+//     而已知自身层泄漏 / 角色子代理的判定不受影响。
+//
+// 为什么这样能验证：
+//   * request/header 事件记录的是**真正发给模型的** header，其 tools 数组就是
+//     模型可见工具面 —— native 子代理 = 白名单本身；PTC 子代理 = 只有 run_code。
+//   * 子代理 persona 由 tool-subagent 的 persona 配置注入，文本里有 "You are **<role>**"。
+//
+// 用法：
+//   node scripts/verify-agent-lanes.cjs             # 只看本项目的会话
+//   node scripts/verify-agent-lanes.cjs --all       # 扫全部工作区
+//   node scripts/verify-agent-lanes.cjs --raw       # 额外打印每个会话的完整工具名列表
+//
+// 全程只读，不写任何文件。
+
+const { execFileSync } = require('node:child_process')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+
+const PTC_MARK = 'is the only tool you can call directly'
+const PROJECT_CWD = '/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes'
+const SESSIONS_ROOT = path.join(os.homedir(), '.dsh', 'sessions')
+
+/** 期望的模型可见工具面（顺序无关）。角色行改白名单后，这里要同步改。 */
+const EXPECTED = {
+  explorer: ['read', 'grep', 'glob', 'lsp', 'mcp__codegraph__codegraph_explore'],
+  librarian: ['read', 'web_search', 'web_fetch', 'mcp__context7__resolve-library-id', 'mcp__context7__query-docs', 'mcp__gh-grep__searchGitHub', 'mcp__exa__web_search_exa', 'mcp__exa__web_fetch_exa'],
+  oracle: ['read', 'grep', 'glob', 'lsp', 'explorer', 'librarian'],
+  fixer: ['read', 'write', 'edit', 'glob', 'grep', 'bash', 'lsp', 'todo_write'],
+}
+/** 保留传输：任何角色都不该看到它（native 模式本来就不注入）。 */
+const RESERVED = 'run_code'
+
+/**
+ * 已知「自身层泄漏」：与白名单无关、也不该被误判成白名单写错。
+ *
+ * 来源已定位到源码：preset 的 tool-subagent 行设了 `modelSelectionSettings: true`，
+ * 于是 tool-subagent 走 standing scoped install 路径
+ * （packages/subagent/tool-subagent/src/index.ts:663-680 installScoped →
+ * candidate.ctx.inject(...)），对**组合内每个 agent**（编排器与每个角色子代理）
+ * 把 `subagent` 与 `list_subagent_models`（同文件 :362）注册进**该 agent 自己的
+ * scope 层**。而 core/tools/src/index.ts:1166-1172 把自身层注册插在掩码循环之后
+ * （"own registrations last … outside the filter above"）——所以 toolFilter.allow
+ * 天生掩不掉它们。同组的 subagent_fork 不经过这条路径，只作为继承面存在，因此被
+ * 正确遮蔽（实测：子代理面里没有它）。
+ *
+ * 这里**容忍但显式标注**，而不是把它们并进 EXPECTED：并进去等于把泄漏定义成期望，
+ * 将来第三个泄漏也会被当成正常。运行时的真正缓解是 agent.cordis.yml 里
+ * tool-subagent 行的 `maxDepth: 1`（堵死深度 1 角色再派孙代）。
+ */
+const KNOWN_SELF_LAYER = ['subagent', 'list_subagent_models']
+
+/**
+ * Tools that expose `sandbox_permissions` / `justification` at all (verified against
+ * the live schemas: bash, pwsh, edit, write). Restricting the scan to these keeps the
+ * counter precise — a `run_code` argument or a file body mentioning the field is not
+ * an escalation attempt.
+ */
+const ESCALATION_TOOLS = new Set(['bash', 'pwsh', 'edit', 'write'])
+
+/**
+ * 通用 `subagent` 行被加上 `maxDepth: 1` 的时刻 —— 本 preset 孙代升级的修复点。
+ * 本脚本扫的是**全部历史**会话，所以修复之前那批孙代（2026-09-13 09:01–09:02Z）会被永久
+ * 判成「疑似复发」。用时间界定把它们排除，提示才只对**修复之后新出现**的孙代说话。
+ */
+const BOUND_ADDED_AT = Date.parse('2026-09-13T09:10:48Z')
+
+function findSessionFiles() {
+  const out = []
+  const walk = (dir) => {
+    let entries
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) walk(p)
+      else if (e.name.endsWith('.zstd')) out.push(p)
+    }
+  }
+  walk(SESSIONS_ROOT)
+  return out
+}
+
+function decode(file) {
+  try { return execFileSync('zstd', ['-dc', file], { maxBuffer: 1 << 29 }).toString('utf8') } catch { return undefined }
+}
+
+function analyze(raw) {
+  const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', escalations: [] }
+  for (const line of raw.split('\n')) {
+    if (!line.startsWith('{')) continue
+    let event
+    try { event = JSON.parse(line) } catch { continue }
+    if (event.type === 'session') result.header = event
+    else if (event.type === 'request/header') {
+      const h = event.data && event.data.header
+      if (h && result.tools === undefined) {
+        result.tools = Array.isArray(h.tools) ? h.tools.map((t) => t && t.name).filter(Boolean) : []
+        result.model = h.config && h.config.model
+      }
+    } else if (event.type === 'system/message') {
+      // 只取本会话自己的 system prompt —— 绝不能扫整份 JSONL：工具结果里也会出现
+      // persona 文本（例如恰好 cat 过预设文件），那会把角色识别带偏。
+      const blocks = (event.data && event.data.message && event.data.message.content) || []
+      for (const b of blocks) if (b && typeof b.text === 'string') result.systemText += b.text + '\n'
+    } else if (event.type === 'tool/call' || event.type === 'tool/ptc-dispatch') {
+      // A model-initiated sandbox-escalation request. Match the PARSED argument keys,
+      // never the raw text: the field names also appear inside files these tools read.
+      const toolName = event.data && event.data.name
+      if (ESCALATION_TOOLS.has(toolName)) {
+        let args = event.data.arguments
+        if (typeof args === 'string') { try { args = JSON.parse(args) } catch { args = undefined } }
+        if (args !== null && typeof args === 'object'
+          && ('sandbox_permissions' in args || 'justification' in args)) {
+          result.escalations.push({
+            tool: toolName,
+            sandboxPermissions: 'sandbox_permissions' in args,
+            justification: 'justification' in args,
+          })
+        }
+      }
+    }
+  }
+  result.ptc = result.systemText.includes(PTC_MARK)
+  // 角色开场句式要求后面跟逗号，避免命中 orchestrator 车道表里的 '**explorer** — ...'
+  const m = result.systemText.match(/You are \*\*(explorer|librarian|oracle|fixer)\*\*,/)
+  result.role = m ? m[1] : undefined
+  // 本 preset 的编排器 persona 独有标记；子代理的 role persona 会遮蔽它，所以只用于识别主 agent
+  result.isPresetRoot = result.systemText.includes('Phase 0 — Intent Gate')
+  return result
+}
+
+function compare(tools, expected) {
+  const have = new Set(tools)
+  const want = new Set(expected)
+  const extra = [...have].filter((n) => !want.has(n) && n !== RESERVED)
+  return {
+    extra: extra.filter((n) => !KNOWN_SELF_LAYER.includes(n)),
+    known: extra.filter((n) => KNOWN_SELF_LAYER.includes(n)),
+    missing: [...want].filter((n) => !have.has(n)),
+  }
+}
+
+function main() {
+  const args = process.argv.slice(2)
+  const all = args.includes('--all')
+  const rawOut = args.includes('--raw')
+  const files = findSessionFiles()
+  if (files.length === 0) { console.log('没找到任何会话文件（' + SESSIONS_ROOT + '）'); return }
+
+  const seen = new Map()
+  let skipped = 0
+  for (const file of files) {
+    const raw = decode(file)
+    if (raw === undefined) { skipped += 1; continue }
+    const a = analyze(raw)
+    if (!a.header) continue
+    if (!all && a.header.cwd !== PROJECT_CWD) continue
+    const id = String(a.header.id)
+    const prev = seen.get(id)
+    if (!prev || raw.length > prev.raw.length) seen.set(id, { file, raw, ...a })
+  }
+  if (seen.size === 0) { console.log('本项目下没有会话（用 --all 扫全部工作区）'); return }
+
+  const rows = [...seen.values()].sort((x, y) => (x.header.createdAt || 0) - (y.header.createdAt || 0))
+  let pass = 0, fail = 0, warn = 0, escChild = 0, escRoot = 0, escOther = 0
+  console.log('会话 ' + rows.length + ' 个（工作区 ' + (all ? 'ALL' : PROJECT_CWD) + '），跳过错文件 ' + skipped + '\n')
+
+  for (const r of rows) {
+    const depth = r.header.delegationDepth || 0
+    if (depth > 0 && !r.role) {
+      // 保留跳过（同 cwd 下可能有别的 preset 的子代理，判 FAIL 会误报），但把 depth 与
+      // 工具数打出来：§2 步骤 1.2 要确认「孙代升级不复现」，而孙代的特征正是
+      // depth>=2 且无角色 persona —— 静默跳过会让这条验证没法查。
+      const note = depth >= 2 && (r.header.createdAt || 0) >= BOUND_ADDED_AT
+        ? ' — depth≥2 且无角色 persona：留意是否为 §7.7 孙代升级复发'
+        : ''
+      escOther += (r.escalations || []).length
+      console.log('─ 跳过 ' + String(r.header.id).slice(0, 20) + '（非 agent-lanes 子代理：depth=' + depth + ' tools=' + (r.tools || []).length
+        + ' esc=' + (r.escalations || []).length + (r.header.isSeeded === true ? ' (seeded — 计数含继承的父日志)' : '') + note + '）')
+      continue
+    }
+    if (depth === 0 && !r.isPresetRoot) { console.log('─ 跳过 ' + String(r.header.id).slice(0, 20) + '（非 agent-lanes 主会话）'); continue }
+    const kind = depth === 0 ? '主 agent' : '子代理 d' + depth
+    const role = r.role || (depth === 0 ? 'orchestrator(未识别)' : '(未识别)')
+    const tools = r.tools || []
+    console.log('─ ' + kind + '  ' + String(r.header.id).slice(0, 20) + '  role=' + role + '  model=' + (r.model || '?') + '  ptc=' + (r.ptc ? 'YES' : 'no') + '  tools=' + tools.length)
+
+    const esc = r.escalations || []
+    if (depth === 0) escRoot += esc.length
+    else escChild += esc.length
+    if (esc.length > 0) {
+      const detail = esc.map((e) => e.tool + (e.sandboxPermissions ? ' +sandbox_permissions' : '') + (e.justification ? ' +justification' : '')).join(', ')
+      console.log('   ' + (depth === 0 ? 'ℹ' : '⚠') + ' 沙箱提权请求 ' + esc.length + ' 次: ' + detail
+        + (depth === 0
+          ? '（编排器可用，属正常）'
+          : ' ← HANDOFF §5：子代理的 approval policy 是 never，必被确定性拒绝且不会弹给用户；'
+            + '只有在角色子代理上**持续出现**才值得做 sandbox-strip'))
+    }
+
+    if (depth === 0) {
+      console.log(r.ptc ? '   ✓ 主 agent 保持 PTC（预期）' : '   ! 主 agent 不是 PTC —— 检查底座 tool-presentation 行')
+      console.log('   工具面: ' + (rawOut ? tools.join(', ') : tools.slice(0, 8).join(', ') + (tools.length > 8 ? ' …' : '')))
+      continue
+    }
+    if (r.ptc) { console.log('   ✗ FAIL 子代理仍是 PTC：run_code 逃逸还在，白名单不是硬边界'); fail += 1; continue }
+    if (!r.role) { console.log('   ! WARN 认不出角色（persona 没注入？）'); warn += 1; continue }
+    const want = EXPECTED[r.role]
+    if (!want) { console.log('   ! WARN 没有 ' + r.role + ' 的期望白名单（designer 已从本方案移除？）'); warn += 1; continue }
+    const d = compare(tools, want)
+    const note = d.known.length > 0 ? ' | ⊘ 已知自身层泄漏（非白名单问题）: ' + d.known.join(', ') : ''
+    if (d.extra.length === 0 && d.missing.length === 0) { console.log('   ✓ PASS native + 白名单精确匹配（' + want.length + ' 项）' + note); pass += 1 }
+    else { console.log('   ✗ FAIL 白名单不符 | 多出: ' + (d.extra.join(', ') || '无') + ' | 缺失: ' + (d.missing.join(', ') || '无') + note); fail += 1 }
+    if (rawOut) console.log('   工具面: ' + tools.join(', '))
+  }
+  console.log('\n汇总: ✓' + pass + '  ✗' + fail + '  !' + warn)
+  console.log('提权请求（实测计数）: agent-lanes 主 agent ' + escRoot + ' / agent-lanes 角色子代理 ' + escChild
+    + ' / 其他会话 ' + escOther)
+  if (escChild === 0) console.log('  ← agent-lanes 角色子代理零提权，与 approval policy never 一致（尚无理由做 sandbox-strip）')
+  if (escRoot + escChild + escOther === 0) console.log('  ! 全为 0 —— 用 --all 复核：其他工作区应有非零计数，否则本计数器的阳性路径未被证明')
+  if (pass + fail + warn === 0) console.log('提示: 没有任何 agent-lanes 角色子代理会话（只看到主 agent 属正常）。先派 1~2 个角色子代理，再重跑本脚本。')
+}
+
+main()

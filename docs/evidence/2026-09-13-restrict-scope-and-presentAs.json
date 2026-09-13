@@ -1,0 +1,46 @@
+{
+ "agentScopedTotal": 157,
+ "agentScopedMcpCount": 81,
+ "agentScopedSample": [
+  "x_search",
+  "read_page",
+  "lsp",
+  "security_audit",
+  "plugin_check",
+  "find_dsh_plugin",
+  "time",
+  "schema",
+  "csv",
+  "json"
+ ],
+ "bogusErrorHead": "tools.restrict() names unknown global tool \"__probe_bogus_name__\"; known global tools: ask_user_question, bash, calculat",
+ "pick": [
+  "mcp__codegraph__codegraph_explore",
+  "mcp__playwright__browser_close",
+  "mcp__playwright__browser_resize",
+  "read",
+  "bash"
+ ],
+ "allowTotal": 6,
+ "allowNames": [
+  "mcp__codegraph__codegraph_explore",
+  "mcp__playwright__browser_close",
+  "mcp__playwright__browser_resize",
+  "bash",
+  "read",
+  "run_code"
+ ],
+ "allowMcp": [
+  "mcp__codegraph__codegraph_explore",
+  "mcp__playwright__browser_close",
+  "mcp__playwright__browser_resize"
+ ],
+ "allowKeptAllPicked": true,
+ "denyTotal": 154,
+ "denyMcpRemoved": true,
+ "denyMcpCount": 78,
+ "restoredTotal": 157,
+ "restoredOk": true,
+ "probedTool": "dev_inject_plugin",
+ "probedSession": "session-fce70285-66a2-4873-8797-f75945e7cfad"
+}

@@ -1,0 +1,13 @@
+# 依赖
+node_modules/
+
+# 系统 / 编辑器
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# 日志与临时
+*.log
+scratch/
+.tmp/

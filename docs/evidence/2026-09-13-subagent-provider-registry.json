@@ -1,0 +1,61 @@
+{
+ "subagentsMethods": [
+  "constructor",
+  "startContinuable",
+  "sendMessage",
+  "interrupt",
+  "drainContinuableDescendants",
+  "drainContinuableChildren",
+  "listChildren",
+  "listDescendants",
+  "remoteExportList",
+  "prompt",
+  "interruptByParent",
+  "registerProvider",
+  "getProvider",
+  "list",
+  "start",
+  "prepareContinuable",
+  "expectProvider",
+  "requireContinuations",
+  "observeActivation",
+  "assertCapabilities",
+  "@deepseek-ai/dsh-typert-protocol/remote-methods"
+ ],
+ "providers": {
+  "spawn": {
+   "registered": true,
+   "caps": {
+    "agentOptions": true,
+    "outputSchema": true,
+    "depthLimit": true,
+    "toolFilter": true,
+    "persona": true
+   },
+   "inheritsParentContext": false
+  },
+  "fork": {
+   "registered": true,
+   "caps": {
+    "agentOptions": true,
+    "outputSchema": true,
+    "depthLimit": true,
+    "toolFilter": true,
+    "persona": true
+   },
+   "inheritsParentContext": true
+  },
+  "acp": {
+   "registered": false
+  },
+  "codex": {
+   "registered": false
+  },
+  "claude-code": {
+   "registered": false
+  },
+  "dsh-sdk": {
+   "registered": false
+  }
+ }
+}

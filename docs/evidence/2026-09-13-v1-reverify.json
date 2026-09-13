@@ -1,0 +1,108 @@
+{
+  "probe": "agent-lanes preset v1 re-verification — three claimed fixes under behavioral test (2026-09-13T09:31-09:33Z session)",
+  "capturedAt": "2026-09-13T09:33:57.924Z",
+  "verdict": "PASS — v1 verified. 4/4 role subagents dispatched native with exact whitelist match; grandchild escalation blocked.",
+  "howToReproduce": "In an agent-lanes session in this workspace, delegate one explorer, one librarian, one oracle and one fixer in parallel; ask the oracle to call the generic subagent tool once; then run: node scripts/verify-agent-lanes.cjs --raw. Per-session fields come from: zstd -dc ~/.dsh/sessions/<slug>/<id>/session.v3.jsonl.zstd (first 'type:session' event).",
+  "environment": {
+    "preset": "agent-lanes",
+    "workspace": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes",
+    "presetLinkDir": "~/.dsh/.agent-presets/agent-lanes (real dir + 4 symlinks, verified)",
+    "host": "DSH, main agent presentation = PTC"
+  },
+  "fixesUnderTest": [
+    {
+      "id": "1a",
+      "claim": "explorer is dispatchable: role-explorer declares NO reasoningEffort (LongCat-2.0:free is a KNOWN_THINKING_MODEL with no selectable effort tier)",
+      "method": "delegated one explorer with a real read-only task",
+      "observed": "dispatched (no route-preflight error); session a7b7c682 created at 2026-09-13T09:32:30.558Z, delegationDepth=1, model=meituan/LongCat-2.0:free, native, tools=7 = whitelist(5) + known self-layer pair",
+      "result": "PASS"
+    },
+    {
+      "id": "1b",
+      "claim": "librarian is dispatchable with reasoningEffort: low (glm-5.3-flash supports only low|high|max)",
+      "method": "delegated one librarian with a real docs task; it returned a correct, sourced answer (process.getBuiltinModule added v22.3.0 / backported v20.16.0, Stable(1))",
+      "observed": "dispatched; session f636c073 at 2026-09-13T09:32:30.558Z, model=z-ai/glm-5.3-flash, native, tools=10 = whitelist(8) + known pair",
+      "result": "PASS"
+    },
+    {
+      "id": "2",
+      "claim": "grandchild escalation blocked by tool-subagent maxDepth: 1",
+      "method": "oracle (depth 1) actually invoked the leaked generic subagent tool once: subagent({description:'depth-probe', prompt:'reply OK', run_in_background:false})",
+      "observed": "Error: subagent depth 2 exceeds maxDepth 1",
+      "observedNote": "The tool result surfaced the plain message; the literal class-name string 'SubagentDepthError' was NOT echoed back through the tool surface to the child. Numeric semantics match the documented guard (childDepth = 1+1 = 2 > maxDepth 1).",
+      "sessionTimelineCrossCheck": {
+        "boundAddedAt": "2026-09-13T09:10:48Z",
+        "depth2Sessions": [
+          "1177181c created 2026-09-13T09:01:02.636Z (pre-fix legacy)",
+          "ae1e5b33 created 2026-09-13T09:01:02.637Z (pre-fix legacy)",
+          "f8d05a7f created 2026-09-13T09:02:35.361Z (pre-fix legacy)"
+        ],
+        "afterFix": "only depth-0 main session (09:31:30Z) + four depth-1 role sessions (09:32:30Z); ZERO new depth>=2 sessions",
+        "note": "All three depth-2 grandchildren carry tools=162 and no role persona — the pre-fix signature. None was created after BOUND_ADDED_AT."
+      },
+      "result": "PASS"
+    }
+  ],
+  "snapshot": {
+    "mainAgent": "ptc=YES, tools=[run_code] — main agent keeps PTC (expected)",
+    "roleSurfaces": {
+      "explorer": [
+        "glob",
+        "grep",
+        "list_subagent_models",
+        "lsp",
+        "mcp__codegraph__codegraph_explore",
+        "read",
+        "subagent"
+      ],
+      "librarian": [
+        "list_subagent_models",
+        "mcp__context7__query-docs",
+        "mcp__context7__resolve-library-id",
+        "mcp__exa__web_fetch_exa",
+        "mcp__exa__web_search_exa",
+        "mcp__gh-grep__searchGitHub",
+        "read",
+        "subagent",
+        "web_fetch",
+        "web_search"
+      ],
+      "oracle": [
+        "explorer",
+        "glob",
+        "grep",
+        "librarian",
+        "list_subagent_models",
+        "lsp",
+        "read",
+        "subagent"
+      ],
+      "fixer": [
+        "bash",
+        "edit",
+        "glob",
+        "grep",
+        "list_subagent_models",
+        "lsp",
+        "read",
+        "subagent",
+        "todo_write",
+        "write"
+      ]
+    },
+    "boundaryChecks": [
+      "oracle surface contains explorer, librarian and NOT fixer — job boundary holds",
+      "fixer surface contains no role tool name",
+      "no role surface contains run_code — native flip holds for all four"
+    ],
+    "knownSelfLayerLeak": {
+      "tools": [
+        "subagent",
+        "list_subagent_models"
+      ],
+      "status": "UNCHANGED and expected — not maskable (HANDOFF 7.7). Present in all four role surfaces.",
+      "harness": "run-time mitigation is the maxDepth: 1 bound on the tool-subagent row, verified above"
+    }
+  },
+  "rawScriptOutput": "会话 18 个（工作区 /Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes），跳过错文件 0\n\n─ 跳过 session-fce70285-66a（非 agent-lanes 主会话）\n─ 跳过 13077201-049e-4be2-a（非 agent-lanes 子代理：depth=1 tools=1）\n─ 跳过 0b563abc-63e7-4901-b（非 agent-lanes 子代理：depth=1 tools=1）\n─ 跳过 b909fd5a-4b31-4a42-8（非 agent-lanes 子代理：depth=1 tools=1）\n─ 跳过 4f6b7d9f-5309-41be-b（非 agent-lanes 子代理：depth=1 tools=1）\n─ 跳过 7c61631f-00f2-48a6-8（非 agent-lanes 子代理：depth=1 tools=1）\n─ 主 agent  session-d2c2c4a5-e44  role=orchestrator(未识别)  model=deepseek/deepseek-v4.1-flash  ptc=YES  tools=1\n   ✓ 主 agent 保持 PTC（预期）\n   工具面: run_code\n─ 子代理 d1  5c6ca372-37a9-4c20-9  role=oracle  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=8\n   ✓ PASS native + 白名单精确匹配（6 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: explorer, glob, grep, librarian, list_subagent_models, lsp, read, subagent\n─ 子代理 d1  5ae1940b-6c3d-49af-8  role=fixer  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=10\n   ✓ PASS native + 白名单精确匹配（8 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: bash, edit, glob, grep, list_subagent_models, lsp, read, subagent, todo_write, write\n─ 跳过 1177181c-4829-4847-b（非 agent-lanes 子代理：depth=2 tools=162）\n─ 跳过 ae1e5b33-f1e4-42d2-b（非 agent-lanes 子代理：depth=2 tools=162）\n─ 跳过 9925486c-157a-43b3-a（非 agent-lanes 子代理：depth=1 tools=1）\n─ 跳过 f8d05a7f-c9f2-466f-b（非 agent-lanes 子代理：depth=2 tools=162）\n─ 主 agent  session-8fea1507-e5b  role=orchestrator(未识别)  model=deepseek/deepseek-v4.1-flash  ptc=YES  tools=1\n   ✓ 主 agent 保持 PTC（预期）\n   工具面: run_code\n─ 子代理 d1  a7b7c682-6090-4c4a-9  role=explorer  model=meituan/LongCat-2.0:free  ptc=no  tools=7\n   ✓ PASS native + 白名单精确匹配（5 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: glob, grep, list_subagent_models, lsp, mcp__codegraph__codegraph_explore, read, subagent\n─ 子代理 d1  f636c073-7486-4085-b  role=librarian  model=z-ai/glm-5.3-flash  ptc=no  tools=10\n   ✓ PASS native + 白名单精确匹配（8 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: list_subagent_models, mcp__context7__query-docs, mcp__context7__resolve-library-id, mcp__exa__web_fetch_exa, mcp__exa__web_search_exa, mcp__gh-grep__searchGitHub, read, subagent, web_fetch, web_search\n─ 子代理 d1  ae609d0b-59e8-48f1-8  role=oracle  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=8\n   ✓ PASS native + 白名单精确匹配（6 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: explorer, glob, grep, librarian, list_subagent_models, lsp, read, subagent\n─ 子代理 d1  2c2ae2cd-f7dc-48a5-b  role=fixer  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=10\n   ✓ PASS native + 白名单精确匹配（8 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: bash, edit, glob, grep, list_subagent_models, lsp, read, subagent, todo_write, write\n\n汇总: ✓6  ✗0  !0"
+}
