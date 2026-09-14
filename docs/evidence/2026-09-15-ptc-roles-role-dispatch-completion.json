@@ -1,0 +1,85 @@
+{
+  "probe": "2026-09-15-ptc-roles-role-dispatch-completion",
+  "question": "五个角色行里最后两个（`librarian` / `oracle`）能不能在宿主内真的派出去，并且工具面与 `toolFilter.allow` **精确匹配**？",
+  "why": "证据 ⑩ 只派过 explorer / implementer / designer 三个角色，并把这条列为 `notVerifiable`；HANDOFF §2.2 的期望是「每个角色行 `ptc=no` + 白名单精确匹配」。角色行与 persona 本轮未改动，所以这一条对两代都成立。",
+  "answer": "YES —— 两个角色都派出、都 `ptc=no`、工具面与白名单精确匹配（librarian 8 项 / oracle 6 项，各另有 2 项已知自身层泄漏）。五个角色行至此**全部**在宿主内验过。",
+  "dispatchedFrom": {
+    "session": "session-ee97f96a-5187-427c-85fe-0f4395e9532f",
+    "generation": "旧代（?v=1：本会话挂载时读取的 persona/插件）；角色行与角色 persona 本轮未改 ⇒ 结论对两代同效"
+  },
+  "roleLines": {
+    "librarian": "─ 子代理 d1  1d0bdb4a-0b2e-47ca-b  role=librarian  model=z-ai/glm-5.3-flash  ptc=no  tools=10",
+    "oracle": "─ 子代理 d1  4fcf1018-69ba-45d5-a  role=oracle  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=8"
+  },
+  "childSessions": [
+    {
+      "id": "1d0bdb4a-0b2e-47ca-b69e-23d7b5b3d403",
+      "role": "librarian",
+      "model": "z-ai/glm-5.3-flash",
+      "ptc": false,
+      "toolCount": 10,
+      "expectedCount": 8,
+      "verdict": "PASS 白名单精确匹配（8 项 + 2 项已知自身层泄漏）",
+      "toolFace": [
+        "read",
+        "web_search",
+        "web_fetch",
+        "mcp__context7__resolve-library-id",
+        "mcp__context7__query-docs",
+        "mcp__gh-grep__searchGitHub",
+        "mcp__exa__web_search_exa",
+        "mcp__exa__web_fetch_exa",
+        "subagent",
+        "list_subagent_models"
+      ],
+      "taskOutcome": "完成：`process.getBuiltinModule()` = Node **v22.3.0** 加入、**回移 v20.16.0**；给了 nodejs.org API 文档与两版 release blog 三个来源；判定为 Stable（无 Experimental 警示框）。**与证据 ⑧ 里早前那次同题探针的答案逐项一致**（那是独立复现）。"
+    },
+    {
+      "id": "4fcf1018-69ba-45d5-a135-777443f15400",
+      "role": "oracle",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ptc": false,
+      "toolCount": 8,
+      "expectedCount": 6,
+      "verdict": "PASS 白名单精确匹配（6 项 + 2 项已知自身层泄漏）",
+      "toolFace": [
+        "read",
+        "grep",
+        "glob",
+        "lsp",
+        "explorer",
+        "librarian",
+        "subagent",
+        "list_subagent_models"
+      ],
+      "taskOutcome": "完成：给出「能力面上足够、不变量层面不够」的判断 —— `maxDepth: 1` 堵死了孙代（引 child-agent.ts:49-56 等抛点），但**呈现层**的工具面仍比 `allow` 多这两个名字，所以 yml/README 里「`toolFilter.allow` 即硬能力边界」在呈现层仍为假；彻底消除的唯一路径是 `modelSelectionSettings: false`（代价＝编排器失去 per-call 的 model/effort 选择）。并**自列了 5 条它没有验证的东西**。"
+    }
+  ],
+  "verificationGap": "oracle 的结论里 ②「泄漏的那份注册沿用该行 config 的 maxDepth」是**推断**（它只读到 maxDepth 从 config 取的注入点，未读 standing scoped install 的实现）；这条本记录**不主张**它成立，只记录角色说了什么。",
+  "rawScriptOutput": "会话 8 个（工作区 /Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles），跳过错文件 0\n\n─ 主 agent  session-ee97f96a-518  role=orchestrator(未识别)  model=deepseek/deepseek-v4.1-flash  ptc=YES  tools=1\n   ✓ 主 agent 保持 PTC（预期）\n   ✓ 主 agent 载入 round-5 纪律 persona（含 \"Delegation contract\"）\n   意图门合规率: 8 轮（会改变行为 8 轮）| 首行命中 6/8 (75%) | 可见回复命中 6 | 任意文本命中 8\n   逐轮(首行): T1✗ T2✓ T3✓ T4✓ T5✓ T6✓ T7✓ T8✗ | 会改变行为: T1 T2 T3 T4 T5 T6 T7 T8\n   工具面: run_code\n─ 子代理 d1  5c5a534a-200f-4d53-b  role=explorer  model=meituan/LongCat-2.0:free  ptc=no  tools=7\n   ✓ PASS native + 白名单精确匹配（5 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: glob, grep, list_subagent_models, lsp, mcp__codegraph__codegraph_explore, read, subagent\n─ 子代理 d1  374189d3-e6b8-4976-8  role=implementer  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=10\n   ✓ PASS native + 白名单精确匹配（8 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: bash, edit, glob, grep, list_subagent_models, lsp, read, subagent, todo_write, write\n─ 子代理 d1  c6f9ffb9-b1c5-432d-b  role=designer  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=8\n   ✓ PASS native + 白名单精确匹配（6 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: bash, edit, glob, grep, list_subagent_models, read, subagent, write\n─ 子代理 d1  7c0bf8cb-2795-4fb7-b  role=explorer  model=meituan/LongCat-2.0:free  ptc=no  tools=7\n   ✓ PASS native + 白名单精确匹配（5 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: glob, grep, list_subagent_models, lsp, mcp__codegraph__codegraph_explore, read, subagent\n─ 主 agent  session-d701ad55-f8a  role=orchestrator(未识别)  model=deepseek/deepseek-v4.1-flash  ptc=YES  tools=1\n   ✓ 主 agent 保持 PTC（预期）\n   ✓ 主 agent 载入 round-5 纪律 persona（含 \"Delegation contract\"）\n   意图门合规率: 7 轮（会改变行为 2 轮）| 首行命中 0/2 (0%) | 可见回复命中 2 | 任意文本命中 3\n   逐轮(首行): T1✗ T2✗ T3✗ T4✗ T5✗ T6✗ T7✗ | 会改变行为: T1 T4\n   工具面: run_code\n─ 子代理 d1  1d0bdb4a-0b2e-47ca-b  role=librarian  model=z-ai/glm-5.3-flash  ptc=no  tools=10\n   ✓ PASS native + 白名单精确匹配（8 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: list_subagent_models, mcp__context7__query-docs, mcp__context7__resolve-library-id, mcp__exa__web_fetch_exa, mcp__exa__web_search_exa, mcp__gh-grep__searchGitHub, read, subagent, web_fetch, web_search\n─ 子代理 d1  4fcf1018-69ba-45d5-a  role=oracle  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=8\n   ✓ PASS native + 白名单精确匹配（6 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: explorer, glob, grep, librarian, list_subagent_models, lsp, read, subagent\n\n意图门合规率（合计 2 个主 agent 会话 / 15 轮，其中会改变行为 10 轮）: 首行命中 6/10 (60%) | 可见回复命中 8 | 任意文本命中 11\n  口径: 分子与分母都只算**会改变行为**的轮次（要委派 / 要拒绝 / 要提问 / 要改文件），行为判据 = tool/call 或 tool/ptc-dispatch 的 name 命中 BEHAVIOR_TOOLS（与 intent-gate-watchdog.mjs 同口径）；marker = [\"意图判定\"]（与插件的 DEFAULT_MARKERS 同口径）；「任意文本」含工具结果与工具参数 ⇒ 读过插件源码的轮次也会命中，只作对照，不作合规分子。\n\n汇总: ✓8  ✗0  !0\n提权请求（实测计数）: ptc-roles 主 agent 0 / ptc-roles 角色子代理 0 / 其他会话 0\n  ← ptc-roles 角色子代理零提权，与 approval policy never 一致（尚无理由做 sandbox-strip）\n  ! 全为 0 —— 用 --all 复核：其他工作区应有非零计数，否则本计数器的阳性路径未被证明",
+  "findings": [
+    {
+      "id": "R-1",
+      "claim": "最后两个角色行的宿主内白名单匹配成立",
+      "observed": "librarian `tools=10`（8+2）、oracle `tools=8`（6+2），两块都 `ptc=no` + `✓ PASS native + 白名单精确匹配`",
+      "meaning": "五个角色行**全部**在宿主内验过；证据 ⑩ 的 `notVerifiable` 里那条角色覆盖缺口关闭。"
+    },
+    {
+      "id": "R-2",
+      "claim": "oracle 仍是只读顾问而且**看得见、也仅看得见**它的两个下属角色",
+      "observed": "oracle 工具面 = read/grep/glob/lsp + **explorer + librarian**（无 implementer / designer / shell / run_code）",
+      "meaning": "「白名单表达职责边界」这一设计在 oracle 上成立：它能派下属做侦察，但**碰不到**两个可写角色。"
+    },
+    {
+      "id": "R-3",
+      "claim": "oracle 点出的一处**措辞与现实不符**（值得单独看）",
+      "observed": "它判定：`maxDepth: 1` 只在**能力**层堵死孙代，**呈现层**工具面仍多出 `subagent` / `list_subagent_models` ⇒ yml 注释与 README 里「`toolFilter.allow` 即硬能力边界」在呈现层为假",
+      "meaning": "这不是新缺陷（pitfalls #7 已记泄漏、脚本已容忍标注），但它把话说准了：**硬边界在能力层成立、在呈现层不成立**。若以后改 README/yml 那句话，按这个口径改。"
+    }
+  ],
+  "notVerifiable": [
+    "oracle 自列的 5 条未验证项（尤其：未真机复现 depth-2 抛错、未读 standing scoped install 的实现、未读 `list_subagent_models` 的输出敏感度）。",
+    "win32 平台分支（本机无该平台）。",
+    "提醒/角色的**效用**（同样不可由日志证明）。"
+  ]
+}

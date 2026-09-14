@@ -1,0 +1,193 @@
+{
+  "probe": "2026-09-15-intent-gate-failure-record",
+  "question": "意图门（Phase 0 分类行）除了「本该每轮输出」这条规则以外，有没有真实的失败记录？这份记录现在还能复现吗？",
+  "why": "AGENTS.md 的规则演进原则要求「无失败记录则不设规则」—— 这条门与为它写的看门狗要站得住，失败记录必须归档。而看门狗插件头部与 HANDOFF §3④ 引用的那次审计（26 轮 / 任意文本命中 3 / 可见回复 2 / 首行 0）**只有结论、没有原始产物**。",
+  "answer": "①失败成立：门在长会话里确实静默衰减（原文数字见 quotedRecord，**引用而非重测**）；②但**那次审计已无法复现** —— 源会话不在会话库里了（见 reproducibility.gap）；③因此本文件改用当场可复现的两条产物：一次全库扫描 + 把合规率指标固化进验证脚本（HANDOFF §3③ 同时落地）。",
+  "quotedRecord": {
+    "status": "QUOTED（引用）—— 本文件**没有**重测出 26 / 3 / 2 / 0 这四个数字",
+    "source1": "preset/ptc-roles/intent-gate-watchdog.mjs 头部注释",
+    "quote1": "Measured on this project's own session log (2026-09-14): 26 turns, the gate line appeared in 2 visible replies (turns 1-2) and never again — it collapsed at turn 3 and stayed collapsed.",
+    "source2": "HANDOFF.md §3 表第 ④ 行",
+    "quote2": "把失败记录归档成证据：本次审计（26 轮 / 任意文本命中 3 / 可见回复 2 / **首行 0**）",
+    "meaning": "四个数字的含义：「26 轮」= 该会话的轮数；「任意文本命中 3」= 有 3 轮的任何事件文本里出现过门行字面量（含工具结果）；「可见回复 2」= 只有 2 轮在 assistant 文本里出现过（turn 1–2）；「首行 0」= **从来没有一轮把门行放在回复第一行**。⇒ 规则存在、但「每轮输出」这个形式在真实使用里衰减到几乎不执行；这就是门（以及看门狗）存在的依据。"
+  },
+  "upstreamReference": {
+    "why": "G-5 的修法需要权威原文：这条门的原始出处是上游 Sisyphus 提示词，而我们移植时丢了它的 `[reason]` 槽位。",
+    "repo": "/Users/eric/Project/source/AI/oh-my-openagent",
+    "versionsChecked": {
+      "v4.19.4": "`git cat-file -t v4.19.4` = commit（tag 存在）；原文用 `git show v4.19.4:<path>` 取",
+      "HEAD": "工作树 HEAD = 93542d125（package.json:3 报 v5.0.0-beta.37）"
+    },
+    "path": "packages/omo-opencode/src/agents/sisyphus/default.ts",
+    "verbatim": [
+      "### Step 0: Verbalize Intent (BEFORE Classification)",
+      "Before classifying the task, identify what the user actually wants from you as an orchestrator. Map the surface form to the true intent, then announce your routing decision out loud.",
+      "> \"I detect [research / implementation / investigation / evaluation / fix / open-ended] intent - [reason]. My approach: [explore → answer / plan → delegate / clarify first / etc.].\"",
+      "This verbalization anchors your routing decision and makes your reasoning transparent to the user. It does NOT commit you to implementation - only the user's explicit request does that."
+    ],
+    "finding": "**v4.19.4 与 HEAD 的这段逐字相同**（`diff` 在两版该区块上无差异输出）⇒ 不是上游改了，是**我们移植时丢了 `[reason]`**：本 preset 的 persona 只留下 «I detect X intent — my approach: <plan>»。本次把该槽位补回为「依据：…」，并保留「读者是用户」这一句的原文依据（\"makes your reasoning transparent to the user\"）。",
+    "otherUpstreamRules": [
+      {
+        "path": "packages/omo-opencode/src/agents/sisyphus-dynamic-prompt-style.ts",
+        "rule": "`### Be Concise` / `### No Status Updates` —— 禁止 \"I'm on it…\" / \"Let me start by…\" 一类开场（**支撑** G-5 的「别写内部记账」）"
+      },
+      {
+        "path": "packages/omo-opencode/src/agents/sisyphus/gpt-5-5.ts",
+        "rule": "`\"I read this as [complexity]-[domain] - [plan].\"` + `\"that line is a commitment, not a label.\"`（**采纳**后半句）"
+      },
+      {
+        "path": "packages/omo-opencode/src/agents/sisyphus/grok-4.ts:186",
+        "rule": "`\"Every sentence carries information the user does not already have. Never restate the task back…\"`（**采纳**：门行要「用结果说」，不照抄用户的话）"
+      },
+      {
+        "path": "packages/omo-opencode/src/agents/sisyphus/kimi-k2-6.ts",
+        "rule": "`<re_entry_rule>`：确认轮/已决策轮不再重发 preamble，只回一行确认（**未采纳**，见 notImplemented）"
+      }
+    ],
+    "notImplemented": "kimi 的 `re_entry_rule`（确认轮不重发门行）与我们的 eligibility 判据（只对「会改变行为的轮次」要求）口径不同：那一轮若真的改了文件，我们的规则仍要求门行。**刻意不采纳** —— 再引入一条语义规则会与数据面判据冲突，而数据面判据是这条管线唯一可自动核查的部分。"
+  },
+  "reproducibility": {
+    "method": "遍历 ~/.dsh/sessions 下全部 .zstd 会话，逐轮统计三个口径（与 scripts/verify-ptc-roles.cjs 新增的「意图门合规率」同一口径）：anyText(该轮任何事件行含 marker) / reply(assistant 文本含 marker) / firstLine(该轮第一条有文本的 assistant 消息的**第一行**含 marker)。",
+    "scannedFiles": 77,
+    "sessionsWithAnyGateText": 3,
+    "sessionsWithAnyGateTextList": [
+      {
+        "id": "c52934e8-9983-4218-8117-29f8b4530418",
+        "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes",
+        "depth": 1,
+        "createdAt": "2026-09-13T16:14:45.170Z",
+        "turns": 15,
+        "anyTextTurns": 0,
+        "replyTurns": 0,
+        "firstLineTurns": 0,
+        "englishPhraseTurns": 1,
+        "perTurn": "T1- T2- T3- T4- T5- T6- T7- T8- T9- T10- T11- T12- T13- T14- T15-"
+      },
+      {
+        "id": "session-ee97f96a-5187-427c-85fe-0f4395e9532f",
+        "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+        "depth": 0,
+        "createdAt": "2026-09-14T15:52:21.097Z",
+        "turns": 3,
+        "anyTextTurns": 3,
+        "replyTurns": 2,
+        "firstLineTurns": 2,
+        "englishPhraseTurns": 1,
+        "perTurn": "T1-a T2+ra T3+ra"
+      },
+      {
+        "id": "5c5a534a-200f-4d53-bede-85393102e7f5",
+        "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+        "depth": 1,
+        "createdAt": "2026-09-14T16:09:08.409Z",
+        "turns": 1,
+        "anyTextTurns": 1,
+        "replyTurns": 1,
+        "firstLineTurns": 0,
+        "englishPhraseTurns": 0,
+        "perTurn": "T1-ra"
+      }
+    ],
+    "topTurnCounts": [
+      {
+        "id": "session-182794ed-8a27-4c35-910e-4aeab04b4da7",
+        "turns": 28
+      },
+      {
+        "id": "session-182794ed-8a27-4c35-910e-4aeab04b4da7",
+        "turns": 28
+      },
+      {
+        "id": "session-182794ed-8a27-4c35-910e-4aeab04b4da7",
+        "turns": 28
+      },
+      {
+        "id": "session-74b4ca21-d5b4-4bc9-8ccb-035e35ce3a74",
+        "turns": 21
+      },
+      {
+        "id": "492fe499-39e6-49bb-8867-5711e5fb8ff6",
+        "turns": 18
+      },
+      {
+        "id": "669c4230-08f4-48ad-b603-d27f5b44069e",
+        "turns": 15
+      }
+    ],
+    "gapNote": "topTurnCounts 里同一 id 出现多次 = 同一会话的 session.jsonl / v2 / v3 文件副本，不是三个会话。",
+    "gap": "库中**没有任何 26/27 轮的会话**（轮数最多的 28 轮是 2026-08-20 的 super-injector 会话，与本项目无关；其次是 21 轮的 default 会话）。本项目 agent-lanes 工作区目录 mtime = 2026-09-15 00:07:03，**现仅存 1 个会话**（c52934e8，2026-09-13）；证据 ⑨ 引用的 4 个会话（含 session-2982160d）在 `~/.dsh` 下 find 不到。⇒ **会话库是滚动窗口、不是归档**：任何「历史上曾经多少轮漏掉门行」的说法都只能在当场测，测完就得落成证据文件。这也正是把指标做进脚本（⑶）而不是靠考古的理由。",
+    "storeSnapshot": "2026-09-15 00:07:03 /Users/eric/.dsh/sessions/--Users-eric-Project-tests-dsh-plugins-cireric-dsh-agent-lanes--/\nc52934e8-9983-4218-8117-29f8b4530418\n--- empty ws dirs ---\n--Users-eric-Project-tests-dsh-plugins-dsh-at-enhance--\n--Users-eric-Project-tests-dsh-plugins-dsh-mcp-tool-hints--\n--Users-eric-Project-tests-dsh-plugins-cireric-dsh-mcp-tool-hints--\n--Users-eric-Project-tests-dsh-plugins-cireric-dsh-deep-research--\n--Users-eric-Project-tests-dsh-plugins-cireric-dsh-prompt-presets--\n--- counts ---\n      77\n      13\n       0"
+  },
+  "measuredNow": {
+    "currentSession": {
+      "id": "session-ee97f96a-5187-427c-85fe-0f4395e9532f",
+      "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+      "depth": 0,
+      "createdAt": "2026-09-14T15:52:21.097Z",
+      "turns": 3,
+      "anyTextTurns": 3,
+      "replyTurns": 2,
+      "firstLineTurns": 2,
+      "englishPhraseTurns": 1,
+      "perTurn": "T1-a T2+ra T3+ra"
+    },
+    "perTurnLegend": "T<n> 后：+ = 首行命中；r = 可见回复命中；a = 任意文本命中（含工具结果）",
+    "note": "本会话 T1 漏（无门行）→ 看门狗在 T2 注入提醒 → T2/T3 首行都有门行 ⇒ 门行现在是被**提醒**驱动的，不是自发纪律；T1 的 `a`（任意文本命中）来自我读过插件源码，不是合规。",
+    "turnBoundaries": [
+      "\"type\":\"turn/start\",\"seq\":7,\"time\":1789402086908,\"data\":{\"turn\":1}",
+      "\"type\":\"turn/start\",\"seq\":208,\"time\":1789402433617,\"data\":{\"turn\":2}",
+      "\"type\":\"turn/start\",\"seq\":336,\"time\":1789402643309,\"data\":{\"turn\":3}"
+    ],
+    "watchdogPluginMessagesInSession": 1,
+    "silentPathObserved": "turn 3（seq=336 的 turn/start）之前**没有**第二条 `plugin=intent-gate-watchdog` 消息（全会话仅 seq=212 那一条）⇒ T2 首行有门行时，T3 **不再**被提醒 —— 插件「上一轮合规就沉默」的分支在真机成立（单测之外的首次宿主内观测）。"
+  },
+  "toolingDelivered": {
+    "script": "scripts/verify-ptc-roles.cjs",
+    "change": "新增「意图门合规率」：逐轮判定 + 三个口径 + 首行命中率（分子=首行），单会话一行 + 全部会话合计一行；判定口径的 marker 与 intent-gate-watchdog.mjs 的 DEFAULT_MARKERS 同口径（两处必须同步）。",
+    "output": "会话 4 个（工作区 /Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles），跳过错文件 0\n\n─ 主 agent  session-ee97f96a-518  role=orchestrator(未识别)  model=deepseek/deepseek-v4.1-flash  ptc=YES  tools=1\n   ✓ 主 agent 保持 PTC（预期）\n   ✓ 主 agent 载入 round-5 纪律 persona（含 \"Delegation contract\"）\n   意图门合规率: 3 轮 | 首行命中 2 (67%) | 可见回复命中 2 | 任意文本命中 3\n   逐轮(首行): T1✗ T2✓ T3✓\n   工具面: run_code\n─ 子代理 d1  5c5a534a-200f-4d53-b  role=explorer  model=meituan/LongCat-2.0:free  ptc=no  tools=7\n   ✓ PASS native + 白名单精确匹配（5 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: glob, grep, list_subagent_models, lsp, mcp__codegraph__codegraph_explore, read, subagent\n─ 子代理 d1  374189d3-e6b8-4976-8  role=implementer  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=10\n   ✓ PASS native + 白名单精确匹配（8 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: bash, edit, glob, grep, list_subagent_models, lsp, read, subagent, todo_write, write\n─ 子代理 d1  c6f9ffb9-b1c5-432d-b  role=designer  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=8\n   ✓ PASS native + 白名单精确匹配（6 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: bash, edit, glob, grep, list_subagent_models, read, subagent, write\n\n意图门合规率（合计 1 个主 agent 会话 / 3 轮）: 首行命中 2 (67%) | 可见回复命中 2 | 任意文本命中 3\n  口径: marker = [\"意图判定\"]（与 intent-gate-watchdog.mjs 的 DEFAULT_MARKERS 同口径）；「任意文本」含工具结果与工具参数 ⇒ 读过插件源码的轮次也会命中，只作对照，不作合规分子。\n\n汇总: ✓4  ✗0  !0\n提权请求（实测计数）: ptc-roles 主 agent 0 / ptc-roles 角色子代理 0 / 其他会话 0\n  ← ptc-roles 角色子代理零提权，与 approval policy never 一致（尚无理由做 sandbox-strip）\n  ! 全为 0 —— 用 --all 复核：其他工作区应有非零计数，否则本计数器的阳性路径未被证明"
+  },
+  "findings": [
+    {
+      "id": "G-1",
+      "claim": "门确实会静默衰减（失败成立）",
+      "observed": "引用记录：26 轮里可见回复命中 2、首行 0（quotedRecord）；本轮另有一条同向的**当场**证据：本会话 T1 就漏了门行，是看门狗在 T2 提醒后才补上的",
+      "meaning": "「每轮都要输出」这种零后果的仪式会衰减 —— 这条规则/插件的存在依据成立。"
+    },
+    {
+      "id": "G-2",
+      "claim": "那次审计不可复现（会话库是滚动窗口）",
+      "observed": "77 个会话文件里没有任何 26/27 轮会话；agent-lanes 工作区仅存 1 个会话（目录 mtime 2026-09-15 00:07:03）；证据 ⑨ 引用的 session-2982160d 及其子会话 find 不到；另有 5 个工作区目录为空",
+      "meaning": "历史合规性不可考古 ⇒ 指标必须**当场测且落盘**（已做进脚本）。**这不是缺陷断言**：会话清理可能是人为/策略性的，本文件只陈述「现在不在库里」。"
+    },
+    {
+      "id": "G-3",
+      "claim": "**persona 与插件不同口径**（真实缺陷）",
+      "observed": "personas/orchestrator.md:8 规定的形式是英文 `I detect [research|…] intent — my approach: <plan>.`，而看门狗 `DEFAULT_MARKERS = ['意图判定']`；全库扫描里英文短语命中 2 个会话、中文门行命中 3 个会话",
+      "meaning": "按 persona 老实做的模型**拿不到**看门狗的认可（反之亦然）。HANDOFF §3② 要求「与插件的 markers 默认值对齐」，本文件把它从「待办」升级为**有实测支撑的缺陷**：指标今天量的是插件口径，persona 口径未对齐前，合规率天然偏低。"
+    },
+    {
+      "id": "G-4",
+      "claim": "「任意文本」口径不可作合规分子",
+      "observed": "本会话 anyText=3/3，但 T1 的命中来自我 read 插件源码后落盘的工具结果；首行口径给出 2/3",
+      "meaning": "读过插件源码/验证脚本的会话会把「任意文本」刷满 —— 与证据 ⑩ 的 P-4（grep 计数被工具结果污染）同一个坑。脚本已把这一条写进输出注释。"
+    },
+    {
+      "id": "G-5",
+      "claim": "看门狗把「有没有那行 marker」变成了目标本身 —— 门行内容退化成我方内部记账（marker 驱动的退化）",
+      "observed": "本会话逐字首行（从会话日志抽，见 badGateLines）：turn 2 首行与 turn 3 首行都**不含**「用户要什么」，只含 turn 号 / 看门狗状态 / 证据文件名 / 待办编号",
+      "badGateLines": [
+        "意图判定：implementation — 已收到 turn 2 注入的提醒；现在解日志取证（插件来源消息 + 轮次边界），写证据 ⑩，再补 `docs/evidence/README.md` 一节与轮次账本一行。",
+        "意图判定：implementation — turn 3 未收到提醒（静默路径已在真机成立，先取证入档）；接着推进 §3 的 ③④（合规率指标 + 失败记录归档），② 起草，①⑤⑥ 到不可逆处再要你点头。"
+      ],
+      "trigger": "由用户 2026-09-15 指出：「意图判定在于跟用户对齐需求（理解用户输入的内容）」—— 这一行的读者是用户，不是机制。",
+      "meaning": "插件的成功判据（marker 出现）与门的目的（对齐需求）不是同一件事：它的观测面只有「有没有 marker」，因此既推不动内容质量，又给「凑 marker」提供了激励。也就是说，上一轮修好的是**发不发**，这一轮暴露的是**发的是不是那个东西**。",
+      "fix": "①persona：Phase 0 明写「读者是用户」，模板改成 `意图判定：<桶> — 你要的是 <复述需求>；我打算 <做法>`，并点名禁止 turn/step 号、插件或看门狗状态、证据文件名、脚本通过数；②看门狗 REMINDER 同步（含「为凑 marker 而写的一行比不写更糟」）；③单测仍 20/20 —— 它断言的是**注入与触发条件**，不断言文案。",
+      "boundary": "插件**观测不到内容质量**：门行在、但内容是记账时，它保持沉默（本轮 turn 2/3 正是这种沉默）。要事后可查只能靠人/评审读那一行；**不做正则 linter**（「这行是不是记账」没有可靠规则，误伤编排器合法用词的风险大于收益 —— 同证据 ⑥ 否决 sandbox-strip 的理由）。"
+    }
+  ],
+  "notVerifiable": [
+    "原始审计的四个数字（源会话已不在库中）。",
+    "会话库里的清理是谁做的、依据什么策略（本文件只记录「现在不在」这一事实）。",
+    "门的效用：合规率能证明「有没有输出门行」，不能证明「因此决策更正确」。"
+  ]
+}

@@ -1,0 +1,173 @@
+{
+  "probe": "2026-09-15-ptc-roles-in-host-verification",
+  "question": "改名后的 preset id `ptc-roles` 在宿主内是否真的挂载？五个角色能否真的派出去且白名单精确匹配？新增的意图门看门狗在真实会话里是否真的注入提醒？",
+  "why": "这三件事此前只有不依赖宿主的静态证据（yml 解析 / 插件单测 / 脚本源码）。本部署 `ctx.logger.warn` 无落盘通道（docs/pitfalls.md #9），所以要事后可查，证据只能来自数据面：会话事件 + 行为脚本判定。",
+  "answer": "YES —— 三件事在本会话（新 id + 新仓库目录下新建的会话）内全部实测为真；HANDOFF §1 的两项欠账（`ptc-roles` 这个 id 的宿主内证据 = 0、看门狗在宿主内零观测）就此清零。",
+  "session": {
+    "id": "session-ee97f96a-5187-427c-85fe-0f4395e9532f",
+    "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+    "createdAtLocal": "2026-09-14 23:52:21 (+08)（session 事件 createdAt=1789401141097）",
+    "evidenceWrittenAtLocal": "2026-09-15 00:14 (+08)",
+    "delegationDepth": 0,
+    "presetHeaderField": "standard（会话头字段，创建时默认值 ⇒ 滞后，已知不可信）",
+    "presetSelectedEvent": "ptc-roles（`agent-preset/selected` 事件 = 权威信号）"
+  },
+  "environment": {
+    "node": "v24.19.0",
+    "gitHead": "f0966210c458a871fa547cfde06726473b057d40",
+    "dirtyEntries": 21,
+    "untrackedFiles": 3
+  },
+  "crossChecks": {
+    "deployedPresetPath": "~/.dsh/.agent-presets/ptc-roles/",
+    "deployedShape": "真目录 + 5 个内部软链（把整个目录做软链会被发现逻辑静默跳过）",
+    "symlinks": {
+      "agent.cordis.yml": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/preset/ptc-roles/agent.cordis.yml",
+      "intent-gate-watchdog.mjs": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/preset/ptc-roles/intent-gate-watchdog.mjs",
+      "personas": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/preset/ptc-roles/personas",
+      "preset.yml": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/preset/ptc-roles/preset.yml",
+      "role-presentation.mjs": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/preset/ptc-roles/role-presentation.mjs"
+    },
+    "sha256RepoVsDeployed": {
+      "agent.cordis.yml": "bb56afe4d9aaccac626933f3c7db89f7e00b73f026077472a8c5fb64a6c7011c",
+      "role-presentation.mjs": "d1133e0a9d7b3d8e7249e9963e06014858f41eff77df3a37582e357c14a8367f",
+      "intent-gate-watchdog.mjs": "1e35761f68839458b544e4dce53b19b7a2d0efd1cb9af423df651dbbdd4895c4",
+      "preset.yml": "dd244582bee72aad27bc4c1dd1cbbdd575781e49ced6b6e4a7d5ae734c7f8bd5",
+      "personas/designer.md": "6239a7a62e04cc970d419937361e4e912f14bef1dd3f5e884df0b62af3ebc287",
+      "personas/explorer.md": "ee282fc106939b239fe1fb0384c94003f2ee8495d89e20ffe9231298d091fec5",
+      "personas/implementer.md": "ca6d2bfa6f4b960f591a742aa796f5dd350d92ef56ffccd6b4fb2c439c7d5510",
+      "personas/librarian.md": "97cbc792cd9e68e710c6f12daea4071c52ceea9a46c2836b2750fa055a578c40",
+      "personas/oracle.md": "df7933b8ad36a71cbfdda7a17ff19c369e5870d6c0eb984fe156b86cc9639ed8",
+      "personas/orchestrator.md": "a56ebd6ab54954b4e59495d73aa92c1e6ba16005f996ce259e27f931a16409aa"
+    },
+    "sha256Comparison": "逐文件 shasum -a 256：仓库 vs ~/.dsh/.agent-presets/ptc-roles/ ⇒ 10/10 SAME、0 DIFF。上表的值是两者**共同**的 sha256（不一致会以 DIFF 记录，不会静默通过）。",
+    "sha256SameCount": 10,
+    "sha256DiffCount": 0,
+    "siblingPresets": [
+      "ptc-roles"
+    ],
+    "handoffStalePoint": "HANDOFF §1 的『运行时仍未切换：~/.dsh/.agent-presets/ 下仍然只有 agent-lanes（软链指向旧仓库）』已过期 —— 实测该目录下只剩 ptc-roles，agent-lanes 已不在。",
+    "allowlistDrift": "本轮未改动任何白名单，故 #12 的三份手工副本（agent.cordis.yml allow / 脚本 EXPECTED / README 角色表）无需同步；行为脚本对三角色的判定为『白名单精确匹配』。"
+  },
+  "rawScriptOutput": {
+    "$ node scripts/verify-ptc-roles.cjs --raw": {
+      "exitCode": 0,
+      "output": "会话 4 个（工作区 /Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles），跳过错文件 0\n\n─ 主 agent  session-ee97f96a-518  role=orchestrator(未识别)  model=deepseek/deepseek-v4.1-flash  ptc=YES  tools=1\n   ✓ 主 agent 保持 PTC（预期）\n   ✓ 主 agent 载入 round-5 纪律 persona（含 \"Delegation contract\"）\n   工具面: run_code\n─ 子代理 d1  5c5a534a-200f-4d53-b  role=explorer  model=meituan/LongCat-2.0:free  ptc=no  tools=7\n   ✓ PASS native + 白名单精确匹配（5 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: glob, grep, list_subagent_models, lsp, mcp__codegraph__codegraph_explore, read, subagent\n─ 子代理 d1  374189d3-e6b8-4976-8  role=implementer  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=10\n   ✓ PASS native + 白名单精确匹配（8 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: bash, edit, glob, grep, list_subagent_models, lsp, read, subagent, todo_write, write\n─ 子代理 d1  c6f9ffb9-b1c5-432d-b  role=designer  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=8\n   ✓ PASS native + 白名单精确匹配（6 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: bash, edit, glob, grep, list_subagent_models, read, subagent, write\n\n汇总: ✓4  ✗0  !0\n提权请求（实测计数）: ptc-roles 主 agent 0 / ptc-roles 角色子代理 0 / 其他会话 0\n  ← ptc-roles 角色子代理零提权，与 approval policy never 一致（尚无理由做 sandbox-strip）\n  ! 全为 0 —— 用 --all 复核：其他工作区应有非零计数，否则本计数器的阳性路径未被证明"
+    },
+    "$ node scripts/verify-role-presentation.cjs": {
+      "exitCode": 0,
+      "output": "plugin: /Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/preset/ptc-roles/role-presentation.mjs\nsha256: d1133e0a9d7b3d8e7249e9963e06014858f41eff77df3a37582e357c14a8367f\n\n  ✓ orchestrator (depth 0, no origin) keeps PTC\n  ✓ child with header depth 1 flips to native\n  ✓ child whose depth lives only in options.subagentDepth flips (Math.max)\n  ✓ child with origin 'subagent' but depth 0 flips AND warns\n  ✓ malformed options.subagentDepth warns, falls back to header, still flips\n  ✓ malformed depth on an orchestrator still warns but does not flip\n  ✓ negative zero is rejected as malformed\n  ✓ child without ctx.tools warns instead of throwing\n  ✓ presentAs failure is caught and warned\n  ✓ repeated agent/created flips once\n  ✓ undefined agent is a no-op\n\n汇总: 11/11 通过  ✓ 全绿"
+    },
+    "$ node scripts/verify-role-presentation.cjs --control": {
+      "exitCode": 1,
+      "output": "plugin: /Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/scripts/fixtures/role-presentation.prev.mjs   [NEGATIVE CONTROL — 期望失败]\nsha256: eb123c762aeff8d62e7d4c7a9bf4d09b9f18bc63ccc2de7cdfa895120f0581a0\n\n  ✓ orchestrator (depth 0, no origin) keeps PTC\n  ✓ child with header depth 1 flips to native\n  ✗ child whose depth lives only in options.subagentDepth flips (Math.max) — presentAs=0 warns=[]\n  ✗ child with origin 'subagent' but depth 0 flips AND warns — presentAs=0 warns=[]\n  ✗ malformed options.subagentDepth warns, falls back to header, still flips — presentAs=1 warns=[]\n  ✗ malformed depth on an orchestrator still warns but does not flip — presentAs=0 warns=[]\n  ✗ negative zero is rejected as malformed — presentAs=1 warns=[]\n  ✓ child without ctx.tools warns instead of throwing\n  ✓ presentAs failure is caught and warned\n  ✓ repeated agent/created flips once\n  ✓ undefined agent is a no-op\n\n汇总: 6/11 通过  ✗ 5 项失败\n阴性对照符合预期（恰 5 项失败）：断言确实抓得住旧版的静默 PTC 漏洞。"
+    },
+    "$ node scripts/verify-intent-gate-watchdog.cjs": {
+      "exitCode": 0,
+      "output": "plugin: /Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/preset/ptc-roles/intent-gate-watchdog.mjs\nsha256: 1e35761f68839458b544e4dce53b19b7a2d0efd1cb9af423df651dbbdd4895c4\n\n  ✓ appends one reminder when the previous turn lacked the marker\n  ✓ injected message matches createUserMessage shape and is frozen\n  ✓ stays silent when the previous turn emitted the marker\n  ✓ no reminder on the first turn (no previous-turn data)\n  ✓ never overrides a downstream reject\n  ✓ skips steps with no real user message\n  ✓ skips role children whose depth lives in the header\n  ✓ skips role children whose depth lives only in options.subagentDepth\n  ✓ malformed options.subagentDepth skips and warns\n  ✓ reminds at most once per turn\n  ✓ re-evaluates on the next turn\n  ✓ honours a custom config.markers list\n  ✓ rejects an empty config.markers at load time\n  ✓ rejects a blank config.markers entry at load time\n  ✓ rethrows a downstream failure instead of swallowing it\n  ✓ malformed payloads are a no-op, not a crash\n\n汇总: 16/16 通过  ✓ 全绿"
+    },
+    "$ node scripts/verify-intent-gate-watchdog.cjs --control": {
+      "exitCode": 0,
+      "output": "plugin: /Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/scripts/fixtures/intent-gate-watchdog.naive.mjs   [NEGATIVE CONTROL — 期望指定断言失败]\nsha256: e82d766ff9dfdeaba5e708f385c3c5068a12ac2bf23f5a3c2891ab8e02837731\n\n  ✓ appends one reminder when the previous turn lacked the marker\n  ✓ injected message matches createUserMessage shape and is frozen\n  ✓ stays silent when the previous turn emitted the marker\n  ✗ no reminder on the first turn (no previous-turn data)\n  ✗ never overrides a downstream reject\n  ✓ skips steps with no real user message\n  ✗ skips role children whose depth lives in the header\n  ✗ skips role children whose depth lives only in options.subagentDepth\n  ✗ malformed options.subagentDepth skips and warns\n  ✗ reminds at most once per turn\n  ✓ re-evaluates on the next turn\n  ✓ honours a custom config.markers list\n  ✗ rejects an empty config.markers at load time\n  ✗ rejects a blank config.markers entry at load time\n  ✓ rethrows a downstream failure instead of swallowing it\n  ✓ malformed payloads are a no-op, not a crash\n\n汇总: 8/16 通过  ✗ 8 项失败\n阴性对照符合预期：7 条指定断言全部失败（共 8 项失败）—— 断言确实抓得住\"该提醒时不提醒/乱提醒\"的实现。"
+    }
+  },
+  "watchdogInjection": {
+    "mechanism": "`agent/pre-step` 里判定『上一轮（turn-1）的 assistant 文本不含 markers』⇒ 追加一条 `source.kind = 'plugin'` 的 user 消息（另见 verify-intent-gate-watchdog.cjs 16 条单测）。",
+    "turnBoundariesFromLog": "\"type\":\"turn/start\",\"seq\":7,\"time\":1789402086908,\"data\":{\"turn\":1}\n\"type\":\"turn/start\",\"seq\":208,\"time\":1789402433617,\"data\":{\"turn\":2}",
+    "turn1MarkerHits": "turn1 assistant/message events=24 | carrying the exact marker=0",
+    "injectedMessageRawEvent": "{\"type\":\"user/message\",\"seq\":212,\"time\":1789402433681,\"data\":{\"id\":\"d2ba9334-3f53-4518-b763-59eae9b1c6a2\",\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[intent-gate-watchdog] 上一轮没有输出「意图判定」行。\\n规则（orchestrator persona 的 Phase 0，适用于每一条用户消息）：动手之前先用一行分类并说明计划，\\n以字面量「意图判定」开头，例如：\\n意图判定：implementation — 先读 X，再改 Y，最后跑 Z 验证。\\n桶只取这六个：research / implementation / investigation / evaluation / fix / open-ended。\\n这是为了防止「解法先行」的强制步骤，不是格式要求。请在回复的第一行补上。\"}],\"source\":{\"kind\":\"plugin\",\"plugin\":\"intent-gate-watchdog\",\"form\":\"notice\",\"summary\":\"intent gate missing\"}},\"surfaceOp\":\"append\"}",
+    "injectedMessageId": "d2ba9334-3f53-4518-b763-59eae9b1c6a2",
+    "injectedMessageTextBytes": 279,
+    "injectedMessageSource": {
+      "kind": "plugin",
+      "plugin": "intent-gate-watchdog",
+      "form": "notice",
+      "summary": "intent gate missing"
+    },
+    "placement": "seq=212，位于 `turn/start turn=2`（seq=208）之后 ⇒ 注入发生在 turn 2 的第一步，与设计一致；编排器在 turn 2 的输入里实际看到了这条提醒。",
+    "detourFinding": "子代理结算通知不新起轮次：它走 `agent/inbox/spliced` 并入当前轮（`source.kind = subagent-settled`）⇒ 这类『机器轮』永远不满足看门狗要求的真实 user 来源，也就永远不会触发它（设计如此，不是缺口）。"
+  },
+  "childSessions": [
+    {
+      "id": "5c5a534a-200f-4d53-bede-85393102e7f5",
+      "role": "explorer",
+      "model": "meituan/LongCat-2.0:free",
+      "ptc": false,
+      "toolCount": 7,
+      "expectedCount": 5,
+      "verdict": "PASS 白名单精确匹配（5 项 + 2 项已知自身层泄漏）",
+      "taskOutcome": "完成：给出 intent-gate-watchdog 全部引用点清单（agent.cordis.yml 4 / README 2 / HANDOFF 12 / 验证脚本 11 / 插件自身 9 / 阴性 fixture 6），并如实报出 AGENTS.md 与 docs/pitfalls.md『无引用』"
+    },
+    {
+      "id": "374189d3-e6b8-4976-896a-1ad68373bf6f",
+      "role": "implementer",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ptc": false,
+      "toolCount": 10,
+      "expectedCount": 8,
+      "verdict": "PASS 白名单精确匹配（8 项 + 2 项已知自身层泄漏）",
+      "taskOutcome": "完成：三条只读命令逐字回报（node v24.19.0 / git status / git log），零写入"
+    },
+    {
+      "id": "c6f9ffb9-b1c5-432d-b980-61f14b9e560a",
+      "role": "designer",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ptc": false,
+      "toolCount": 8,
+      "expectedCount": 6,
+      "verdict": "PASS 白名单精确匹配（6 项 + 2 项已知自身层泄漏）",
+      "taskOutcome": "完成：按行号回报 personas/designer.md 的输出契约"
+    }
+  ],
+  "findings": [
+    {
+      "id": "P-1",
+      "claim": "新 id `ptc-roles` 在宿主内真的挂载（欠账①关闭）",
+      "observed": "`agent-preset/selected` 事件 = ptc-roles；system/message（126625 B）里实际存在 `## Specialists` 6 列表与 `## Delegation contract` 段；`Program-only SDK bindings` 的 `interface ToolArgsMap` 内五个角色名（explorer/librarian/oracle/implementer/designer）齐；request/header.tools = [`run_code`] ⇒ 主 agent 仍是 PTC",
+      "meaning": "「改名后这个 id 从未在宿主内出现过」不再成立。注意会话头字段 `agentPreset` 仍写 standard —— 那是创建时默认值，别拿它当证据。"
+    },
+    {
+      "id": "P-2",
+      "claim": "五个角色行在宿主内可派发且白名单是硬边界（本轮实测 3/5：explorer / implementer / designer）",
+      "observed": "行为脚本：explorer 5 项、implementer 8 项、designer 6 项，全部 `ptc=no`（native）+『白名单精确匹配』；每行另带 2 项已知自身层泄漏 `list_subagent_models, subagent`（pitfalls #7，非白名单问题）",
+      "meaning": "设计前提『子代理切 native ⇒ toolFilter 才是能力边界』在本轮三个角色上成立；librarian / oracle 本轮未派（其行未被验证，别外推）。"
+    },
+    {
+      "id": "P-3",
+      "claim": "意图门看门狗在宿主内真的注入提醒（欠账②关闭）",
+      "observed": "`turn/start` 共两条（turn 1 seq=7 / turn 2 seq=208）；turn 1 的 24 条 assistant 消息里含该字面量的 = 0；随后 seq=212 出现 `source.kind = plugin, plugin = intent-gate-watchdog` 的 user 消息（279 B，与插件 `REMINDER` 常量逐字相同）；编排器在 turn 2 输入里实际读到这条提醒",
+      "meaning": "『逻辑正确但从未在宿主里跑过』的边界关闭：挂载、触发条件（上一轮漏 + 真实 user 来源 + depth 0）、注入通道（agent/pre-step 追加消息）三者同时在真机成立。**仍只证『注入发生』，不证『行为因此改变』。**"
+    },
+    {
+      "id": "P-4",
+      "claim": "HANDOFF 建议的取证命令 `zstd -dc S | grep -c 'intent-gate-watchdog'` 是**不可靠**的判据",
+      "observed": "同一条命令得 67（写记录时的快照；该计数随会话里更多引用插件名落的文本继续增长，没有上界）；而按消息来源精确匹配（`\"kind\":\"plugin\",\"plugin\":\"intent-gate-watchdog\"`）得 1",
+      "meaning": "污染源：①编排器本会话 read 过插件源码（工具结果落盘）②explorer 的任务报告逐字引用了插件源码。⇒ 只要会话里有人读过过插件源码/验证脚本，这个计数就失去意义；正确判据是**匹配消息的 source 字段**，不是全文 grep。"
+    },
+    {
+      "id": "P-5",
+      "claim": "提权计数器的阳性路径非空转",
+      "observed": "`--all`：`其他会话 20`（非零），`ptc-roles 主 agent 0 / ptc-roles 角色子代理 0`",
+      "meaning": "『角色子代理零提权』不是计数器坏了；与证据 ⑥ 的 `approval policy = never`（提权构造上关闭）一致，仍无理由做 sandbox-strip。"
+    },
+    {
+      "id": "P-6",
+      "claim": "部署一致性：宿主读到的就是仓库里的这份",
+      "observed": "`~/.dsh/.agent-presets/ptc-roles/` = 真目录 + 5 软链（全部指向本仓库）；4 个文件 + 6 个 persona 的 sha256 与仓库逐一相同（10/10 SAME）",
+      "meaning": "脚本/插件单测的 sha256 就是宿主实际加载的字节；另：该目录下**只剩** ptc-roles（见 crossChecks.handoffStalePoint）。"
+    },
+    {
+      "id": "P-7",
+      "claim": "「上一轮合规 ⇒ 本轮沉默」的分支也在真机成立（单测之外的首次宿主内观测）",
+      "observed": "全会话仅 1 条 `plugin=intent-gate-watchdog` 消息（seq=212，turn 2）；turn 3 的 `turn/start`（seq=336）之后**没有**第二条注入，而 turn 2 的 assistant 文本里确实有 1 条带门行（脚本新口径：turn 2 的 11 条 assistant/message 中 1 条命中）",
+      "meaning": "看门狗不是「每轮都提醒」的噪音源：只在该提醒时说话。观测手段是 scripts/verify-ptc-roles.cjs 新增的「意图门合规率 · 逐轮」，输出 `逐轮(首行): T1✗ T2✓ T3✓`。"
+    }
+  ],
+  "notVerifiable": [
+    "win32 平台分支（本机无该平台；`allow` 里的平台表达式本轮只在 macOS 分支求值）。",
+    "看门狗（以及 round-5 persona）的**效用**：提醒被注入、文本被载入都可证，『因此模型行为改变』不可由日志证明。",
+    "看门狗的**观测侧**（`session/event` 记录上一轮是否命中）不落任何痕迹 ⇒ 只有『注入』是可观测信号，『未注入』只能由注入的缺失反推。",
+    "本轮只派了 explorer / implementer / designer 三个角色；librarian 与 oracle 两行的宿主内白名单本轮**未验证**。",
+    "『合规率』（逐轮是否输出门行）仍无数字 —— 需把指标固化进验证脚本（HANDOFF §3③，待人点头）。"
+  ]
+}
