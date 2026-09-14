@@ -2,7 +2,7 @@
 
 > **「机制 / 坑 / 怎么办」只写在这里。** `AGENTS.md` 只放规则、`HANDOFF.md` 只放交接，
 > 两者都**引用**本文件而**不复制**内容；加新坑请加在这里。
-> 编号 **1–12 是稳定锚点**，外部统一按 `docs/pitfalls.md` #N 引用。
+> 编号 **1–14 是稳定锚点**，外部统一按 `docs/pitfalls.md` #N 引用。
 
 ## A. 生效路径（改完怎么才算生效）
 
@@ -16,7 +16,7 @@ DSH 从 `~/.dsh/.agent-presets/agent-lanes/` 读，那里是**真目录 + 内部
   改完**确认输出含 `x.mjs -> ?v=N`**。
 - **本会话改的不生效** —— 配置在挂载时已读取，要验证必须开新会话。
 
-## B. 机制与坑（1–12）
+## B. 机制与坑（1–14）
 
 1. **`maxDepth` 是子代理的绝对深度上限**：`childDepth = parentDepth + 1`，超过就抛 `SubagentDepthError`。
    主 agent 深度 0 ⇒ **`maxDepth: 0` 会让它一个子代理都派不出去**。当前取值：explorer / librarian = `2`
@@ -79,6 +79,46 @@ DSH 从 `~/.dsh/.agent-presets/agent-lanes/` 读，那里是**真目录 + 内部
     （漏了会立刻 FAIL，不会静默 —— 这是它可以接受手工同步的原因）；②**persona 的 Specialists 表只写
     路由事实（领域 / 何时委派 / 拓扑 / 只读或可写），绝不写工具名** —— 别再添第 4 份。
 
+13. **`glob` / `grep` 的「发现」语义 —— 三条实测事实**（2026-09-14，本仓库内复现两轮；仓库目录与
+    「软链部署目录」对照测）：
+    - **① 模式基准是「会话 cwd」，不是 `path` —— 会产出「假空」。** `path` 只限制**遍历根**，
+      **不重定匹配基准**：**无斜杠**的模式按 **basename** 匹配（任意深度），**有斜杠**的模式按
+      **相对会话 cwd 的完整路径**匹配。实测（`path` = 仓库 `preset/agent-lanes`，该目录真值 9 个文件）：
+      `'personas/*'` → **0 条（假空）**、`'personas/explorer.md'` → **0 条**；而 `'*.md'` → 6 条、
+      `'**/personas/*'` → 6 条、`'preset/agent-lanes/personas/*'` → 6 条、`'**/*'` → 9 条。
+      ⇒ **0 条 ≠ 「目录是空的」**。自然的「列子目录」写法必然假空 —— **别把 0 条当证据**去下
+      「目录为空 / 文件缺失」的结论；要么写 `**/<子目录>/*`，要么把 `<子目录>` 当 `path` 再配 `**/*`。
+    - **② symlink 是盲区（结构性，改配置改不出来）。** `glob` / `grep` 都是 ripgrep 直传
+      （`packages/fs/tool-fs-search/src/glob.ts:78-91` 原文 "Build the fixed `rg --files` argv"），
+      ripgrep **不列出、也不跟随遍历中遇到的 symlink**，而 `tool-fs-search` 的 **9 个 Config 字段里
+      没有任何跟随开关**。实测：对一个「4 个软链 + 0 个真文件」的目录，`'*'` / `'**/*'` / `'*.md'`
+      与 `grep('persona')` **全部 0 条**；而**作为 `path` 传入的软链目录会被跟随**（`path=<软链目录>`
+      + `'**/*'` → 6 条）⇒ 「**看得见真文件、看不见软链**」。
+    - **③ `read` 不能列目录（官方契约，非配置）。** `tool-fs` 的 README「Known Limitations」原文：
+      `read` 只处理 UTF-8 文本文件、**"A directory target is `FS_NOT_REGULAR_FILE`"**
+      （实现 = `packages/fs/fs-local/src/fsio.ts:354-366` 的 `statRegularFile` 闸门；实测 8 种目录形态
+      —— 含空目录、软链目录、相对路径、带尾斜杠 —— 全部同一条报错，而普通文件正常读出）。
+      ⇒ 只有 `read` / `glob` / `grep` 时，对**目录条目 / symlink / 空目录 / 元数据 / hash**结构性不可见。
+
+14. **探索类角色（`explorer` / `librarian`）的工具面边界 + 路由约定。** 这两个角色白名单里**没有 shell**，
+    所以 `ls` / `stat` / `readlink` / `shasum` 一类**文件系统级侦察结构性做不到**。配合 #13③，
+    它们对目录与元数据的盲区是**「无 shell 只读叶子」这个取舍的已知代价，不是待修的缺口**
+    （官方 4 个 preset 都没挂目录列举工具，是因为**它们都有 shell**；本 preset 的 explorer 没有 shell
+    是**刻意的设计选择**）。
+    - **路由约定**：需要 **symlink / 元数据（类型、size、mtime、权限）/ hash** 的核查 ⇒
+      **派 `implementer`（有 shell）或编排器自己做**；**不要**为这类需求扩 `explorer` 白名单。
+    - **刻意不做**：不新增 `list` / `tree` 工具；**也不挂官方 `str_replace_editor`** —— 它的 `view`
+      能列目录（非隐藏、**最多 2 层**、symlink 显示为 `?`），但它是**编辑器**
+      （`view`/`create`/`str_replace`/`insert`）、Config **无只读开关**，而 `toolFilter` 按**工具名**
+      遮蔽 ⇒ 给谁就**连带给写**。**先有失败记录再谈**（AGENTS.md 规则演进原则）。
+    - **若将来真出现重复需求**（≥3 次实际受阻、且编排器代跑解决不了）：升级路径 = ①官方
+      `str_replace_editor.view`（代价：连带写）或 ②经官方 seam `ctx.fs.listDir`
+      （`packages/fs/fs/src/index.ts:236`）写**只读薄适配** —— 插件用 `ctx.get('fs')` 取服务，
+      **无需 import `@deepseek-ai/*`**（不违反零 import 规则），也不绕过 fs 服务（含 lstat / containment）。
+    - **附带**：`lsp` 在本项目**inert** —— `.mjs` / `.cjs` 都报 `no LSP provider handles`
+      （本仓库没有 `.ts`/`.js`/`.py`/`.go`/`.rs`）；官方 `lsp` 另有**工作区包含性**约束
+      （工作区外文件报 `source "…" resolves outside the workspace`）⇒ 它只在本工作区内的受支持语言上有效。
+
 ## C. 排障表（症状 → 原因 → 修法）
 
 | 症状 | 原因 | 修法 |
@@ -96,3 +136,6 @@ DSH 从 `~/.dsh/.agent-presets/agent-lanes/` 读，那里是**真目录 + 内部
 | 改了 `.mjs` 没变化 | 未 bump `?v=`，ESM 按 URL 缓存 | `dev_reload_preset preset=agent-lanes` 后开新会话（A 节） |
 | `dev_reload_preset` 回「**无相对 .mjs 引用（无需热更新）**」 | yml 里插件引用**被引号包住**，该工具只认裸 `./x.mjs` —— 它静默空转，旧代插件继续被新会话使用 | 去掉引号再跑；确认输出含 `x.mjs -> ?v=N`（A 节） |
 | 插件单元校验有 FAIL | 深度判据被改坏：必须同时认 `Math.max(header, options.subagentDepth)` 与 `origin === 'subagent'`，且畸形深度要告警但**仍然**翻转 | 读 `scripts/verify-lane-role-presentation.cjs` 的断言名（#10）；**改回插件而非改断言** |
+| `glob` 对某目录返回 **0 条**，但目录里明明有文件 | 模式基准是**会话 cwd**、不是 `path`；或目标是**软链**（ripgrep 不列出软链） | 改写成 `**/<子目录>/*`，或把该目录当 `path` 再配 `**/*`；先确认它是不是软链（#13①②） |
+| 角色子代理说「目录是空的 / 文件不存在」，但编排器 `ls` 看得见 | 探索类角色对目录条目与 symlink **结构性不可见**（#13③ / #14） | 这类核查派 `implementer` 或编排器自己做；**不要**为它扩 `explorer` 白名单（#14） |
+| 想让 `explorer` 能列目录 / 查 hash | 只读叶子 = 无 shell，这是**刻意取舍**（#14） | 先确认是否真有重复受阻（≥3 次）；升级路径与代价见 #14 |
