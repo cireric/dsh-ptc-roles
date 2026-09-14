@@ -7,7 +7,7 @@
 >
 > 另外：**2026-09-13 第 6 轮**把角色 `fixer` 改名为 `implementer`，所以旧记录里的 `fixer` 即今日的 `implementer`。
 
-八份 JSON 都是 2026-09-13 的原始输出（①–⑥ 是探针与冒烟证据，⑦⑧ 是第 4/5 轮的改动记录），**只读证据**，不需要重跑就能复用结论。
+九份 JSON 都是原始输出（①–⑥ 是 2026-09-13 的探针与冒烟证据，⑦⑧ 是第 4/5 轮的改动记录，⑨ 是 2026-09-14 的**宿主内**结清验证），**只读证据**，不需要重跑就能复用结论。
 
 ## 1. `2026-09-13-restrict-scope-and-presentAs.json`
 
@@ -197,20 +197,46 @@ A 版 70 行 design 宣言 vs B 版 5 行规划 persona 的取舍理由）。
 **边界（别误读）**：本记录证明的是**移植了哪些条**与**上游原文长什么样**；它**不**证明这些纪律
 会改变模型行为 —— **效用**是另一个问题，会话日志测不出来。
 
+## 9. `2026-09-14-round4-5-6-in-host-verification.json`
+
+**它证明了什么**：第 4/5/6 三轮的「**在宿主内是否生效**」不再是欠账 —— 三者的数据面信号全部为真，
+验证债清零。这是本项目唯一一类**只能靠新会话**才能下结论的验证（部署无日志通道，见 #9）。
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `childSessions[1]`（designer） | `role=designer ptc=no tools=8` | **designer 首次在宿主里真的挂载**（白名单 6 + 2 已知泄漏）⇒ 证据 ⑦ 的边界关闭 |
+| `childSessions[2]`（implementer） | `role=implementer ptc=no tools=10` | 第 6 轮改名在宿主内成立（白名单 8 + 2）；`--all` 无 `fixer` WARN 残留 |
+| `findings[1]`（R5-a） | 脚本 `✓ 主 agent 载入 round-5 纪律 persona` | 第 5 轮生效；双证 = 脚本判定 + 编排器自读 system prompt 里的 6 列表与 `Delegation contract` |
+| `findings[3]`（R1-a） | `Error: subagent depth 2 exceeds maxDepth 1` | maxDepth 缓解在宿主内**再次被真实触发**（explorer 调泄漏的 `subagent`），未产生孙代 |
+| `crossChecks.deployedPresetIntegrity` | 4 软链 + 10 文件 sha256 与仓库**逐一相同** | 宿主读到的就是仓库里的；`.mjs` = `cab14ad8…`（= ⑤ 注释里记的当前值） |
+| `crossChecks.allowlistDrift` | 5 角色 / 33 项 ↔ 33 项，零漂移 | #12 的漂移风险本轮实测为 0（工具是一次性的，见下） |
+| `crossChecks.repoUntouched` | `M AGENTS.md` / `M HANDOFF.md`（本轮前既有） | 三角色产出全在 gitignore 覆盖的 `scratch/`；`README`/`docs`/`scripts`/`preset` mtime 未变 |
+| `findings[4]`（OBS-a） | explorer 工具面无 shell ⇒ 做不了 `ls`/`shasum`，**如实报告而非编造** | 编排器任务规格写错；反过来是白名单生效的正面证据。**不给 explorer 加 shell** |
+
+**怎么得到的**（复现方法）：在 agent-lanes preset 下开新会话，并行派 explorer / designer / implementer，
+然后 `node scripts/verify-agent-lanes.cjs --raw`；单元校验见 ⑤ 的两条命令；部署一致性用
+`ls -la` + `readlink` + `shasum -a 256` 对 `~/.dsh/.agent-presets/agent-lanes/` 与仓库同名文件各算一遍。
+原始脚本输出逐字存于该 JSON 的 `rawScriptOutput`。
+
+**边界（别误读）**：① 只证 **macOS 分支**，win32 分支仍不可测；② persona 那条**只证文本被载入、不证效用**；
+③ `crossChecks.allowlistDrift` 用的检测器是 **gitignore 覆盖的一次性产物**（`scratch/check-allowlist-drift.cjs`），
+**未入库**，所以不要把它当可复现资产引用 —— 真正的常设保障仍是「漂移即 FAIL」的行为脚本。
+
 ## 附 · 轮次与结清状态（从 HANDOFF 搬迁至此：逐轮验证记录）
 
 > HANDOFF 只留**当前要做什么**；逐轮历史归这里，因为它本来就是「验证账本」。
-> 证据编号 ①–⑧ 对应该文件上方 `## 1`–`## 8` 各分节。
+> 证据编号 ①–⑨ 对应该文件上方 `## 1`–`## 9` 各分节。
 
 | 轮 | 内容 | 状态 | 证据 |
 |---|---|---|---|
 | 1–2 | v1 装配 + 行为冒烟；首轮逮到 explorer/librarian 派不出去、工具面泄漏 + 孙代升级已被利用 | ✅ 已修并复验通过 | ③④ |
 | 3 | 翻转插件深度判据加固 + `.mjs` 引用引号坑；宿主内确认「加固那一代真的被挂载」 | ✅ 债清零（含**代次证明链**：loader 保留 query ⇒ `?v=1` 是独立缓存键，且该 URL 首次出现于加固写盘之后） | ⑤ 的 `hostMountConfirmation` |
-| 4 | 补全被静默丢掉的 `designer`（第 5 角色）+ 平台兼容（shell 平台择一）；旁及审计全仓库 | ⏳ **宿主内待验**（见 `HANDOFF.md` 的接手清单） | ⑦ |
+| 4 | 补全被静默丢掉的 `designer`（第 5 角色）+ 平台兼容（shell 平台择一）；旁及审计全仓库 | ✅ **已结清**（designer **首次宿主挂载**：`role=designer ptc=no`，白名单 6 项精确匹配；win32 分支仍不可测） | ⑦⑨ |
 | 4 | 首轮 dogfooding：explorer 清点 + oracle 对抗评判 ⇒ 白名单**零漂移**，逮到 3 处真实缺陷（悬空 designer 引用、leaf-node 口径错、README 模型档漂移） | ✅ 均已修 | ⑧ |
-| 5 | 核实 Sisyphus 覆盖度（上游 v4.19.4）并补全操作性纪律；Specialists 改表；`continuable` 定案 | ⏳ **宿主内待验**（见 `HANDOFF.md` 的接手清单） | ⑧ |
+| 5 | 核实 Sisyphus 覆盖度（上游 v4.19.4）并补全操作性纪律；Specialists 改表；`continuable` 定案 | ✅ **已结清**（persona 文本确认载入；**仅证载入、不证效用**） | ⑧⑨ |
+| 6 | 角色 `fixer` → `implementer` 改名（yml / persona / `EXPECTED` / 文档同步；**不做** LEGACY_ROLES 别名） | ✅ **已结清**（`role=implementer ptc=no` 白名单 8 项；`--all` 无 fixer WARN 残留） | ⑨ |
 
-**仍未做**：`skills` 细粒度分发（推迟 v1.1）；~~sandbox-strip~~ **结案不做**（证据 ⑥）。
+**仍未做**：`skills` 细粒度分发（推迟 v1.1）；~~sandbox-strip~~ **结案不做**（证据 ⑥）；win32 平台分支（本机无该平台，只能靠设备验证）。
 
 ## 注意
 

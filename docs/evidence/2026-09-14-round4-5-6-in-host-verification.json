@@ -1,0 +1,140 @@
+{
+  "probe": "2026-09-14-round4-5-6-in-host-verification",
+  "question": "第 4 轮的 designer（从未在宿主挂载过）、第 5 轮的 round-5 纪律 persona、第 6 轮的 fixer→implementer 改名，在**宿主内**是否生效？",
+  "why": "前三项此前只验到「不依赖宿主的静态检查」层（yml 过 loader dialect 解析 / persona 与白名单文本核对），而本部署 logger.warn 无落盘通道（pitfalls #9）⇒ 唯一可查证的信号是数据面：会话事件 + 两个脚本判定。",
+  "answer": "YES —— 三者全部在本会话（PERSONA_V2_SINCE 之后新建）实测生效，验证债清零。",
+  "session": {
+    "id": "session-2982160d-c703-4211-878d-617d87bebe96",
+    "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes",
+    "createdAt": "2026-09-14T00:05 (本地)",
+    "delegationDepth": 0,
+    "preset": "agent-lanes"
+  },
+  "rawScriptOutput": "会话 4 个（工作区 /Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes），跳过错文件 0\n\n─ 主 agent  session-2982160d-c70  role=orchestrator(未识别)  model=deepseek/deepseek-v4.1-flash  ptc=YES  tools=1\n   ✓ 主 agent 保持 PTC（预期）\n   ✓ 主 agent 载入 round-5 纪律 persona（含 \"Delegation contract\"）\n   工具面: run_code\n─ 子代理 d1  a26abebe-78e4-45c8-b  role=explorer  model=meituan/LongCat-2.0:free  ptc=no  tools=7\n   ✓ PASS native + 白名单精确匹配（5 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: glob, grep, list_subagent_models, lsp, mcp__codegraph__codegraph_explore, read, subagent\n─ 子代理 d1  7104c60c-9a9e-4522-8862-fe3863788a29  role=designer  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=8\n   ✓ PASS native + 白名单精确匹配（6 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: bash, edit, glob, grep, list_subagent_models, read, subagent, write\n─ 子代理 d1  cdc83438-4c8e-4c04-bf2a-2ccffb1e7db6  role=implementer  model=deepseek/deepseek-v4.1-flash  ptc=no  tools=10\n   ✓ PASS native + 白名单精确匹配（8 项） | ⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent\n   工具面: bash, edit, glob, grep, list_subagent_models, lsp, read, subagent, todo_write, write\n\n汇总: ✓4  ✗0  !0\n提权请求（实测计数）: agent-lanes 主 agent 0 / agent-lanes 角色子代理 0 / 其他会话 0\n  ← agent-lanes 角色子代理零提权，与 approval policy never 一致（尚无理由做 sandbox-strip）\n  ! 全为 0 —— 用 --all 复核：其他工作区应有非零计数，否则本计数器的阳性路径未被证明",
+  "rawScriptOutputNote": "脚本把 id 截断为 20 字符打印；三个子会话的完整 id 见 childSessions[].id。",
+  "childSessions": [
+    {
+      "id": "a26abebe-78e4-45c8-bbae-f74a3c940f78",
+      "role": "explorer",
+      "model": "meituan/LongCat-2.0:free",
+      "ptc": false,
+      "toolCount": 7,
+      "expectedCount": 5,
+      "verdict": "PASS 白名单精确匹配",
+      "taskOutcome": "任务未完成（见 findings[3]：该角色无 shell，任务规格由编排器写错）"
+    },
+    {
+      "id": "7104c60c-9a9e-4522-8862-fe3863788a29",
+      "role": "designer",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ptc": false,
+      "toolCount": 8,
+      "expectedCount": 6,
+      "verdict": "PASS 白名单精确匹配",
+      "taskOutcome": "完成 scratch/designer-role-cards.html（589 行）"
+    },
+    {
+      "id": "cdc83438-4c8e-4c04-bf2a-2ccffb1e7db6",
+      "role": "implementer",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "ptc": false,
+      "toolCount": 10,
+      "expectedCount": 8,
+      "verdict": "PASS 白名单精确匹配",
+      "taskOutcome": "完成 scratch/check-allowlist-drift.cjs（387 行）并实测 exit 0"
+    }
+  ],
+  "findings": [
+    {
+      "id": "R4-a",
+      "claim": "第 4 轮补的 designer 角色**首次在宿主内真正挂载**并成功派出",
+      "observed": "role=designer ptc=no tools=8 = 白名单 6 项 + 2 项已知自身层泄漏；model=deepseek/deepseek-v4.1-flash 被接受",
+      "meaning": "证据 ⑦ 的边界「designer 这一行从未在任何宿主里挂载过」就此关闭。macOS 平台分支实测；win32 分支仍不可测（本机无 win32）。"
+    },
+    {
+      "id": "R5-a",
+      "claim": "第 5 轮 round-5 纪律 persona 在宿主内被载入",
+      "observed": "脚本：`✓ 主 agent 载入 round-5 纪律 persona（含 \"Delegation contract\"）`；独立复核：本会话 system prompt 里实际存在 `## Specialists` 6 列表（含 Topology / Mode）与 `## Delegation contract` 段",
+      "meaning": "双重证据（脚本判定 + 编排器自读 system prompt）。**边界**：只证文本被载入，不证行为改变（原话见 docs/pitfalls.md C 节对应排障行的 ⚠️）。"
+    },
+    {
+      "id": "R6-a",
+      "claim": "第 6 轮 fixer→implementer 改名在宿主内成立，且无改名过渡噪音残留",
+      "observed": "role=implementer ptc=no tools=10 = 白名单 8 项 + 2 项泄漏；`--all` 全量扫描输出中无任何 `! WARN 没有 fixer 的期望白名单`，全局汇总 ✓4 ✗0 !0",
+      "meaning": "历史 3 个 fixer 会话（HANDOFF 前置项要求删除的那三个）在本轮开始前已不存在于 ~/.dsh/sessions；本轮确认无残余、且新会话不再产出该 WARN。"
+    },
+    {
+      "id": "R1-a",
+      "claim": "第 1 轮的 maxDepth 缓解在宿主内仍然有效（本轮被**真实触发**一次）",
+      "observed": "explorer（depth 1）尝试调用其自身层泄漏的通用 `subagent`，工具面回朴素文本 `Error: subagent depth 2 exceeds maxDepth 1`；未产生任何 depth≥2 会话",
+      "meaning": "与证据 ④ 的 1b 复现一致：泄漏仍在（pitfalls #7），但升级路径被 maxDepth 1 堵死。口径提醒：`SubagentDepthError` 是类名、不穿过工具面。"
+    },
+    {
+      "id": "OBS-a",
+      "claim": "能力观察（非缺陷）：explorer / librarian 无 shell ⇒ 结构性做不了文件系统级侦察",
+      "observed": "explorer 的 native 工具面 = glob / grep / lsp / read / mcp__codegraph__codegraph_explore（无 bash）⇒ 无法执行 ls / readlink / shasum / stat。该角色**如实报告了做不到**，未编造结论（符合 AGENTS.md 禁止捏造）。",
+      "meaning": "这是**编排器侧任务规格写错**（让无 shell 的角色去跑 shell 命令），不是 preset 失效 —— 反过来还构成白名单生效的正面证据。含义：需要 `ls`/`shasum`/mtime 一类侦察时，要么编排器自己做，要么派 implementer；**不要**因此给 explorer 加 shell（那会破坏只读叶子性）。是否把这条写进 docs/pitfalls.md 由人决定（本轮只记录、不改知识源）。"
+    }
+  ],
+  "crossChecks": {
+    "deployedPresetIntegrity": {
+      "shape": "真目录 + 内部 4 个软链（不是把目录做软链）",
+      "links": {
+        "agent.cordis.yml": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes/preset/agent-lanes/agent.cordis.yml",
+        "lane-role-presentation.mjs": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes/preset/agent-lanes/lane-role-presentation.mjs",
+        "preset.yml": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes/preset/agent-lanes/preset.yml",
+        "personas": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes/preset/agent-lanes/personas"
+      },
+      "sha256Equal": true,
+      "sha256": {
+        "agent.cordis.yml": "4c25a768a4d70ea28382c95954d9b34ba1ceecead4e8973371ee7b2184c479ca",
+        "lane-role-presentation.mjs": "cab14ad812715753860128b9881b533f832c65bf5888f9ef50737530bc1902f8",
+        "preset.yml": "ce0e1f8769b90de3aa666e15f180b2fd345beae6f0a1a320d93382c586daebd3",
+        "personas/designer.md": "6239a7a62e04cc970d419937361e4e912f14bef1dd3f5e884df0b62af3ebc287",
+        "personas/explorer.md": "ee282fc106939b239fe1fb0384c94003f2ee8495d89e20ffe9231298d091fec5",
+        "personas/implementer.md": "ca6d2bfa6f4b960f591a742aa796f5dd350d92ef56ffccd6b4fb2c439c7d5510",
+        "personas/librarian.md": "97cbc792cd9e68e710c6f12daea4071c52ceea9a46c2836b2750fa055a578c40",
+        "personas/oracle.md": "df7933b8ad36a71cbfdda7a17ff19c369e5870d6c0eb984fe156b86cc9639ed8",
+        "personas/orchestrator.md": "a56ebd6ab54954b4e59495d73aa92c1e6ba16005f996ce259e27f931a16409aa"
+      },
+      "pluginsShaNote": "部署侧 .mjs 的 sha256 与工作树一致（cab14ad8…，即证据 ⑤ 注释里记的「重构后当前值」）；宿主对该 URL 的缓存代 `?v=1` 与当前字节**只差一行注释**，行为等价，故本轮未做 dev_reload_preset。",
+      "presetsPresent": [
+        "agent-lanes"
+      ]
+    },
+    "pluginUnitCheck": {
+      "current": "11/11 通过（exit 0），sha256 cab14ad8…",
+      "negativeControl": "6/11，恰 5 项失败（exit 1）—— 断言非空转"
+    },
+    "allowlistDrift": {
+      "what": "yml 的 `toolFilter.allow` ↔ 验证脚本的 `EXPECTED` 两处手工副本逐角色比对（pitfalls #12 的漂移风险）",
+      "result": "5 角色 / 33 项 ↔ 5 角色 / 33 项，逐角色一致，无漂移（exit 0）",
+      "how": "编排器派出的 implementer 写了一个一次性检测器（零依赖 CJS，落在 gitignore 覆盖的 scratch/，**不是仓库资产**，是否转正由人决定）；编排器独立重跑确认 exit 0。`!!js` 平台表达式正则求值为 `bash`，与脚本侧 `SHELL` 同口径。",
+      "durableRepro": "不依赖那个一次性工具：白名单若与 EXPECTED 漂移，`node scripts/verify-agent-lanes.cjs` 会立刻 FAIL（不会静默）—— 这正是手工同步可接受的理由。"
+    },
+    "escalationCounter": {
+      "agentLanesRoles": 0,
+      "rootAgent": 0,
+      "otherWorkspaces": 14,
+      "meaning": "角色子代理零提权，与 approval policy never 一致（证据 ⑥ 结论保持有效）；`--all` 下其他工作区非零 ⇒ 计数器阳性路径非空转。"
+    },
+    "repoUntouched": {
+      "gitStatusAfter": [
+        "M AGENTS.md",
+        "M HANDOFF.md"
+      ],
+      "note": "两处 M 是本轮开始**之前**就存在的工作树改动（文档重构遗留），diff --stat 与开始前逐字相同（4 / 19 行）。三个角色子代理的产出全部落在 gitignore 覆盖的 scratch/；README.md / docs/ / scripts/ / preset/ 的 mtime 全部停在 2026-09-13 23:50 之前。"
+    }
+  },
+  "notVerifiableThisRound": [
+    "win32 平台分支（shell 平台择一表达式的另一半）—— 本机无 win32",
+    "round-5 persona 的**效用**（是否改变模型行为）—— 文本载入可证，效用不可由会话日志测出",
+    "designer 之外的四个角色在本轮的**任务成功率**（explorer 的任务规格被编排器写错；librarian / oracle 本轮未派出）"
+  ],
+  "howToReproduce": [
+    "在 agent-lanes preset 下开新会话，并行派 explorer / designer / implementer 各一个",
+    "node scripts/verify-agent-lanes.cjs --raw",
+    "node scripts/verify-lane-role-presentation.cjs && node scripts/verify-lane-role-presentation.cjs --control",
+    "ls -la ~/.dsh/.agent-presets/agent-lanes/ && shasum -a 256 ~/.dsh/.agent-presets/agent-lanes/{agent.cordis.yml,lane-role-presentation.mjs,preset.yml,personas/*.md}"
+  ]
+}
