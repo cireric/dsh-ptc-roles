@@ -1,4 +1,4 @@
-# agent-lanes
+# ptc-roles
 
 一个 DSH **agent preset**：orchestrator 主 agent + 五个有职责边界的角色子代理。
 
@@ -21,34 +21,43 @@
 
 ## 安装
 
-preset 源码在本仓库；DSH 从 `~/.dsh/.agent-presets/agent-lanes/` 读取，那里要是**真目录 + 内部软链**
+preset 源码在本仓库；DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读取，那里要是**真目录 + 内部软链**
 （把整个目录做软链会被发现逻辑**静默跳过**）：
 
 ```bash
-mkdir -p ~/.dsh/.agent-presets/agent-lanes && cd ~/.dsh/.agent-presets/agent-lanes
-R=~/Project/tests/dsh-plugins/cireric-dsh-agent-lanes/preset/agent-lanes
+mkdir -p ~/.dsh/.agent-presets/ptc-roles && cd ~/.dsh/.agent-presets/ptc-roles
+R=~/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/preset/ptc-roles
 ln -s "$R/agent.cordis.yml" agent.cordis.yml
-ln -s "$R/lane-role-presentation.mjs" lane-role-presentation.mjs
+ln -s "$R/role-presentation.mjs" role-presentation.mjs
+ln -s "$R/intent-gate-watchdog.mjs" intent-gate-watchdog.mjs
 ln -s "$R/preset.yml" preset.yml
 ln -s "$R/personas" personas
 ```
 
 ## 使用
 
-新会话在 preset 选择器里选 `agent-lanes`，然后正常说话即可 ——
+新会话在 preset 选择器里选 `ptc-roles`，然后正常说话即可 ——
 主 agent 会按 orchestrator persona 的意图门判断，并把独立轨道派给对应角色工具。
 
 ## 验证
 
 ```bash
-node scripts/verify-agent-lanes.cjs               # 行为验证（--all 扫全部工作区；--raw 打全工具名）
-node scripts/verify-lane-role-presentation.cjs    # 插件单元校验（11 条断言）
+node scripts/verify-ptc-roles.cjs               # 行为验证（--all 扫全部工作区；--raw 打全工具名）
+node scripts/verify-role-presentation.cjs    # 插件单元校验（11 条断言；--control 必须恰 5 项失败）
+node scripts/verify-intent-gate-watchdog.cjs  # 看门狗单元校验（20 条断言；--control 必须失败在指定 10 条上）
 ```
 
-零模型成本。前者只读 `~/.dsh/sessions`，用 `request/header.header.tools`（**真正发给模型的**工具面）
+零模型成本。第一个只读 `~/.dsh/sessions`，用 `request/header.header.tools`（**真正发给模型的**工具面）
 判定每个会话的角色 / 模型 / 工具面 / 是否仍是 PTC：期望主 agent `✓ 保持 PTC`、每个角色子代理
 `✓ PASS native + 白名单精确匹配`，并带一行 `⊘ 已知自身层泄漏` —— 那是已知且已定位的现象
 （`docs/pitfalls.md` #7），不是白名单写错。
+
+它同时打印**意图门合规率**（逐轮判定 + 首行命中率）。口径：分子分母都只算**会改变行为**的轮次
+（要委派 / 要拒绝 / 要提问 / 要改文件），判据与看门狗插件共享同一份工具名单；「任意文本」一栏
+含工具结果，只作对照、不作合规分子（读过插件源码的轮次也会命中）。
+
+> 改了 `preset/ptc-roles/*.mjs` 之后必须 `dev_reload_preset preset=ptc-roles`（输出要含 `x.mjs -> ?v=N`）
+> **并开新会话** —— 挂载时才读取，运行中的会话保持旧代（`docs/pitfalls.md` A 节）。
 
 ## 文档地图（每份文档只干一件事）
 

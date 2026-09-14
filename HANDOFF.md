@@ -1,78 +1,67 @@
-# HANDOFF — agent-lanes（交接）
+# HANDOFF — ptc-roles（交接）
 
 > 本文件只回答两件事：**现在什么状态**、**你接手后要做什么**。
 > 长期内容不在这里（各归其位，见 `README.md` 的文档地图）；**也没有任何文档引用本文件** ——
 > 所以它可以随时整份重写或删掉重建。
-> 项目目录：`/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes`
+> 项目目录：`/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles`
 
 ## 0. 先确认你在哪个 preset 下
 
-**你应该运行在 `agent-lanes` preset 下。** 两个自检：
+**你应该运行在 `ptc-roles` preset 下**（选择器里显示为 **「PTC 角色模式」**）。两个自检：
 
 1. 工具面里有 `explorer` / `librarian` / `oracle` / `implementer` / `designer` 五个**命名委派工具**
-   （PTC 模式下它们在 `run_code` 的 SDK 里）。看不到 → 先让人在新会话里选 `agent-lanes`。
-2. system prompt 里有 `## Specialists` 的 **6 列表**（含 `Topology`、`Mode` 两列）与 `## Delegation contract` 段。
-   看不到 → 挂的是旧 persona。
+   （PTC 模式下它们在 `run_code` 的 SDK 里）。看不到 → 先让人在新会话里选这个 preset。
+2. system prompt 里有 `## Specialists` 的 **6 列表**（含 `Topology`、`Mode`）与 `## Delegation contract` 段。
 
-## 1. 当前状态（2026-09-14）
+> 两条自检 2026-09-15 都用**数据面**验过一次（system/message 事件里的 persona 文本 + SDK 块），见证据 ⑩。
+> **改名背景**：本 preset 于 2026-09-14 由 `agent-lanes` 改名为 `ptc-roles`。历史证据按设计保留旧名，
+> 对应关系见 `docs/evidence/README.md` 顶部。
 
-**验证债清零。** 第 4/5/6 三轮「在宿主内是否生效」已结清，记录 = `docs/evidence/README.md` 第 9 节 +
-`docs/evidence/2026-09-14-round4-5-6-in-host-verification.json`（含逐字原始输出）：
+## 1. 当前状态（2026-09-15 · 源码与运行时就绪，验证债清零）
 
-- **designer 首次在宿主里真正挂载**：`role=designer ptc=no tools=8`（白名单 6 项 + 2 项已知泄漏）——
-  证据 ⑦ 原先记的边界（「designer 从未在任何宿主挂载过」）关闭。
-- **implementer（原 fixer）同形**：`tools=10`（白名单 8 项 + 2）；`--all` 全量扫描**无 fixer WARN 残留**。
-- **round-5 纪律 persona 已载入**：脚本判定 + 编排器自读 system prompt 双证（**仅证载入、不证效用**）。
-- 主 agent 仍 **PTC**（`tools=[run_code]`）；三角色子代理**零提权**；`--all` 下其他工作区非零 ⇒ 计数器非空转。
-- 附带一次**真实触发**：explorer 调它自身层泄漏的 `subagent` → `Error: subagent depth 2 exceeds maxDepth 1`，**无孙代**。
-- 顺手复核：部署路径 4 个软链 + 10 个文件 sha256 与仓库**逐一相同**；yml↔`EXPECTED` 白名单
-  **5 角色 / 33 项零漂移**；插件单元 **11/11** 且阴性对照**恰 5 项失败**。
+- **改名已完成**：`preset/ptc-roles/`、`role-presentation.mjs`、`intent-gate-watchdog.mjs`、
+  `scripts/verify-ptc-roles.cjs`、`scripts/verify-role-presentation.cjs`、`scripts/verify-intent-gate-watchdog.cjs`。
+  面向人的活文档里旧名 **0 处**；冻结件（`docs/evidence/*`、`scripts/fixtures/*prev.mjs`）按设计保留原名。
+- **运行时已切换**：`~/.dsh/.agent-presets/` 下**只有 `ptc-roles`**（真目录 + 5 个内部软链，全部指向本仓库；
+  4 个文件 + 6 个 persona 的 sha256 与仓库逐一相同）。旧 preset 目录已不在。
+- **宿主内验证已做两轮**：证据 ⑩（旧代：新 id 挂载 / explorer·implementer·designer 白名单精确匹配 / 看门狗注入）
+  与证据 ⑫（**第二代 `?v=4`**：新 persona 文本载入、新看门狗**字节**载入、行为轮漏行被提醒 ×2、
+  只读轮漏行**不**提醒 —— 同一会话内对照，eligibility 判据在真机成立）。
+  ✅ **五个角色行全部在宿主内验过**：⑩ 覆盖 explorer / implementer / designer，⑬ 补上 `librarian`（8 项）与 `oracle`（6 项）—— 均 `ptc=no` + 白名单精确匹配。
+- **本轮（2026-09-15）新落地**：
+  - **门行补丁**：persona 的 Phase 0 由「每条消息都要输出」改成「**会改变行为的轮次才要**」
+    （要委派 / 要拒绝 / 要提问 / 要改文件），首行改成
+    `意图判定：<桶> — 你要的是 <用结果说>（依据：<你话里让我这么读的那一点>）；我打算 <做法>`；
+    看门狗同步（**只提醒这类轮次**，判据取自数据面：`tool/call` 的 name，PTC 下经 `tool/ptc-dispatch` 的
+    rootCallId 回映射）并把提醒文案对齐；验证脚本新增**意图门合规率**（逐轮判定 + 首行命中率，
+    分子分母都只算会改变行为的轮次）。
+  - **门行文案返工（G-5）**：用户指出门行的用途是**跟用户对齐需求**，而我写成了内部记账
+    （turn 号 / 看门狗状态 / 证据文件名）—— persona 与看门狗 REMINDER 都已改成「复述需求 + 做法」，
+    并点名禁止这类记账（凭证件：docs/evidence 证据 ⑪ 的 findings[4]）。措辞按上游 Sisyphus 原文返工：
+    **v4.19.4 与 HEAD 的 Step 0 逐字相同**，而我们的移植丢了它的 `[reason]` 槽位 —— 本次补回为「依据：」（原文与 diff 见证据 ⑪ 的 `upstreamReference`）。
+  - **`AGENTS.md` 规则 7** 补上第三条验证命令与 `dev_reload_preset` 那一句。
+  - **`.mjs` 已 bump**：`role-presentation.mjs?v=4` / `intent-gate-watchdog.mjs?v=4`（`dev_reload_preset` 输出确认）。
+  - ✅ **第二代（`?v=4`）已在自测会话里验过**（证据 ⑫，用 GUI 自动化新建的 7 轮会话 `session-d701ad55…`）。
+    persona 与看门狗仍是「挂载时读取」⇒ 对这个长会话自身而言，**本会话仍是旧代**。
+- **三项脚本当前全绿**：`verify-ptc-roles` `✓4 ✗0 !0`（含合规率）；`verify-role-presentation` 11/11
+  （`--control` 恰 5 项失败）；`verify-intent-gate-watchdog` **20/20**（`--control` 失败在它自列的 10 条指定断言上）。
 
-## 2. 你接手后要做什么
+## 2. 你接手后要做什么（按顺序）
 
-**A. 工作树未提交**（`git status`）：
+1. **开一个新会话**（必须：persona 与 `.mjs` 都是挂载时读取的），跑 §0 的两条自检。
+2. **跑三套脚本**（命令与期望见 `README.md` 的「验证」段），确认仍是三绿。
+3. **看一眼合规率**：`node scripts/verify-ptc-roles.cjs --raw` 会打印
+   `意图门合规率: N 轮（会改变行为 M 轮）| 首行命中 x/M (p%) | 逐轮(首行): T1✗ T2✓ …`。
+   新会话里门行应当**只出现在会改变行为的轮次**上；若只有读文件/查状态的轮次也被提醒，
+   说明 eligibility 判据没生效（先看 `docs/pitfalls.md` 有没有新增条目）。
+4. **还想推进的两件（都要人点头，本轮未做）**：
+   - **提交**：工作区仍未提交（改名 + 看门狗 + 两份证据 + 本轮门行补丁）。
+   - **旧副本处置**：`cireric-dsh-agent-lanes/`（已验证 `git status` 干净、HEAD=`f096621`）建议归档到
+     `dsh-plugins/@archive/`；`~/.dsh/.agent-presets/agent-lanes/` 已经不在了。
 
-| 状态 | 文件 | 来源 |
-|---|---|---|
-| `M` | `AGENTS.md`、`HANDOFF.md` | 本轮**开始之前**就存在的既有改动（文档重构遗留） |
-| `M` | `docs/evidence/README.md` | 本轮结清时新增第 9 节 + 刷新轮次账本 |
-| `??` | `docs/evidence/2026-09-14-round4-5-6-in-host-verification.json` | 本轮结清时新建的证据记录 |
+## 3. 仍然验不了的
 
-要不要落盘成提交，**由你定 —— 不擅自提交**。（`scratch/` 与 `.codegraph/` 被 gitignore 覆盖，不进工作树。）
-
-**B. `scratch/` 是一次性产物（gitignore 覆盖），可整目录删**：
-
-| 文件 | 是什么 |
-|---|---|
-| `designer-role-cards.html`（589 行） | designer 角色的冒烟产物：自包含角色卡，零外链、零 `<script>` |
-| `check-allowlist-drift.cjs`（387 行） | yml↔`EXPECTED` 的漂移检测器（实测 exit 0，无漂移）。**不是仓库资产** |
-
-想留下哪个就搬到正式位置并补文档；不留直接删。
-
-**C. explorer 的元数据盲区（已结案）**：explorer / librarian 白名单里**没有 shell**，所以 `ls` /
-`readlink` / `shasum` / `stat` 一类文件系统侦察**结构性做不到**。本轮编排器把这类任务派给了 explorer，
-它如实回「做不到」而**没有编造** —— 这是编排器任务规格写错，反过来也是白名单生效的正面证据。
-**结论、路由约定与「刻意不做」清单已落 `docs/pitfalls.md` #13 / #14**（含将来的升级路径）；
-这里只留指针不重述，避免出现第二份副本。
-
-**D. 仍然验不了的**：win32 平台分支（本机无该平台）；round-5 persona 的**效用**（文本载入可证、行为效用测不出）；
-`skills` 细粒度分发（推迟 v1.1）。
-
-## 3. 复验命令（约 1 分钟，零模型成本）
-
-```bash
-node scripts/verify-agent-lanes.cjs --raw                 # 主 agent 行必须 ✓ 保持 PTC + round-5 persona
-node scripts/verify-lane-role-presentation.cjs            # 期望 11/11
-node scripts/verify-lane-role-presentation.cjs --control  # 期望恰 5 项失败（否则断言空转）
-```
-
-逐条看：
-- **主 agent 行**：`✓ 主 agent 保持 PTC` + `✓ 主 agent 载入 round-5 纪律 persona` —— 后者是「纪律补全
-  有没有生效」的**唯一数据面信号**（persona 不生效是静默的，`docs/pitfalls.md` #9）。
-- **角色行**（派过才有）：`role=<名> ptc=no` + `✓ PASS native + 白名单精确匹配（N 项）`；
-  explorer 5 / librarian 8 / oracle 6 / implementer 8 / designer 6（`--raw` 打全工具名）。
-- **每行带的** `⊘ 已知自身层泄漏（非白名单问题）: list_subagent_models, subagent` —— 那是**已知且已定位**
-  的现象（`docs/pitfalls.md` #7），**不是**白名单写错，**别去「修」它**。
-- 汇总应为 `✗0 !0`（`!` 非零 ⇒ 有认不出角色或未登记角色的会话）。
-
-任何一项不对 ⇒ `docs/pitfalls.md` C 节排障表。
+- **win32 平台分支**（本机无该平台）。
+- **persona / 门行 / 看门狗提醒的「效用」**：文本被载入、提醒被注入都可证；"因此模型行为改变"不可由日志证明。
+- （原先此处列的 `librarian` / `oracle` 白名单债已由证据 ⑬ 关闭。）
+- **「拒绝」类轮次**：`persona` 要求门行，但看门狗/合规率无法从工具面识别"只拒绝不动手"的轮次 —— 已知边界。

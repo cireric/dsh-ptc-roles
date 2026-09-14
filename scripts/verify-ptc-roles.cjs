@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// verify-agent-lanes.cjs — 零模型成本地验证 agent-lanes preset 的实际行为。
+// verify-ptc-roles.cjs — 零模型成本地验证 ptc-roles preset 的实际行为。
 //
 // 它只读 ~/.dsh/sessions 下的会话文件（解压后解析 JSONL），报告每一个会话：
 //   角色（从子代理的 persona 标记识别）/ 模型 / **模型可见工具面** / 是否仍是 PTC。
@@ -15,15 +15,26 @@
 //     ⚠️ 口径：**seeded 子会话继承父日志的事件**，其计数可能包含父的调用（输出里标 `(seeded)`）；
 //     而已知自身层泄漏 / 角色子代理的判定不受影响。
 //
+//   * **意图门合规率**（intent gate）：逐轮判定主 agent「有没有输出门行」，并打印首行命中率。
+//     门行 = 字面量 `意图判定`，与 preset/ptc-roles/intent-gate-watchdog.mjs 的 DEFAULT_MARKERS **同口径**
+//     （两处必须同步改）。为什么要把它做进脚本：这个门的失败记录**只能当场测**——会话库是滚动窗口，
+//     过一阵就测不回来了（见 docs/evidence/2026-09-15-intent-gate-failure-record.json）。
+//     只统计 isPresetRoot 且创建于 PERSONA_V2_SINCE 之后的主 agent 会话（旧 persona 的输出形式不同，混进来会污染率）。
+//     **合规分子与分母都只算「会改变行为」的轮次**（要委派 / 要拒绝 / 要提问 / 要改文件）—— persona 的
+//     Phase 0 只在那些轮次要求门行；判据是同口径的 BEHAVIOR_TOOLS（见下），与看门狗插件**共享同一份列表**。
+//     三个口径：「首行」（该轮第一条有文本的 assistant 消息的第一行）是**合规分子**；「可见回复」（该轮
+//     任何 assistant 文本含 marker）与「任意文本」（该轮任何事件行含 marker，**含工具结果**）只作对照——
+//     读过插件源码的轮次会命中「任意文本」，那不是合规。
+//
 // 为什么这样能验证：
 //   * request/header 事件记录的是**真正发给模型的** header，其 tools 数组就是
 //     模型可见工具面 —— native 子代理 = 白名单本身；PTC 子代理 = 只有 run_code。
 //   * 子代理 persona 由 tool-subagent 的 persona 配置注入，文本里有 "You are **<role>**"。
 //
 // 用法：
-//   node scripts/verify-agent-lanes.cjs             # 只看本项目的会话
-//   node scripts/verify-agent-lanes.cjs --all       # 扫全部工作区
-//   node scripts/verify-agent-lanes.cjs --raw       # 额外打印每个会话的完整工具名列表
+//   node scripts/verify-ptc-roles.cjs             # 只看本项目的会话
+//   node scripts/verify-ptc-roles.cjs --all       # 扫全部工作区
+//   node scripts/verify-ptc-roles.cjs --raw       # 额外打印每个会话的完整工具名列表
 //
 // 全程只读，不写任何文件。
 
@@ -33,7 +44,7 @@ const os = require('node:os')
 const path = require('node:path')
 
 const PTC_MARK = 'is the only tool you can call directly'
-const PROJECT_CWD = '/Users/eric/Project/tests/dsh-plugins/cireric-dsh-agent-lanes'
+const PROJECT_CWD = '/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles'
 const SESSIONS_ROOT = path.join(os.homedir(), '.dsh', 'sessions')
 
 /**
@@ -108,6 +119,38 @@ const BOUND_ADDED_AT = Date.parse('2026-09-13T09:10:48Z')
 const PERSONA_V2_SINCE = Date.parse('2026-09-13T14:39:29Z')
 const PERSONA_V2_MARK = 'Delegation contract'
 
+/**
+ * 意图门门行（intent gate）的 markers —— **必须与 preset/ptc-roles/intent-gate-watchdog.mjs 的
+ * DEFAULT_MARKERS 同口径**（那里是看门狗实际注入提醒的判据）。改一处就要同步另一处，理由同 EXPECTED：
+ * 解析插件配置会引入一个会歪的解析器，而漂移不会静默（合规率立刻变 0）。
+ */
+const INTENT_MARKERS = ['意图判定']
+
+/**
+ * 「会改变行为」的工具 —— 唯一有权要求门行的那批轮次（persona 的 Phase 0 口径）。
+ * **必须与 preset/ptc-roles/intent-gate-watchdog.mjs 的 BEHAVIOR_TOOLS 同口径**：那里用它决定
+ * 「要不要提醒」，这里用它决定「合规率的分母」。两处漂移不会静默 —— 合规率会当场翻脸。
+ * 注意 PTC 下行为工具的名字出现在 `tool/ptc-dispatch`（该事件**没有 turn**，要靠 rootCallId 经
+ * `tool/call` 回映射）。
+ */
+const BEHAVIOR_TOOLS = new Set([
+  'write', 'edit', 'bash', 'pwsh',
+  'explorer', 'librarian', 'oracle', 'implementer', 'designer',
+  'subagent', 'subagent_fork', 'subagent_codex', 'subagent_claude_code', 'ralph',
+  'ask_user_question',
+])
+
+/** 命中率格式化：0 轮时给 '—'，避免出现 NaN%。 */
+function rate(hit, total) { return total === 0 ? '—' : Math.round((hit / total) * 100) + '%' }
+
+/** 拼接一条 assistant 消息的文本块（与看门狗插件的 messageText 同口径：块间补换行）。 */
+function messageText(event) {
+  const blocks = (event.data && event.data.message && event.data.message.content) || []
+  let text = ''
+  for (const b of blocks) if (b && b.type === 'text' && typeof b.text === 'string') text += b.text + '\n'
+  return text
+}
+
 function findSessionFiles() {
   const out = []
   const walk = (dir) => {
@@ -128,11 +171,43 @@ function decode(file) {
 }
 
 function analyze(raw) {
-  const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', escalations: [] }
+  const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', escalations: [], intentTurns: new Map() }
+  /** callId -> turn，用于把 `tool/ptc-dispatch`（无 turn）归回它所属的那一轮。 */
+  const callTurns = new Map()
+  const recFor = (t) => {
+    let rec = result.intentTurns.get(t)
+    if (rec === undefined) { rec = { any: false, reply: false, first: false, seenText: false, acting: false }; result.intentTurns.set(t, rec) }
+    return rec
+  }
   for (const line of raw.split('\n')) {
     if (!line.startsWith('{')) continue
     let event
     try { event = JSON.parse(line) } catch { continue }
+    // 意图门逐轮记录（判定在打印处做）。任何带 turn 的事件都算「该轮发生过」，但只有
+    // assistant/message 的文本能构成「模型输出了门行」；只有 BEHAVIOR_TOOLS 的调用能让该轮
+    // 成为「会改变行为」（= 门行被要求的那类轮次）。
+    const turn = event.data && event.data.turn
+    const toolName = event.data && event.data.name
+    if (event.type === 'tool/call' && typeof turn === 'number') {
+      const callId = event.data && event.data.callId
+      if (typeof callId === 'string') callTurns.set(callId, turn)
+      if (BEHAVIOR_TOOLS.has(toolName)) recFor(turn).acting = true
+    } else if ((event.type === 'tool/ptc-dispatch' || event.type === 'tool/ptc-dispatch-start') && BEHAVIOR_TOOLS.has(toolName)) {
+      const t = callTurns.get(event.data && event.data.rootCallId)
+      if (typeof t === 'number') recFor(t).acting = true
+    }
+    if (typeof turn === 'number') {
+      const rec = recFor(turn)
+      if (INTENT_MARKERS.some((m) => line.includes(m))) rec.any = true
+      if (event.type === 'assistant/message') {
+        const text = messageText(event)
+        if (INTENT_MARKERS.some((m) => text.includes(m))) rec.reply = true
+        if (text.trim() !== '' && !rec.seenText) {
+          rec.seenText = true
+          if (INTENT_MARKERS.some((m) => text.split('\n')[0].includes(m))) rec.first = true
+        }
+      }
+    }
     if (event.type === 'session') result.header = event
     else if (event.type === 'request/header') {
       const h = event.data && event.data.header
@@ -164,7 +239,7 @@ function analyze(raw) {
     }
   }
   result.ptc = result.systemText.includes(PTC_MARK)
-  // 角色开场句式要求后面跟逗号，避免命中 orchestrator 车道表里的 '**explorer** — ...'
+  // 角色开场句式要求后面跟逗号，避免命中 orchestrator 委派表里的 '**explorer** — ...'
   // 刻意**不**在此枚举角色名：那会是除 yml 与 EXPECTED 之外的**第三处**手工登记点，
   // 新角色漏登记时会走 `!r.role` 分支报「认不出角色」，与 EXPECTED 的 `!want` 分支混在一起、难定位
   // （2026-09-13 新增 designer 时实测踩中）。这里只做**通用**捕获，登记与否交给 EXPECTED 判定：
@@ -174,6 +249,23 @@ function analyze(raw) {
   // 本 preset 的编排器 persona 独有标记；子代理的 role persona 会遮蔽它，所以只用于识别主 agent
   result.isPresetRoot = result.systemText.includes('Phase 0 — Intent Gate')
   return result
+}
+
+/** 逐轮统计：首行 / 可见回复 / 任意文本 三个口径各命中几轮。 */
+function intentGateStats(r) {
+  const turns = [...r.intentTurns.keys()].sort((a, b) => a - b)
+  const s = { turns, first: 0, reply: 0, anywhere: 0, eligible: 0, eligibleFirst: 0 }
+  for (const t of turns) {
+    const rec = r.intentTurns.get(t)
+    if (rec.first) s.first += 1
+    if (rec.reply) s.reply += 1
+    if (rec.any) s.anywhere += 1
+    if (rec.acting) {
+      s.eligible += 1
+      if (rec.first) s.eligibleFirst += 1
+    }
+  }
+  return s
 }
 
 function compare(tools, expected) {
@@ -210,6 +302,7 @@ function main() {
 
   const rows = [...seen.values()].sort((x, y) => (x.header.createdAt || 0) - (y.header.createdAt || 0))
   let pass = 0, fail = 0, warn = 0, escChild = 0, escRoot = 0, escOther = 0
+  const gate = { turns: 0, first: 0, reply: 0, anywhere: 0, eligible: 0, eligibleFirst: 0, sessions: 0 }
   console.log('会话 ' + rows.length + ' 个（工作区 ' + (all ? 'ALL' : PROJECT_CWD) + '），跳过错文件 ' + skipped + '\n')
 
   for (const r of rows) {
@@ -222,11 +315,11 @@ function main() {
         ? ' — depth≥2 且无角色 persona：留意是否为 §7.7 孙代升级复发'
         : ''
       escOther += (r.escalations || []).length
-      console.log('─ 跳过 ' + String(r.header.id).slice(0, 20) + '（非 agent-lanes 子代理：depth=' + depth + ' tools=' + (r.tools || []).length
+      console.log('─ 跳过 ' + String(r.header.id).slice(0, 20) + '（非 ptc-roles 子代理：depth=' + depth + ' tools=' + (r.tools || []).length
         + ' esc=' + (r.escalations || []).length + (r.header.isSeeded === true ? ' (seeded — 计数含继承的父日志)' : '') + note + '）')
       continue
     }
-    if (depth === 0 && !r.isPresetRoot) { console.log('─ 跳过 ' + String(r.header.id).slice(0, 20) + '（非 agent-lanes 主会话）'); continue }
+    if (depth === 0 && !r.isPresetRoot) { console.log('─ 跳过 ' + String(r.header.id).slice(0, 20) + '（非 ptc-roles 主会话）'); continue }
     const kind = depth === 0 ? '主 agent' : '子代理 d' + depth
     const role = r.role || (depth === 0 ? 'orchestrator(未识别)' : '(未识别)')
     const tools = r.tools || []
@@ -254,8 +347,22 @@ function main() {
           pass += 1
         } else {
           console.log('   ✗ FAIL 主 agent 未载入 round-5 persona：system prompt 里没有 "' + PERSONA_V2_MARK + '"')
-          console.log('     ⇒ 纪律补全没生效。检查 ~/.dsh/.agent-presets/agent-lanes/personas 软链在位，且本会话是 PERSONA_V2_SINCE 之后新开的。')
+          console.log('     ⇒ 纪律补全没生效。检查 ~/.dsh/.agent-presets/ptc-roles/personas 软链在位，且本会话是 PERSONA_V2_SINCE 之后新开的。')
           fail += 1
+        }
+      }
+      // 意图门合规率：只对**装了门的**主 agent 会话统计（老 persona 的输出形式不同，混入会污染率）。
+      if (r.isPresetRoot && (r.header.createdAt || 0) >= PERSONA_V2_SINCE) {
+        const g = intentGateStats(r)
+        if (g.turns.length > 0) {
+          gate.sessions += 1
+          gate.turns += g.turns.length; gate.first += g.first; gate.reply += g.reply; gate.anywhere += g.anywhere
+          gate.eligible += g.eligible; gate.eligibleFirst += g.eligibleFirst
+          console.log('   意图门合规率: ' + g.turns.length + ' 轮（会改变行为 ' + g.eligible + ' 轮）| 首行命中 '
+            + g.eligibleFirst + '/' + g.eligible + ' (' + rate(g.eligibleFirst, g.eligible) + ')'
+            + ' | 可见回复命中 ' + g.reply + ' | 任意文本命中 ' + g.anywhere)
+          console.log('   逐轮(首行): ' + g.turns.map((t) => 'T' + t + (r.intentTurns.get(t).first ? '✓' : '✗')).join(' ')
+            + ' | 会改变行为: ' + (g.turns.filter((t) => r.intentTurns.get(t).acting).map((t) => 'T' + t).join(' ') || '无'))
         }
       }
       console.log('   工具面: ' + (rawOut ? tools.join(', ') : tools.slice(0, 8).join(', ') + (tools.length > 8 ? ' …' : '')))
@@ -271,12 +378,20 @@ function main() {
     else { console.log('   ✗ FAIL 白名单不符 | 多出: ' + (d.extra.join(', ') || '无') + ' | 缺失: ' + (d.missing.join(', ') || '无') + note); fail += 1 }
     if (rawOut) console.log('   工具面: ' + tools.join(', '))
   }
+  if (gate.turns > 0) {
+    console.log('\n意图门合规率（合计 ' + gate.sessions + ' 个主 agent 会话 / ' + gate.turns + ' 轮，其中会改变行为 ' + gate.eligible + ' 轮）: 首行命中 '
+      + gate.eligibleFirst + '/' + gate.eligible + ' (' + rate(gate.eligibleFirst, gate.eligible) + ') | 可见回复命中 ' + gate.reply + ' | 任意文本命中 ' + gate.anywhere)
+    console.log('  口径: 分子与分母都只算**会改变行为**的轮次（要委派 / 要拒绝 / 要提问 / 要改文件），行为判据 = '
+      + 'tool/call 或 tool/ptc-dispatch 的 name 命中 BEHAVIOR_TOOLS（与 intent-gate-watchdog.mjs 同口径）；'
+      + 'marker = ' + JSON.stringify(INTENT_MARKERS) + '（与插件的 DEFAULT_MARKERS 同口径）；'
+      + '「任意文本」含工具结果与工具参数 ⇒ 读过插件源码的轮次也会命中，只作对照，不作合规分子。')
+  }
   console.log('\n汇总: ✓' + pass + '  ✗' + fail + '  !' + warn)
-  console.log('提权请求（实测计数）: agent-lanes 主 agent ' + escRoot + ' / agent-lanes 角色子代理 ' + escChild
+  console.log('提权请求（实测计数）: ptc-roles 主 agent ' + escRoot + ' / ptc-roles 角色子代理 ' + escChild
     + ' / 其他会话 ' + escOther)
-  if (escChild === 0) console.log('  ← agent-lanes 角色子代理零提权，与 approval policy never 一致（尚无理由做 sandbox-strip）')
+  if (escChild === 0) console.log('  ← ptc-roles 角色子代理零提权，与 approval policy never 一致（尚无理由做 sandbox-strip）')
   if (escRoot + escChild + escOther === 0) console.log('  ! 全为 0 —— 用 --all 复核：其他工作区应有非零计数，否则本计数器的阳性路径未被证明')
-  if (pass + fail + warn === 0) console.log('提示: 没有任何 agent-lanes 角色子代理会话（只看到主 agent 属正常）。先派 1~2 个角色子代理，再重跑本脚本。')
+  if (pass + fail + warn === 0) console.log('提示: 没有任何 ptc-roles 角色子代理会话（只看到主 agent 属正常）。先派 1~2 个角色子代理，再重跑本脚本。')
 }
 
 main()

@@ -2,21 +2,21 @@
 
 > **「机制 / 坑 / 怎么办」只写在这里。** `AGENTS.md` 只放规则、`HANDOFF.md` 只放交接，
 > 两者都**引用**本文件而**不复制**内容；加新坑请加在这里。
-> 编号 **1–14 是稳定锚点**，外部统一按 `docs/pitfalls.md` #N 引用。
+> 编号 **1–16 是稳定锚点**，外部统一按 `docs/pitfalls.md` #N 引用。
 
 ## A. 生效路径（改完怎么才算生效）
 
-DSH 从 `~/.dsh/.agent-presets/agent-lanes/` 读，那里是**真目录 + 内部 4 个软链**指向本仓库
-（`agent.cordis.yml` / `lane-role-presentation.mjs` / `preset.yml` / `personas`）。
+DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里是**真目录 + 内部 5 个软链**指向本仓库
+（`agent.cordis.yml` / `role-presentation.mjs` / `intent-gate-watchdog.mjs` / `preset.yml` / `personas`）。
 
 - 改 `agent.cordis.yml` / `personas/*.md` → **开新会话即生效**（每次新会话重读）。
-- 改 `lane-role-presentation.mjs` → 先 `dev_reload_preset preset=agent-lanes`（bump `?v=N` 绕 ESM 缓存），
+- 改 `role-presentation.mjs` → 先 `dev_reload_preset preset=ptc-roles`（bump `?v=N` 绕 ESM 缓存），
   **再开新会话**。⚠️ 该工具只认**不带引号**的 `.mjs` 引用：写成 `'./x.mjs'` 时它回「无相对 .mjs 引用」
   然后**什么都不做**，主机的 ESM 缓存继续把**旧代**插件发给每个新会话，而你以为热更新过了（已实测）。
   改完**确认输出含 `x.mjs -> ?v=N`**。
 - **本会话改的不生效** —— 配置在挂载时已读取，要验证必须开新会话。
 
-## B. 机制与坑（1–14）
+## B. 机制与坑（1–16）
 
 1. **`maxDepth` 是子代理的绝对深度上限**：`childDepth = parentDepth + 1`，超过就抛 `SubagentDepthError`。
    主 agent 深度 0 ⇒ **`maxDepth: 0` 会让它一个子代理都派不出去**。当前取值：explorer / librarian = `2`
@@ -60,7 +60,7 @@ DSH 从 `~/.dsh/.agent-presets/agent-lanes/` 读，那里是**真目录 + 内部
     ②再认 `origin === 'subagent'` 兜底 ③`options.subagentDepth` 畸形时告警并退回 header（框架在此抛
     TypeError；插件选「响亮告警 + 仍翻转」而非静默）④深度 0 但 origin 是子代理时也告警。
     **钉住这条是因为翻转本身就是安全边界**，而日志在本部署不可回溯（#9）。
-    断言见 `scripts/verify-lane-role-presentation.cjs`（11 条；旧版作阴性对照必须恰 5 项失败，否则断言空转）。
+    断言见 `scripts/verify-role-presentation.cjs`（11 条；旧版作阴性对照必须恰 5 项失败，否则断言空转）。
 11. **yml 里的表达式与白名单有三个坑。**
     - **`!!js` 表达式必须带引号。** 不带引号的 `- !!js a ? 'pwsh' : 'bash'` 是**合法 YAML**，但会解析成
       **复合 mapping key**（实测得到 `{"[object Object]":"bash"}`）—— **不报错**，静默产出一个**非字符串**的
@@ -83,15 +83,15 @@ DSH 从 `~/.dsh/.agent-presets/agent-lanes/` 读，那里是**真目录 + 内部
     「软链部署目录」对照测）：
     - **① 模式基准是「会话 cwd」，不是 `path` —— 会产出「假空」。** `path` 只限制**遍历根**，
       **不重定匹配基准**：**无斜杠**的模式按 **basename** 匹配（任意深度），**有斜杠**的模式按
-      **相对会话 cwd 的完整路径**匹配。实测（`path` = 仓库 `preset/agent-lanes`，该目录真值 9 个文件）：
+      **相对会话 cwd 的完整路径**匹配。实测（`path` = 仓库 `preset/ptc-roles`，该目录真值 9 个文件）：
       `'personas/*'` → **0 条（假空）**、`'personas/explorer.md'` → **0 条**；而 `'*.md'` → 6 条、
-      `'**/personas/*'` → 6 条、`'preset/agent-lanes/personas/*'` → 6 条、`'**/*'` → 9 条。
+      `'**/personas/*'` → 6 条、`'preset/ptc-roles/personas/*'` → 6 条、`'**/*'` → 9 条。
       ⇒ **0 条 ≠ 「目录是空的」**。自然的「列子目录」写法必然假空 —— **别把 0 条当证据**去下
       「目录为空 / 文件缺失」的结论；要么写 `**/<子目录>/*`，要么把 `<子目录>` 当 `path` 再配 `**/*`。
     - **② symlink 是盲区（结构性，改配置改不出来）。** `glob` / `grep` 都是 ripgrep 直传
       （`packages/fs/tool-fs-search/src/glob.ts:78-91` 原文 "Build the fixed `rg --files` argv"），
       ripgrep **不列出、也不跟随遍历中遇到的 symlink**，而 `tool-fs-search` 的 **9 个 Config 字段里
-      没有任何跟随开关**。实测：对一个「4 个软链 + 0 个真文件」的目录，`'*'` / `'**/*'` / `'*.md'`
+      没有任何跟随开关**。实测：对一个「全是软链、0 个真文件」的目录，`'*'` / `'**/*'` / `'*.md'`
       与 `grep('persona')` **全部 0 条**；而**作为 `path` 传入的软链目录会被跟随**（`path=<软链目录>`
       + `'**/*'` → 6 条）⇒ 「**看得见真文件、看不见软链**」。
     - **③ `read` 不能列目录（官方契约，非配置）。** `tool-fs` 的 README「Known Limitations」原文：
@@ -119,23 +119,39 @@ DSH 从 `~/.dsh/.agent-presets/agent-lanes/` 读，那里是**真目录 + 内部
       （本仓库没有 `.ts`/`.js`/`.py`/`.go`/`.rs`）；官方 `lsp` 另有**工作区包含性**约束
       （工作区外文件报 `source "…" resolves outside the workspace`）⇒ 它只在本工作区内的受支持语言上有效。
 
+15. **会话库是滚动窗口，不是归档** —— 任何「历史上曾经 X 轮」的说法**只能在当场测**，测完就得落成证据文件。
+    实测（2026-09-15）：`~/.dsh/sessions` 下 77 个会话文件里**没有任何 26/27 轮的会话**（轮数最多的是 28 轮，
+    属于另一个项目）；本项目 `cireric-dsh-agent-lanes` 工作区目录 mtime = `2026-09-15 00:07`，**现仅存 1 个会话**；
+    证据 ⑨ 引用的 `session-2982160d…` 及其 3 个子会话 `find` 不到；另有 **5 个工作区目录为空**。
+    ⇒ 合规率这类历史性指标必须**做进脚本**（`verify-ptc-roles.cjs` 的「意图门合规率」），不能靠考古。
+    **注意**：这里只记录事实，不判断清理是谁做的、依据什么策略。完整实测见证据 ⑪ 的 `reproducibility`。
+
+16. **看门狗观测不到门行的「内容质量」** —— 它只对 `DEFAULT_MARKERS` 做**子串**匹配，于是两头都不设防：
+    ①门行**写成内部记账**（turn 号 / 看门狗状态 / 证据文件名）它也沉默（实测：证据 ⑪ 的 G-5）
+    ②仅仅**谈论**门行（「我按要求没有输出意图判定行」）会被算成「有门行」（实测：证据 ⑫ 的 H-5）。
+    ⇒ 内容质量只能靠 **prompt 侧**（persona + REMINDER 写清「读者是用户」「是承诺不是标签」），
+    **不做正则 linter**：判「这行是不是记账」没有可靠规则，误伤编排器合法用词的风险大于收益
+    —— 同证据 ⑥ 否决 sandbox-strip 的理由。**先有失败记录再谈**。
+
 ## C. 排障表（症状 → 原因 → 修法）
 
 | 症状 | 原因 | 修法 |
 |---|---|---|
-| 选择器里没有 `agent-lanes` | 软链没建；或把**目录**做了软链（被静默跳过）；或缺 `agent.cordis.yml` | 确认 `~/.dsh/.agent-presets/agent-lanes/` 是**真目录**且内部 4 个软链在位 |
+| 选择器里没有 `ptc-roles` | 软链没建；或把**目录**做了软链（被静默跳过）；或缺 `agent.cordis.yml` | 确认 `~/.dsh/.agent-presets/ptc-roles/` 是**真目录**且内部 5 个软链在位 |
 | mount 报错指向 `persona` 行 | `!!js` + `baseUrl` 在 preset 组合里未生效 | 把 persona 文本**内联**进 yml 的 `prefix` / `persona`（literal block），删掉 `!!js` |
 | mount 报错指向 `role-*` 行 | `allow` 里有**未知名**：①工具改名 / MCP server 变更 ②**跨平台**（win32 上 `tool-bash` 被禁用，硬编码 `bash` 的角色行会直接派不出去） | 按 live 工具面核对后改白名单；带 shell 的角色行**必须**用平台表达式且**带引号**（#11）。未知名**响亮失败**是有意设计 |
 | 子代理派出去就报错 | ①model 不在 provider 实时目录 ②模型**不支持**所声明的 `reasoningEffort`（explorer 曾栽在②） | **先读报错原文**：`does not support reasoning effort "X"` ⇒ 删掉该 effort 或换该模型支持的档；`route ... is not allowed for this Session` ⇒ 见 #8 |
-| 脚本报 `✗ FAIL 子代理仍是 PTC` | 插件没生效 —— **本 preset 概率最高的失效模式**：插件行没挂上 / `.mjs` 软链失效 / ESM 缓存未 bump | ①核对 4 个软链在真目录里 ②`dev_reload_preset` 后开新会话 ③**别去查日志**（无落盘通道，#9）—— 脚本输出就是那条信号 |
+| 脚本报 `✗ FAIL 子代理仍是 PTC` | 插件没生效 —— **本 preset 概率最高的失效模式**：插件行没挂上 / `.mjs` 软链失效 / ESM 缓存未 bump | ①核对 5 个软链在真目录里 ②`dev_reload_preset` 后开新会话 ③**别去查日志**（无落盘通道，#9）—— 脚本输出就是那条信号 |
 | 脚本报 `✗ FAIL 主 agent 未载入 round-5 persona` | persona 在**挂载时**读取：软链断 / 改了但没开新会话 / 该会话早于 `PERSONA_V2_SINCE`（脚本扫全部历史，故有时间锚保护） | ①核对 `personas` 软链指向本仓库 ②**开新会话** ③若仍是新会话还报，说明挂的不是这份 —— 比对软链目标里 `orchestrator.md` 是否含 `Delegation contract`。⚠️ 该断言**只证文本被载入**，不证行为改变 |
 | 子代理工具面比白名单**多**（恰是 `subagent` + `list_subagent_models`） | 自身层泄漏（#7） | **掩不掉**：`deny` 与插件式挂载**同样无效**，别花时间。脚本已容忍标注。要彻底消除**只能**置 `modelSelectionSettings: false`（代价＝编排器通用 `subagent` 失去模型侧选择参数） |
 | 只读角色竟然派出了子代理 / 出现「depth-2 + 162 工具 + orchestrator persona」的孙代 | 通用 `subagent` 泄漏到子代理面，且该行**未**显式配 `maxDepth`（默认值是 **3**） | 已修：该行加 `maxDepth: 1`（#7）。若再现，先确认该行没被改回 |
 | oracle 能看到 `implementer` | oracle 的 allow 被改过，或该角色行不在同一 preset | 核对 `role-oracle.config.toolFilter.allow` |
 | 子代理 schema 里有 `sandbox_permissions` / `justification` | **不是缺口**（已结案，详见 `docs/evidence/2026-09-13-sandbox-escalation-closure.json`：子会话 `approval/policy = never` 在**任何 answerer 之前**就拒绝 ⇒ 提权构造上关闭；本机 91 个会话零证据） | **不做 sandbox-strip** —— 那会新增一个能误伤**编排器合法提权**的 pre-execute 监听。保持**检测**：脚本统计提权次数，只有角色子代理**持续非零**才值得做 |
-| 改了 `.mjs` 没变化 | 未 bump `?v=`，ESM 按 URL 缓存 | `dev_reload_preset preset=agent-lanes` 后开新会话（A 节） |
+| 改了 `.mjs` 没变化 | 未 bump `?v=`，ESM 按 URL 缓存 | `dev_reload_preset preset=ptc-roles` 后开新会话（A 节） |
 | `dev_reload_preset` 回「**无相对 .mjs 引用（无需热更新）**」 | yml 里插件引用**被引号包住**，该工具只认裸 `./x.mjs` —— 它静默空转，旧代插件继续被新会话使用 | 去掉引号再跑；确认输出含 `x.mjs -> ?v=N`（A 节） |
-| 插件单元校验有 FAIL | 深度判据被改坏：必须同时认 `Math.max(header, options.subagentDepth)` 与 `origin === 'subagent'`，且畸形深度要告警但**仍然**翻转 | 读 `scripts/verify-lane-role-presentation.cjs` 的断言名（#10）；**改回插件而非改断言** |
+| 插件单元校验有 FAIL | 深度判据被改坏：必须同时认 `Math.max(header, options.subagentDepth)` 与 `origin === 'subagent'`，且畸形深度要告警但**仍然**翻转 | 读 `scripts/verify-role-presentation.cjs` 的断言名（#10）；**改回插件而非改断言** |
 | `glob` 对某目录返回 **0 条**，但目录里明明有文件 | 模式基准是**会话 cwd**、不是 `path`；或目标是**软链**（ripgrep 不列出软链） | 改写成 `**/<子目录>/*`，或把该目录当 `path` 再配 `**/*`；先确认它是不是软链（#13①②） |
 | 角色子代理说「目录是空的 / 文件不存在」，但编排器 `ls` 看得见 | 探索类角色对目录条目与 symlink **结构性不可见**（#13③ / #14） | 这类核查派 `implementer` 或编排器自己做；**不要**为它扩 `explorer` 白名单（#14） |
 | 想让 `explorer` 能列目录 / 查 hash | 只读叶子 = 无 shell，这是**刻意取舍**（#14） | 先确认是否真有重复受阻（≥3 次）；升级路径与代价见 #14 |
+| 想问「上个月漏了多少轮门行」 | 会话库是**滚动窗口**，早期会话已被清掉（#15） | 不可考 —— 只能当场测；历史性指标一律做进脚本 |
+| 合规率 0%、但模型明明很听话 | ①测试/剧本明令禁止输出门行 ②门行被写成了内部记账（插件看不出来）③门行只是被**谈论**过 | 先按证据 ⑪/⑫ 的口径读；**内容质量要人读那一行**（#16），别改判据去凑数 |

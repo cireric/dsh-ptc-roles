@@ -1,20 +1,20 @@
 #!/usr/bin/env node
-// verify-lane-role-presentation.cjs — 零成本单元校验：preset 的翻转插件
-// （preset/agent-lanes/lane-role-presentation.mjs）。
+// verify-role-presentation.cjs — 零成本单元校验：preset 的翻转插件
+// （preset/ptc-roles/role-presentation.mjs）。
 //
 // 为什么单独有这个脚本：插件的决定「哪些 agent 失去 run_code」是一条安全边界。
-// 会话日志（verify-agent-lanes.cjs）只能证明**happy path**（真的派出去、真的 native），
+// 会话日志（verify-ptc-roles.cjs）只能证明**happy path**（真的派出去、真的 native），
 // 但驱动不了失败路径 —— 畸形深度、缺 ctx.tools、只记了 runtime 选项没记 header 的
 // 恢复型子代理。那些路径恰恰是「子代理静默留在 PTC = run_code 逃逸」的入口，必须直接断言。
 //
 // 用法：
-//   node scripts/verify-lane-role-presentation.cjs            # 校验当前插件（期望 11/11，退出码 0）
-//   node scripts/verify-lane-role-presentation.cjs --control  # 阴性对照：跑**冻结在仓库里的旧版**
+//   node scripts/verify-role-presentation.cjs            # 校验当前插件（期望 11/11，退出码 0）
+//   node scripts/verify-role-presentation.cjs --control  # 阴性对照：跑**冻结在仓库里的旧版**
 //                                                            # （期望恰好 5 项失败，退出码 1）
 //
 // 阴性对照为什么必须跑：断言若在旧版上也全绿，说明它测不出「子代理静默留在 PTC」这个
-// 真正的漏洞，那 11/11 就是空转。冻结副本 = `scripts/fixtures/lane-role-presentation.prev.mjs`，
-// 与 `docs/evidence/2026-09-13-lane-role-presentation-hardening.json` 里记的
+// 真正的漏洞，那 11/11 就是空转。冻结副本 = `scripts/fixtures/role-presentation.prev.mjs`，
+// 与 `docs/evidence/2026-09-13-role-presentation-hardening.json` 里记的
 // sha256 `eb123c76…` 逐字节一致 —— **不要编辑它**，改了就断了与证据的对应关系。
 // 通用钩子仍是 `LANE_PLUGIN_PATH=<任意 .mjs>`（相对路径按当前工作目录解析）。
 //
@@ -29,10 +29,10 @@ const { pathToFileURL } = require('node:url')
 // one-liner pointing at the frozen previous revision committed beside this script.
 // Both resolve against the current working directory so the call works from anywhere.
 const CONTROL_MODE = process.argv.includes('--control')
-const CONTROL_FIXTURE = path.join(__dirname, 'fixtures', 'lane-role-presentation.prev.mjs')
+const CONTROL_FIXTURE = path.join(__dirname, 'fixtures', 'role-presentation.prev.mjs')
 const PLUGIN = path.resolve(
   process.env.LANE_PLUGIN_PATH
-    ?? (CONTROL_MODE ? CONTROL_FIXTURE : path.join(__dirname, '..', 'preset', 'agent-lanes', 'lane-role-presentation.mjs')),
+    ?? (CONTROL_MODE ? CONTROL_FIXTURE : path.join(__dirname, '..', 'preset', 'ptc-roles', 'role-presentation.mjs')),
 )
 
 let checks = 0

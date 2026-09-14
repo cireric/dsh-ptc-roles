@@ -1,4 +1,4 @@
-# ADR 0001 — 角色化 preset 取代编排 bundle（agent-lanes）
+# ADR 0001 — 角色化 preset 取代编排 bundle（ptc-roles）
 
 - 日期：2026-09-13
 - 状态：**已采纳**（v1 preset 已实现并**复验通过**，2026-09-13 —— 装配冒烟 + 行为冒烟全绿，
@@ -68,7 +68,7 @@ bundle 是 profile 级，做不到「只让角色会话 native、日常会话保
   提权构造上不可用，且没有 per-agent 隐藏 schema 属性的官方钩子；改为在验证脚本里持续检测。
 - **已决的残余风险**（2026-09-13）：①翻转插件的深度判据已对齐框架口径
   `Math.max(header ?? 0, options.subagentDepth ?? 0)` 并加 `origin === 'subagent'` 兜底
-  （机制见 `docs/pitfalls.md` #10；断言 `scripts/verify-lane-role-presentation.cjs`，旧版作阴性对照）
+  （机制见 `docs/pitfalls.md` #10；断言 `scripts/verify-role-presentation.cjs`，旧版作阴性对照）
   ②librarian 的 `reasoningEffort: low` 经复验认为够用（答案正确且有权威来源），保持。
   ③`dev_reload_preset` 需引用不带引号才生效（生效路径见 `docs/pitfalls.md` A 节），已改。
 - **2026-09-13 追加（第 4 轮）**：
@@ -82,7 +82,7 @@ bundle 是 profile 级，做不到「只让角色会话 native、日常会话保
   ②**平台兼容**：`implementer`/`designer` 的 shell 从硬编码 `bash` 改为平台择一
   （`!!js "process.platform === 'win32' ? 'pwsh' : 'bash'"`）。win32 上 `tool-bash` 被禁用（改用
   `tool-pwsh`），硬编码 `bash` 会让这两个角色**根本派不出去**（allow 里的未知名 = 响亮失败）。
-  同口径同步了 `scripts/verify-agent-lanes.cjs` 的 `EXPECTED`（新增 `SHELL` 常量）。
+  同口径同步了 `scripts/verify-ptc-roles.cjs` 的 `EXPECTED`（新增 `SHELL` 常量）。
 - **2026-09-13 追加（第 5 轮）**：
   ①**Sisyphus 纪律覆盖度核实 + 补全**。按 `cireric-oh-my-dsh-slim` spec §2.1 自列的「大脑四项」
   （Phase 0 意图门 / Implementation Gate / 委派按领域+规模 / 证据门），本 preset 的 orchestrator persona

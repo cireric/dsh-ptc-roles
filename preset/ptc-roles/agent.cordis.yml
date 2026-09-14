@@ -32,7 +32,7 @@
   name: '@deepseek-ai/dsh-persona'
   config:
     suffix: Your working directory is {{cwd}}.
-    # agent-lanes: the orchestrator persona replaces the stock one-liner.
+    # ptc-roles: the orchestrator persona replaces the stock one-liner.
     # `!!js` reads it relative to THIS composition directory: the loader rewrites
     # `baseUrl` to the composition's own directory before evaluating the row.
     prefix: !!js "process.getBuiltinModule('node:fs').readFileSync(new URL('personas/orchestrator.md', baseUrl), 'utf8')"
@@ -194,7 +194,7 @@
     - id: tool-subagent-list-agents
       name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
 
-    # agent-lanes PATCH — the only divergence from the verbatim base preset.
+    # ptc-roles PATCH — the only divergence from the verbatim base preset.
     # A child scope re-mounts this row into its OWN layer, so the leaked
     # `subagent` tool is visible to every delegated child (restrict() cannot
     # mask own-layer registrations). Without a bound, a depth-1 role spawns an
@@ -293,7 +293,7 @@
   name: '@deepseek-ai/dsh-tool-present'
 
 # ─────────────────────────────────────────────────────────────────────────────
-# agent-lanes additions
+# ptc-roles additions
 #
 # Everything ABOVE is the shipped `ptc` preset copied verbatim, with ONE
 # patched row: `tool-subagent` gained `maxDepth: 1` (rationale at that row).
@@ -301,12 +301,12 @@
 # exactly what this preset changes. What it adds, and why:
 #
 #   • persona.prefix (patched above)      — orchestrator persona: Phase-0 intent
-#     gate, lane table, delegation discipline, evidence gate.
+#     gate, delegation table, delegation discipline, evidence gate.
 #   • five named role tools               — explorer / librarian / oracle /
 #     implementer / designer. Named tools are what let `toolFilter.allow` express
 #     the JOB BOUNDARY: oracle's allow-list names explorer+librarian, so
 #     implementer (and designer) are invisible to it.
-#   • lane-role-presentation.mjs          — flips every delegated child to
+#   • role-presentation.mjs          — flips every delegated child to
 #     `native` so `run_code` disappears and the allow-list becomes a real
 #     capability boundary. The main agent keeps the base's PTC presentation.
 #
@@ -329,14 +329,20 @@
 # the four leaf roles (explorer / librarian / implementer / designer).
 # ─────────────────────────────────────────────────────────────────────────────
 
-- id: lane-role-presentation
+- id: role-presentation
   # The reference must stay UNQUOTED. dev_reload_preset matches
   #   /(name: \.\/[A-Za-z0-9._-]+\.mjs)(\?v=\d+)?/g
   # against ~/.dsh/.agent-presets/<preset>/agent.cordis.yml — a quoted './…' never
   # matches, so the tool answers "无相对 .mjs 引用" and never bumps ?v=N. Without the
   # bump the host's ESM cache keeps serving the OLD plugin generation to every new
   # session (measured 2026-09-13). Keep it bare.
-  name: ./lane-role-presentation.mjs?v=1
+  name: ./role-presentation.mjs?v=4
+
+# 意图门看门狗：per-turn 的 Phase 0 纪律在「漏了」时没有任何代价，于是静默衰减
+#（本项目实测：26 轮里只有 2 轮的可见回复输出过）。本行在上一轮漏了时，每轮注入一次提醒。
+# 见插件头部注释与 scripts/verify-intent-gate-watchdog.cjs。
+- id: intent-gate-watchdog
+  name: ./intent-gate-watchdog.mjs?v=4
 
 - id: role-explorer
   name: '@deepseek-ai/dsh-tool-subagent'

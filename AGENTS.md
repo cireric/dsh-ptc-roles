@@ -1,4 +1,4 @@
-# AGENTS.md — agent-lanes
+# AGENTS.md — ptc-roles
 
 DSH agent preset：orchestrator 主 agent（PTC）+ `explorer`/`librarian`/`oracle`/`implementer`/`designer`
 五个角色子代理（native，`toolFilter.allow` 即硬能力边界）。
@@ -20,7 +20,10 @@ DSH agent preset：orchestrator 主 agent（PTC）+ `explorer`/`librarian`/`orac
 **条件触发**
 
 7. **改完 preset 必须自验**：
-   `node scripts/verify-agent-lanes.cjs`（行为，期望 `✗0 !0`）与
-   `node scripts/verify-lane-role-presentation.cjs`（插件单元，期望 `11/11`；
-   `--control` 必须**恰好 5 项失败**，否则断言是空转）。
+   `node scripts/verify-ptc-roles.cjs`（行为，期望 `✗0 !0`，并打印意图门合规率）与
+   `node scripts/verify-role-presentation.cjs`（插件单元，期望 `11/11`；
+   `--control` 必须**恰好 5 项失败**，否则断言是空转）与
+   `node scripts/verify-intent-gate-watchdog.cjs`（看门狗单元，期望 `20/20`；
+   `--control` 必须失败在它自己的 `REQUIRED_CONTROL_FAILURES` 上，少一条就是断言空转）。
+   改了 `.mjs` 还要 `dev_reload_preset`（输出须含 `x.mjs -> ?v=N`）并开新会话。
 8. **改 preset、或排障之前，先读 `docs/pitfalls.md`** —— 机制与坑的唯一知识源。

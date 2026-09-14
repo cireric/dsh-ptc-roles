@@ -1,4 +1,4 @@
-// lane-role-presentation.mjs — agent-lanes preset companion plugin.
+// role-presentation.mjs — ptc-roles preset companion plugin.
 //
 // The preset runs in PTC presentation (see the base `tool-presentation` row): the
 // orchestrator keeps the cheaper collapsed tool surface. Delegated role children
@@ -45,7 +45,7 @@
 // harness ever changes. Both signals are read from fields the harness documents
 // as public; nothing here reaches into framework internals.
 
-export const name = 'lane-role-presentation'
+export const name = 'role-presentation'
 
 /**
  * Resolve an agent's delegation depth the way the harness does.
@@ -65,7 +65,7 @@ function resolveDepth(agent) {
 export function apply(ctx) {
   /** Agents already switched, so a retried event cannot re-declare the mode. */
   const flipped = new WeakSet()
-  const warn = (message) => ctx.logger?.warn('[agent-lanes] ' + message)
+  const warn = (message) => ctx.logger?.warn('[ptc-roles] ' + message)
 
   ctx.on('agent/created', ({ agent }) => {
     try {

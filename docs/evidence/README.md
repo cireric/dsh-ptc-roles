@@ -1,4 +1,4 @@
-# 证据归档（agent-lanes）
+# 证据归档（ptc-roles）
 
 > 各探针的原始输出与复现方法在下方分节；**逐轮验证记录 / 结清状态**见文末「附 · 轮次与结清状态」。
 >
@@ -6,8 +6,11 @@
 > `docs/pitfalls.md`（机制 / 坑 / 排障）与 `docs/decisions/0001`（决策）里。**记录本身不改**（历史原样）。
 >
 > 另外：**2026-09-13 第 6 轮**把角色 `fixer` 改名为 `implementer`，所以旧记录里的 `fixer` 即今日的 `implementer`。
+>
+> **2026-09-14 改名**：preset 由 `agent-lanes` 更名为 `ptc-roles`（项目目录 `cireric-dsh-agent-lanes` → `cireric-dsh-ptc-roles`）——
+> 下列记录里的旧名与旧路径（`preset/agent-lanes/…`、`scripts/verify-agent-lanes.cjs` 等）是**改名前的原件名**，不改写、保持原样。
 
-九份 JSON 都是原始输出（①–⑥ 是 2026-09-13 的探针与冒烟证据，⑦⑧ 是第 4/5 轮的改动记录，⑨ 是 2026-09-14 的**宿主内**结清验证），**只读证据**，不需要重跑就能复用结论。
+十三份 JSON 都是原始输出（①–⑥ 是 2026-09-13 的探针与冒烟证据，⑦⑧ 是第 4/5 轮的改动记录，⑨ 是 2026-09-14 的**宿主内**结清验证，⑩ 是 2026-09-15 的**新 id + 看门狗**宿主内验证，⑪ 是同日**意图门失败记录与可复现性**，⑫ 是同日**第二代（`?v=4`）宿主内验证**，⑬ 是同日**角色派发补全**（`librarian` / `oracle`）），**只读证据**，不需要重跑就能复用结论。
 
 ## 1. `2026-09-13-restrict-scope-and-presentAs.json`
 
@@ -222,6 +225,120 @@ A 版 70 行 design 宣言 vs B 版 5 行规划 persona 的取舍理由）。
 ③ `crossChecks.allowlistDrift` 用的检测器是 **gitignore 覆盖的一次性产物**（`scratch/check-allowlist-drift.cjs`），
 **未入库**，所以不要把它当可复现资产引用 —— 真正的常设保障仍是「漂移即 FAIL」的行为脚本。
 
+## 10. `2026-09-15-ptc-roles-in-host-verification.json`
+
+**它证明了什么**：改名后的 preset id `ptc-roles` 在宿主内**真的挂载**、角色**真的能派出去且白名单精确匹配**、新交付的**意图门看门狗真的注入提醒** —— HANDOFF §1 的两项欠账（`ptc-roles` 这个 id 的宿主内证据 = 0、看门狗在宿主内零观测）就此清零。
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `session.presetSelectedEvent` | `ptc-roles` | 权威信号（`agent-preset/selected` 事件）；会话头字段 `agentPreset=standard` 是创建时默认值，**别拿它当证据** |
+| `watchdogInjection.injectedMessageRawEvent` | `seq=212` / `source.kind=plugin` / `plugin=intent-gate-watchdog` | 逐字原始事件：注入发生在 `turn/start turn=2`（seq=208）之后，编排器在 turn 2 输入里实际读到（279 B，与插件 `REMINDER` 常量逐字相同） |
+| `watchdogInjection.turn1MarkerHits` | `24 events / 0 hits` | 触发条件为真：turn 1 的 assistant 文本确实不含 markers |
+| `childSessions[]` | explorer 5 / implementer 8 / designer 6 | 三者全部 `ptc=no` + 白名单精确匹配（另各 +2 项已知自身层泄漏，见 #7） |
+| `crossChecks.sha256SameCount` / `DiffCount` | 10 / 0 | 4 个文件 + 6 个 persona 的 sha256 与仓库逐一相同 ⇒ 宿主读到的就是仓库这份 |
+| `crossChecks.siblingPresets` | `["ptc-roles"]` | `~/.dsh/.agent-presets/` 下**只剩** ptc-roles ⇒ HANDOFF §1「运行时仍未切换」已过期 |
+| `findings[3]`（P-4） | 全文 grep 67 ↔ 精确匹配 **1** | HANDOFF §2.4 给的取证命令**不可靠**（见边界） |
+| `rawScriptOutput` | 5 条命令逐字 | 行为脚本 `✓4 ✗0 !0`；插件单测 11/11 与 **16/16（记录当时**的断言数；看门狗单测在 G-5 之后已扩到 20/20），两条 `--control` 阴性对照按预期失败 |
+
+**怎么得到的**（复现方法）：
+
+```bash
+node scripts/verify-ptc-roles.cjs --raw          # ✓4 ✗0 !0
+node scripts/verify-role-presentation.cjs        # 11/11（--control 恰 5 项失败）
+node scripts/verify-intent-gate-watchdog.cjs     # 记录当时 16/16；**当前期望 20/20**（--control 指定 10 条断言全败）
+node scripts/verify-ptc-roles.cjs --all          # 阳性对照：其他工作区提权计数 20（非空转）
+
+# 看门狗注入：turn 2 才可能发生（先让 turn 1 漏掉门行，再发一条真实用户消息）
+S=~/.dsh/sessions/--Users-eric-Project-tests-dsh-plugins-cireric-dsh-ptc-roles--/session-ee97f96a-5187-427c-85fe-0f4395e9532f/session.v3.jsonl.zstd
+zstd -dc "$S" | grep -m1 '"plugin":"intent-gate-watchdog"'                  # 就是那条注入
+zstd -dc "$S" | grep -c '"kind":"plugin","plugin":"intent-gate-watchdog"'   # 1（精确判据）
+zstd -dc "$S" | grep -c 'intent-gate-watchdog'                             # 67（**不可靠**，见边界；这是写记录时的快照，随会话继续增长）
+```
+
+**边界（别误读）**：
+- **取证判据**：全文 grep 计数会被**工具结果**污染 —— 本会话里编排器 `read` 过插件源码、explorer 的任务报告又逐字引用了它，于是 67 里只有 1 条是真的注入。正确判据是**匹配消息的 `source` 字段**。
+- **只证「注入发生」**，不证「行为因此改变」（效用不可由日志证明）。
+- 看门狗的**观测侧**（`session/event` 记录上一轮是否命中）不落任何痕迹 ⇒ 只有「注入」可观测，「未注入」只能由缺失反推。
+- 本轮只派了 explorer / implementer / designer 三个角色；`librarian` / `oracle` 两行的宿主内白名单**未验证**，win32 分支仍不可测。
+- 顺带测到的机制事实：**子代理结算通知不新起轮次**（走 `agent/inbox/spliced`，`source.kind=subagent-settled`）⇒ 这类「机器轮」永远不满足看门狗要求的真实 user 来源，也就永远不触发它（设计如此）。
+
+## 11. `2026-09-15-intent-gate-failure-record.json`
+
+**它证明了什么**：①意图门「会静默衰减」这条失败记录成立（四个原始数字**引用自**看门狗头部注释与 HANDOFF §3④）；②但**那次审计已不可复现** —— 源会话不在会话库里了；③于是本文件改用当场可复现的产物，并把**合规率指标固化进** `scripts/verify-ptc-roles.cjs`（HANDOFF §3③ 同时落地）。
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `quotedRecord` | 26 轮 / 任意文本 3 / 可见回复 2 / **首行 0** | 标 `QUOTED`：本文件**没有**重测出这四个数字 |
+| `reproducibility.scannedFiles` | 77 | 全库会话文件数 |
+| `reproducibility.sessionsWithAnyGateText` | 3 | 全库只有 3 个会话出现过中文门行字面量或英文门行短语 |
+| `reproducibility.topTurnCounts` | 28 / 21 / 18 … | **没有 26/27 轮的会话** ⇒ 审计源会话不在库中 |
+| `reproducibility.storeSnapshot` | agent-lanes 工作区目录 mtime `2026-09-15 00:07:03`、仅存 1 个会话；5 个工作区目录为空 | 会话库是**滚动窗口**，不是归档 ⇒ 合规性只能当场测、测完落盘 |
+| `measuredNow.currentSession.perTurn` | `T1-a T2+ra T3+ra` | 本会话逐轮：T1 漏 → 看门狗在 T2 提醒 → T2/T3 首行有门行（`+`=首行 / `r`=可见回复 / `a`=任意文本，含工具结果） |
+| `measuredNow.silentPathObserved` | 全会话仅 1 条注入（seq=212） | 上一轮合规时**不再**提醒 —— 看门狗「沉默」分支的首次宿主内观测（对应证据 ⑩ 的 P-7） |
+| `toolingDelivered.output` | `意图门合规率: 3 轮（会改变行为 3 轮）\| 首行命中 2/3 (67%) \| …` | 指标已进验证脚本（零模型成本，任何会话可重跑） |
+| `findings[4]`（G-5） | 逐字的两条坏门行（`badGateLines`） | **marker 驱动的退化**：那两行含 turn 号 / 看门狗状态 / 证据文件名，**不含**用户要什么 ⇒ 修法是把这一行的读者写清楚（见下） |
+| `upstreamReference` | `"I detect [bucket] intent - [reason]. My approach: [...]"`（`sisyphus/default.ts`，v4.19.4 与 HEAD **逐字相同**） | 上游自述用途 = *"makes your reasoning transparent to the user"*；**我们移植时丢了 `[reason]` 槽位** ⇒ 本次补回为「依据：」，并采纳 gpt-5-5 的「这一行是承诺，不是标签」与 grok-4 的「不照抄用户的话」 |
+
+**怎么得到的**（复现方法）：
+
+```bash
+node scripts/verify-ptc-roles.cjs --raw      # 新增：单会话合规率 + 逐轮判定 + 全部会话合计
+node scripts/verify-ptc-roles.cjs --all      # 同上，但扫全部工作区
+# reproducibility 一节 = 遍历 ~/.dsh/sessions 下全部 .zstd，逐轮按三个口径统计（口径见该 JSON 的 method）
+stat -f '%Sm %N' ~/.dsh/sessions/*agent-lanes*/   # 会话库快照：目录 mtime
+find ~/.dsh/sessions -maxdepth 1 -type d -empty    # 空工作区目录
+find ~/.dsh -name '*2982160d*'                     # 证据 ⑨ 引用的源会话：0 命中
+```
+
+**边界（别误读）**：
+- 那四个原始数字是**引用**，不是本文件的测量结果：本文件能复现「口径」与「当下分布」，复现不了「当年那 26 轮」。
+- 「源会话不在库里」是**事实陈述**：清理可能是人为的或策略性的，本文件没有证据判断原因（已列入 `notVerifiable`）。
+- **真实缺陷 G-3（已修）**：persona 当时规定的门行形式是英文 `I detect … intent — my approach:`，而看门狗与合规率用中文 `意图判定` ⇒ 两处不同口径。**同日已修复**：persona 的 Phase 0 改成同一口径的 `意图判定` 并限定为「会改变行为的轮次」，看门狗与合规率同步；当天晚些时候又按上游原文补回 `[reason]` 槽位（终稿 `意图判定：<桶> — 你要的是 <结果>（依据：<…>）；我打算 <做法>`）—— 见轮次账本第 8、9 行。本段保留原始记录，不追改结论。
+- **上游对齐（G-5 的修法依据）**：门行的原始出处是 Sisyphus `### Step 0: Verbalize Intent`，其自述用途是 *"makes your reasoning transparent to the user"* —— 与「门行要跟用户对齐」是同一条。kimi 的 `<re_entry_rule>`（确认轮不重发门行）**刻意未采纳**：它与本项目的数据面 eligibility 判据（只对会改变行为的轮次要求）口径不同，再引入一条语义规则会与唯一可自动核查的那部分冲突。
+- 合规率只证「有没有输出门行」，**不证**「因此决策更正确」。
+- **G-5 的边界（重要）**：插件**观测不到内容质量** —— 门行在、但内容是内部记账时它保持沉默（本轮 turn 2/3 正是如此）。所以这一层只能靠 prompt 侧（persona 与 REMINDER 写清「读者是用户」），**不做正则 linter**：判「这行是不是记账」没有可靠规则，误伤编排器合法用词的风险大于收益（同证据 ⑥ 否决 sandbox-strip 的理由）。
+
+## 12. `2026-09-15-ptc-roles-generation4-in-host-verification.json`
+
+**它证明了什么**：`?v=4` 那一代（G-3/G-5 返工后的 persona + 看门狗）**真的在宿主里跑起来了**，而且 eligibility 判据在真机成立 —— 证据 ⑩ 只验过**旧代**，此后新代的一切结论都还只是单测结论（单测证逻辑，不证挂载）。
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `generationProof.persona` | system/message 含 `align with the user before acting` 与 `你要的是`，**不含** `I detect` | 新 persona 就是模型实际读到的那份 |
+| `generationProof.plugin` | 注入文本含新文案 `这一行的读者是`、不含旧文案 `适用于每一条用户消息` | 注入内容可反推**宿主实际加载的插件字节**（ESM 缓存已按 `?v=4` 换键） |
+| `perTurn` + `injections` | turn 1 / turn 4（inner `bash`）漏行 ⇒ `seq=35` / `seq=81` 各注入一次；turn 6（inner `read`）漏行且该轮无 marker ⇒ turn 7 **无**注入 | **同一会话内对照**：行为轮提醒、只读轮不提醒 = eligibility 成立 |
+| `method.confoundAndFix` | 第一版剧本让模型**引用**了「未输出意图判定行」⇒ marker 子串命中，eligibility 分支没被考到 | 方法学自纠：补一轮「只读且**不提** marker」才拿到干净对照 |
+| `findings[4]`（H-5） | turn 2/3 只是**谈论**门行，就被计入「可见回复命中」 | marker 子串判据的已知弱点：判不出「输出」与「谈论」 |
+| `rawScriptOutput` | 自测会话 `7 轮（会改变行为 2 轮）\| 首行命中 0/2 (0%)`；合计 `14 轮 / 9 个行为轮 / 6 命中` | 0% **是构造的结果**（我明令禁止输出门行），不是回归 |
+
+**怎么得到的**（复现方法）：Playwright 驱动 `http://127.0.0.1:3080` → 新建会话 → 模式选择器选「PTC 角色模式」→ 按 `method.script` 的 7 条消息依次发送；判定只读会话文件（解 `turn/start` / `tool/ptc-dispatch` / `user/message(plugin)` / `assistant/message`），再跑 `node scripts/verify-ptc-roles.cjs --raw`。
+
+**边界（别误读）**：
+- 提醒的**效用**不可证（同 ⑩ / ⑪）。
+- 该会话的 0% 合规率是**刻意构造**（用户消息里明令禁止输出门行）；与真实使用不能混读，脚本的合计口径把两个会话混在一起也只是**诊断值**、不是分数。
+- 这个自测会话（`session-d701ad55…`）会出现在会话列表里 —— **它本身就是原始产物**，删它等于删证据。
+- （原先此处列的 `librarian` / `oracle` 白名单债已由**证据 ⑬** 关闭。）
+
+## 13. `2026-09-15-ptc-roles-role-dispatch-completion.json`
+
+**它证明了什么**：五个角色行里最后两个（`librarian` / `oracle`）也能在宿主内派出去、`ptc=no`、工具面与白名单**精确匹配** —— 证据 ⑩ 里那条 `notVerifiable`（只派过三个角色）就此关闭。
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `roleLines.librarian` | `role=librarian model=z-ai/glm-5.3-flash ptc=no tools=10` | 白名单 8 项 + 2 项已知自身层泄漏（#7） |
+| `roleLines.oracle` | `role=oracle model=deepseek/deepseek-v4.1-flash ptc=no tools=8` | 白名单 6 项 + 2 项已知自身层泄漏 |
+| `childSessions[1].toolFace` | `read / grep / glob / lsp + explorer + librarian` | oracle **看得见、且仅看得见**它的两个只读下属；碰不到 `implementer` / `designer` / shell |
+| `findings[2]`（R-3） | oracle 判定：`maxDepth: 1` 只在**能力层**堵死孙代，**呈现层**工具面仍多两个名字 | 「`toolFilter.allow` 即硬能力边界」这句在**呈现层为假** —— 不是新缺陷（#7 已记），是把口径说准 |
+| `childSessions[0].taskOutcome` | `process.getBuiltinModule` = **v22.3.0**、回移 **v20.16.0**、Stable | 与证据 ⑧ 早前那次同题探针**逐项一致**（独立复现） |
+| `rawScriptOutput` | `汇总: ✓8 ✗0 !0` | 8 个会话（2 个主 agent + 6 个子代理）零 FAIL |
+
+**怎么得到的**（复现方法）：在本会话（旧代挂载；角色行与角色 persona 本轮未改动）并行派 `librarian`（查 Node 官方文档的版本事实）与 `oracle`（只读评估 `maxDepth: 1` 的缓解是否足够），再跑 `node scripts/verify-ptc-roles.cjs --raw`。原始输出逐字存于该 JSON 的 `rawScriptOutput`。
+
+**边界（别误读）**：
+- `verificationGap`：oracle 结论里「泄漏的那份注册沿用该行 config 的 `maxDepth`」是**它的推断**（它没读 standing scoped install 的实现）—— 本记录只记录角色说了什么，**不主张**该推断成立。
+- 两个角色是从**旧代挂载**的会话派出去的；角色行与角色 persona 本轮未改，故这一条对两代同效（新代改的是 orchestrator persona 与看门狗）。
+- 角色任务的**答案质量**只记录「它答了什么」，不构成效用证明。
+
 ## 附 · 轮次与结清状态（从 HANDOFF 搬迁至此：逐轮验证记录）
 
 > HANDOFF 只留**当前要做什么**；逐轮历史归这里，因为它本来就是「验证账本」。
@@ -235,6 +352,11 @@ A 版 70 行 design 宣言 vs B 版 5 行规划 persona 的取舍理由）。
 | 4 | 首轮 dogfooding：explorer 清点 + oracle 对抗评判 ⇒ 白名单**零漂移**，逮到 3 处真实缺陷（悬空 designer 引用、leaf-node 口径错、README 模型档漂移） | ✅ 均已修 | ⑧ |
 | 5 | 核实 Sisyphus 覆盖度（上游 v4.19.4）并补全操作性纪律；Specialists 改表；`continuable` 定案 | ✅ **已结清**（persona 文本确认载入；**仅证载入、不证效用**） | ⑧⑨ |
 | 6 | 角色 `fixer` → `implementer` 改名（yml / persona / `EXPECTED` / 文档同步；**不做** LEGACY_ROLES 别名） | ✅ **已结清**（`role=implementer ptc=no` 白名单 8 项；`--all` 无 fixer WARN 残留） | ⑨ |
+| 7 | 改名 `agent-lanes` → `ptc-roles` + 新增意图门看门狗；**新 id 宿主内挂载 / 角色派发与白名单 / 看门狗注入** | ✅ **已结清**（三项数据面证据齐；`--all` 阳性对照 20） | ⑩ |
+| 8 | 意图门失败记录归档（HANDOFF §3④）+ **合规率指标固化进验证脚本**（§3③）；同时逮到并**修复** persona 与插件门行**不同口径**（门行补丁：Phase 0 限定为「会改变行为的轮次」+ 首行 `意图判定：<桶> — <计划>`；看门狗随之改为只提醒这类轮次，单测 20/20；`.mjs` bump 到 `?v=2`） | ✅ 已落地（「原始审计不可复现」这一事实一并入档） | ⑪ |
+| 11 | 角色派发补全：`librarian` / `oracle` 宿主内白名单**精确匹配**（8 / 6 项）—— 五个角色行**全部**验过 | ✅ 已结清（⑩ 的 `notVerifiable` 缺口关闭） | ⑬ |
+| 10 | **第二代（`?v=4`）宿主内验证**：新 persona 载入 / 新看门狗字节载入 / 行为轮漏行被提醒 ×2 / 只读轮漏行不提醒（同会话对照） | ✅ 已结清（方法学上先自纠了一次 marker 子串混淆） | ⑫ |
+| 9 | **门行文案返工（G-5）**：marker 驱动退化（门行写成 turn 号 / 看门狗状态 / 证据文件名）⇒ 按上游 `Step 0: Verbalize Intent` 原文**补回我们移植时丢掉的 `[reason]` 槽位**、明确「读者是用户 / 是承诺不是标签 / 不照抄原话」；`.mjs` bump 到 `?v=4` | ✅ 已落地（上游 v4.19.4 与 HEAD 逐字相同已核；单测仍 20/20） | ⑪（`findings[4]` + `upstreamReference`） |
 
 **仍未做**：`skills` 细粒度分发（推迟 v1.1）；~~sandbox-strip~~ **结案不做**（证据 ⑥）；win32 平台分支（本机无该平台，只能靠设备验证）。
 

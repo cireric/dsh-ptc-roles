@@ -1,0 +1,7 @@
+name: PTC 角色模式
+description: >-
+  基于官方 ptc 组合的角色化派生：orchestrator 主 agent 保持 PTC，五个命名专家角色子代理
+  （explorer / librarian / oracle / implementer / designer）切 native —— 于是 toolFilter 才是
+  硬能力边界，而不是提示性配置。这里的「角色」指领域专家，与官方 Agent Teams 的
+  lead/teammate 角色无关。角色行、maxDepth 与白名单见 agent.cordis.yml 末尾的
+  "ptc-roles additions" 段。
