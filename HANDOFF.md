@@ -40,11 +40,14 @@
     并点名禁止这类记账（凭证件：docs/evidence 证据 ⑪ 的 findings[4]）。措辞按上游 Sisyphus 原文返工：
     **v4.19.4 与 HEAD 的 Step 0 逐字相同**，而我们的移植丢了它的 `[reason]` 槽位 —— 本次补回为「依据：」（原文与 diff 见证据 ⑪ 的 `upstreamReference`）。
   - **`AGENTS.md` 规则 7** 补上第三条验证命令与 `dev_reload_preset` 那一句。
-  - **`.mjs` 已 bump**：`role-presentation.mjs?v=4` / `intent-gate-watchdog.mjs?v=4`（`dev_reload_preset` 输出确认）。
+  - **`.mjs` 已 bump**：`role-presentation.mjs?v=5` / `intent-gate-watchdog.mjs?v=6`（2026-09-15 复审修订后再次 bump；
+    上一次是 `?v=4`/`?v=4`，`dev_reload_preset` 输出确认）。
   - ✅ **第二代（`?v=4`）已在自测会话里验过**（证据 ⑫，用 GUI 自动化新建的 7 轮会话 `session-d701ad55…`）。
-    persona 与看门狗仍是「挂载时读取」⇒ 对这个长会话自身而言，**本会话仍是旧代**。
-- **三项脚本当前全绿**：`verify-ptc-roles` `✓4 ✗0 !0`（含合规率）；`verify-role-presentation` 11/11
-  （`--control` 恰 5 项失败）；`verify-intent-gate-watchdog` **20/20**（`--control` 失败在它自列的 10 条指定断言上）。
+    persona 与看门狗仍是「挂载时读取」⇒ 对这个长会话自身而言，**本会话仍是旧代**；
+    `?v=5`/`?v=6` 这一代**尚无**宿主内证据（注释与计数改动，行为面不变 —— 但这一说法本身未经宿主验证）。
+- **三项脚本当前全绿**：`verify-ptc-roles` `✓7 ✗0 !0`（含合规率与不可归属派发计数）；`verify-role-presentation` 11/11
+  （`--control` 恰 5 项失败）；`verify-intent-gate-watchdog` **17/17**（`--control` 恰 9 条失败，判据是**集合相等**）。
+  三个脚本的退出码统一为「0 = 本次运行符合预期」。
 
 ## 2. 你接手后要做什么（按顺序）
 
@@ -54,9 +57,10 @@
    `意图门合规率: N 轮（会改变行为 M 轮）| 首行命中 x/M (p%) | 逐轮(首行): T1✗ T2✓ …`。
    新会话里门行应当**只出现在会改变行为的轮次**上；若只有读文件/查状态的轮次也被提醒，
    说明 eligibility 判据没生效（先看 `docs/pitfalls.md` 有没有新增条目）。
-4. **还想推进的两件（都要人点头，本轮未做）**：
-   - **提交**：工作区仍未提交（改名 + 看门狗 + 两份证据 + 本轮门行补丁）。
-   - **旧副本处置**：`cireric-dsh-agent-lanes/`（已验证 `git status` 干净、HEAD=`f096621`）建议归档到
+4. **只剩一件要人点头**：
+   - ~~提交~~ **已完成**（2026-09-15）：`4b56202 refactor: rename agent-lanes to ptc-roles` +
+     `dab40c6 feat(watchdog): remind the orchestrator when the intent gate is skipped`。
+   - **旧副本处置**（未做）：`cireric-dsh-agent-lanes/`（已验证 `git status` 干净、HEAD=`f096621`）建议归档到
      `dsh-plugins/@archive/`；`~/.dsh/.agent-presets/agent-lanes/` 已经不在了。
 
 ## 3. 仍然验不了的

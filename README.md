@@ -44,8 +44,11 @@ ln -s "$R/personas" personas
 ```bash
 node scripts/verify-ptc-roles.cjs               # 行为验证（--all 扫全部工作区；--raw 打全工具名）
 node scripts/verify-role-presentation.cjs    # 插件单元校验（11 条断言；--control 必须恰 5 项失败）
-node scripts/verify-intent-gate-watchdog.cjs  # 看门狗单元校验（20 条断言；--control 必须失败在指定 10 条上）
+node scripts/verify-intent-gate-watchdog.cjs  # 看门狗单元校验（17 条断言；--control 必须恰 9 项失败）
 ```
+
+三个脚本的**退出码契约**统一为「0 = 本次运行符合预期」——`--control` 在预期失败数上也退 0，
+所以判定要看脚本自己打印的那行（`阴性对照符合预期…`），不能只看 `$?`。
 
 零模型成本。第一个只读 `~/.dsh/sessions`，用 `request/header.header.tools`（**真正发给模型的**工具面）
 判定每个会话的角色 / 模型 / 工具面 / 是否仍是 PTC：期望主 agent `✓ 保持 PTC`、每个角色子代理

@@ -171,7 +171,7 @@ function decode(file) {
 }
 
 function analyze(raw) {
-  const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', escalations: [], intentTurns: new Map() }
+  const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', escalations: [], intentTurns: new Map(), unattributable: new Set() }
   /** callId -> turn，用于把 `tool/ptc-dispatch`（无 turn）归回它所属的那一轮。 */
   const callTurns = new Map()
   const recFor = (t) => {
@@ -193,8 +193,13 @@ function analyze(raw) {
       if (typeof callId === 'string') callTurns.set(callId, turn)
       if (BEHAVIOR_TOOLS.has(toolName)) recFor(turn).acting = true
     } else if ((event.type === 'tool/ptc-dispatch' || event.type === 'tool/ptc-dispatch-start') && BEHAVIOR_TOOLS.has(toolName)) {
-      const t = callTurns.get(event.data && event.data.rootCallId)
+      const rootCallId = event.data && event.data.rootCallId
+      const t = callTurns.get(rootCallId)
       if (typeof t === 'number') recFor(t).acting = true
+      // 归因失败**绝不静默**（按 rootCallId 去重：同一派发会同时出 -start 与完成两个事件，
+      // 按事件计数会把数字凭空翻倍）。插件 intent-gate-watchdog.mjs 在同情形 warn；
+      // 这里没有 warn 通道（pitfalls #9），所以它必须进**数据面**：计数并进汇总行。
+      else result.unattributable.add(typeof rootCallId === 'string' ? rootCallId : '<no rootCallId>')
     }
     if (typeof turn === 'number') {
       const rec = recFor(turn)
@@ -386,12 +391,26 @@ function main() {
       + 'marker = ' + JSON.stringify(INTENT_MARKERS) + '（与插件的 DEFAULT_MARKERS 同口径）；'
       + '「任意文本」含工具结果与工具参数 ⇒ 读过插件源码的轮次也会命中，只作对照，不作合规分子。')
   }
+  const unattributableAll = [...rows].reduce((n, r) => n + (r.unattributable ? r.unattributable.size : 0), 0)
+  if (unattributableAll > 0) {
+    // 归因失明 ⇒ 那些轮次的「会改变行为」判据看不见东西，合规率分母偏低。插件在同情形
+    // 会 warn；这里没有 warn 通道（pitfalls #9），所以这个计数就是它的数据面替身。
+    console.log('不可归属的 tool/ptc-dispatch: ' + unattributableAll + ' 个 rootCallId —— 这些轮次的行为判据失明，'
+      + '合规率分母偏低（插件 intent-gate-watchdog.mjs 对同情形 warn，见 pitfalls #17）。')
+  } else {
+    console.log('不可归属的 tool/ptc-dispatch: 0（归因路径健康）')
+  }
   console.log('\n汇总: ✓' + pass + '  ✗' + fail + '  !' + warn)
   console.log('提权请求（实测计数）: ptc-roles 主 agent ' + escRoot + ' / ptc-roles 角色子代理 ' + escChild
     + ' / 其他会话 ' + escOther)
   if (escChild === 0) console.log('  ← ptc-roles 角色子代理零提权，与 approval policy never 一致（尚无理由做 sandbox-strip）')
   if (escRoot + escChild + escOther === 0) console.log('  ! 全为 0 —— 用 --all 复核：其他工作区应有非零计数，否则本计数器的阳性路径未被证明')
   if (pass + fail + warn === 0) console.log('提示: 没有任何 ptc-roles 角色子代理会话（只看到主 agent 属正常）。先派 1~2 个角色子代理，再重跑本脚本。')
+
+  // 退出码契约（三个脚本统一为「0 = 符合预期」）：只有 ✗ FAIL 让退出码非 0。
+  // `!` 与脚本内的 ✓/⊘ 标记保持 0 —— 它们按设计包含**合法**的已知现象（`⊘ 已知自身层泄漏`
+  // 见 pitfalls #7、「非 ptc-roles 子代理」跳过、零提权提示），升级为失败会让脚本常态变红而失去信号。
+  process.exitCode = fail === 0 ? 0 : 1
 }
 
 main()

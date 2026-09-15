@@ -23,7 +23,9 @@ DSH agent preset：orchestrator 主 agent（PTC）+ `explorer`/`librarian`/`orac
    `node scripts/verify-ptc-roles.cjs`（行为，期望 `✗0 !0`，并打印意图门合规率）与
    `node scripts/verify-role-presentation.cjs`（插件单元，期望 `11/11`；
    `--control` 必须**恰好 5 项失败**，否则断言是空转）与
-   `node scripts/verify-intent-gate-watchdog.cjs`（看门狗单元，期望 `20/20`；
-   `--control` 必须失败在它自己的 `REQUIRED_CONTROL_FAILURES` 上，少一条就是断言空转）。
+   `node scripts/verify-intent-gate-watchdog.cjs`（看门狗单元，期望 `17/17`；
+   `--control` 必须失败在它自己的 `REQUIRED_CONTROL_FAILURES` 上，**多一条也是异常** —— 判据是集合相等，不是包含）。
+   **退出码契约**：三个脚本统一「0 = 本次运行符合预期」，`--control` 在预期失败数上同样退 0；
+   所以别把退出码当「零失败」用，要看脚本自己打印的判定行。
    改了 `.mjs` 还要 `dev_reload_preset`（输出须含 `x.mjs -> ?v=N`）并开新会话。
 8. **改 preset、或排障之前，先读 `docs/pitfalls.md`** —— 机制与坑的唯一知识源。

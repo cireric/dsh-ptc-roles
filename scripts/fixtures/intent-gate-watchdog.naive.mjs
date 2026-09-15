@@ -1,14 +1,13 @@
 // intent-gate-watchdog.naive.mjs — 阴性对照【故意削弱的基线实现】，不是历史版本。
 //
 // 用途：证明 scripts/verify-intent-gate-watchdog.cjs 的断言不是空转。它不是某个真实旧版
-// （本插件 2026-09-14 才诞生），而是"第一直觉会写出来的那版"—— 把四个坑一次踩全：
+// （本插件 2026-09-14 才诞生），而是"第一直觉会写出来的那版"—— 把这一串坑一次踩全：
 //   ① 没有首轮保护（把"没有上一轮数据"当成"漏了"）        → 应在 first-turn 断言失败
 //   ② 覆盖下游决策（reject 也照样塞提醒）                  → 应在 reject 断言失败
-//   ③ 不判深度（连子代理一起提醒）                        → 应在两条 depth 断言失败
+//   ③ 不判深度（连子代理一起提醒，畸形深度也不警告）        → 应在三条 depth 断言失败
 //   ④ 不限制每轮一次（同一 turn 每个 step 都提醒）          → 应在 once-per-turn 断言失败
-//   ⑤ 不校验 markers 配置（空数组静默地什么都不盯）         → 应在两条 config 断言失败
-//   ⑥ 不看"这一轮该不该有门行"（只读轮次也提醒）           → 应在三条 eligibility 断言失败
-// 期望：恰好上面这 10 条失败，其余全过（否则说明对照版坏得超出了预期，或断言写弱了）。
+//   ⑤ 不看"这一轮该不该有门行"（只读轮次也提醒）           → 应在三条 eligibility 断言失败
+// 期望：恰好上面这 9 条失败，其余全过（否则说明对照版坏得超出了预期，或断言写弱了）。
 //
 // 改这个文件前先读上面这段：它的"错误"是被要求的。
 
@@ -50,8 +49,8 @@ function messageText(message) {
   return text
 }
 
-export function apply(ctx, config) {
-  const markers = config?.markers ?? DEFAULT_MARKERS            // ⑤ 不校验
+export function apply(ctx) {
+  const markers = DEFAULT_MARKERS
   const warn = (message) => ctx.logger?.warn('[' + name + '] ' + message)
   const turns = new Map()
 

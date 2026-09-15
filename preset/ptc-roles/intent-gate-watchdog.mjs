@@ -34,8 +34,11 @@
 //   3. ORCHESTRATOR ONLY (depth 0). Role children have their own personas and run
 //      cheaper models; the gate is an orchestrator discipline. Depth is resolved
 //      the way the harness resolves it — `Math.max` of the persisted header floor
-//      and the runtime option (subagent/src/depth.ts:28-36) — the same arithmetic
-//      role-presentation.mjs re-implements.
+//      and the runtime option (subagent/src/depth.ts:28-36) — DELIBERATELY copied
+//      from role-presentation.mjs rather than shared: `dev_reload_preset` only
+//      bumps `?v=N` on `.mjs` files referenced from agent.cordis.yml, so a shared
+//      sibling module would keep one frozen specifier and a fix to it would never
+//      reach a new session. Keep the two copies in sync.
 //   4. FAIL LOUD, NEVER BREAK THE STEP. Every path is wrapped; failures go to
 //      ctx.logger.warn, and a downstream failure is rethrown rather than
 //      swallowed. NOTE this deployment has NO log sink (docs/pitfalls.md #9), so
@@ -63,7 +66,7 @@ import { randomUUID } from 'node:crypto'
 
 export const name = 'intent-gate-watchdog'
 
-/** Literal markers that count as "the gate line was emitted". Overridable via config. */
+/** Literal markers that count as "the gate line was emitted". */
 const DEFAULT_MARKERS = ['意图判定']
 
 /**
@@ -136,30 +139,11 @@ function resolveDepth(agent) {
 }
 
 /**
- * Validate the marker list, failing LOUD at load time (like repeat-tool-reminder's
- * threshold validation) instead of silently watching for nothing.
- */
-function resolveMarkers(config) {
-  const configured = config?.markers
-  if (configured === undefined) return DEFAULT_MARKERS
-  if (!Array.isArray(configured) || configured.length === 0) {
-    throw new Error('intent-gate-watchdog: config.markers must be a non-empty array of strings')
-  }
-  for (const marker of configured) {
-    if (typeof marker !== 'string' || marker.trim() === '') {
-      throw new Error('intent-gate-watchdog: every config.markers entry must be a non-empty string')
-    }
-  }
-  return configured
-}
-
-/**
  * Install the watchdog's listeners.
  * @param ctx - plugin context; listeners are scoped to it and disposed with it.
- * @param config - optional `{ markers?: string[] }`.
  */
-export function apply(ctx, config) {
-  const markers = resolveMarkers(config)
+export function apply(ctx) {
+  const markers = DEFAULT_MARKERS
   const warn = (message) => ctx.logger?.warn('[' + name + '] ' + message)
 
   /** sessionId -> turn -> whether the marker appeared in that turn's assistant text. */

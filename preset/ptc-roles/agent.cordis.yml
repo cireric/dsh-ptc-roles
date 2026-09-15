@@ -336,13 +336,15 @@
   # matches, so the tool answers "无相对 .mjs 引用" and never bumps ?v=N. Without the
   # bump the host's ESM cache keeps serving the OLD plugin generation to every new
   # session (measured 2026-09-13). Keep it bare.
-  name: ./role-presentation.mjs?v=4
+  name: ./role-presentation.mjs?v=5
 
 # 意图门看门狗：per-turn 的 Phase 0 纪律在「漏了」时没有任何代价，于是静默衰减
-#（本项目实测：26 轮里只有 2 轮的可见回复输出过）。本行在上一轮漏了时，每轮注入一次提醒。
+#（本项目实测：26 轮里只有 2 轮的可见回复输出过）。本行只在**上一轮属于会改变行为的轮次
+#（要委派 / 要拒绝 / 要提问 / 要改文件）且漏了门行**时提醒一次；只读轮次与纯回答不提醒
+#（persona 的 Phase 0 也只对这类轮次要求门行）。
 # 见插件头部注释与 scripts/verify-intent-gate-watchdog.cjs。
 - id: intent-gate-watchdog
-  name: ./intent-gate-watchdog.mjs?v=4
+  name: ./intent-gate-watchdog.mjs?v=6
 
 - id: role-explorer
   name: '@deepseek-ai/dsh-tool-subagent'

@@ -18,9 +18,8 @@
 //
 // 全程只读：不联网、不调模型、不写文件。
 //
-// ⚠ 对照 fixture 与证据 ⑩ 的 sha 不一致是**预期**的：2026-09-15 加「只提醒会改变行为的轮次」
-// 这条判据时，连带把 fixture 注释里的期望条数（7 → 10）与坑清单补了一行 —— **纯注释，行为不变**
-// （同 README §5 记的那次先例）。证据 ⑩ 里的 `sha256: e82d766f…` 是**当时那次运行**的字节。
+// ⚠ 对照 fixture 是**活**的阴性对照：它的 sha 与冻结证据 ⑩ 不一致是**预期**的——断言清单在演进
+// （先加 eligibility 三条、再删 config.markers 三条），冻结证据记的是**当时那次运行**的字节。
 
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -34,15 +33,15 @@ const PLUGIN = path.resolve(
     ?? (CONTROL_MODE ? CONTROL_FIXTURE : path.join(__dirname, '..', 'preset', 'ptc-roles', 'intent-gate-watchdog.mjs')),
 )
 
-/** 对照版【必须】失败在这些断言上（否则断言或对照版有一个是坏的）。 */
+/** 对照版【必须】恰好失败在这些断言上（双向判据：少一条=断言空转；多一条=对照版坏得超出预期）。 */
 const REQUIRED_CONTROL_FAILURES = [
   'no reminder on the first turn (no previous-turn data)',
   'never overrides a downstream reject',
   'skips role children whose depth lives in the header',
   'skips role children whose depth lives only in options.subagentDepth',
+  // 坑③「不判深度」的另一面：对照版连 resolveDepth 都没有，畸形深度既不跳过也不 warn。
+  'malformed options.subagentDepth skips and warns',
   'reminds at most once per turn',
-  'rejects an empty config.markers at load time',
-  'rejects a blank config.markers entry at load time',
   // 设计取舍 5（只提醒「会改变行为」的轮次）——对照版没有这个判据，所以这三条也必须在它身上失败。
   'stays silent when the previous turn ran no behavior-changing tool',
   'stays silent when the previous PTC turn only dispatched read-only tools',
@@ -59,7 +58,7 @@ function check(name, ok, detail) {
 }
 
 /** Load a fresh plugin instance with a fake ctx capturing both subscriptions. */
-async function open(config) {
+async function open() {
   const state = { warns: [], sessionHandler: undefined, preStepHandler: undefined }
   const ctx = {
     logger: { warn: (message) => state.warns.push(String(message)) },
@@ -69,7 +68,7 @@ async function open(config) {
     },
   }
   const mod = await import(pathToFileURL(PLUGIN).href)
-  mod.apply(ctx, config)
+  mod.apply(ctx)
   if (typeof state.sessionHandler !== 'function') throw new Error('plugin did not subscribe to session/event')
   if (typeof state.preStepHandler !== 'function') throw new Error('plugin did not subscribe to agent/pre-step')
   const session = (id) => ({ id })
@@ -212,24 +211,7 @@ async function main() {
     check('re-evaluates on the next turn', injected(d))
   }
 
-  // 12 — config: a custom marker is honoured.
-  {
-    const h = await open({ markers: ['[gate:impl]'] })
-    h.observe('s1', 1, '意图判定：implementation — …')   // default marker must NOT satisfy a custom config
-    h.act('s1', 1)
-    const d = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 2, step: 1 })
-    check('honours a custom config.markers list', injected(d))
-  }
-
-  // 13 / 14 — invalid config fails LOUD at load time.
-  for (const [name, cfg] of [['rejects an empty config.markers at load time', { markers: [] }],
-    ['rejects a blank config.markers entry at load time', { markers: ['  '] }]]) {
-    let threw
-    try { await open(cfg) } catch (err) { threw = err }
-    check(name, threw !== undefined && String(threw).includes('markers'))
-  }
-
-  // 15 — a downstream failure is rethrown, never swallowed.
+  // 12 — a downstream failure is rethrown, never swallowed.
   {
     const h = await open()
     let threw
@@ -241,7 +223,7 @@ async function main() {
       threw !== undefined && String(threw).includes('downstream boom') && h.state.warns.length > 0)
   }
 
-  // 16 — malformed payloads and events must not throw.
+  // 13 — malformed payloads and events must not throw.
   {
     const h = await open()
     let threw
@@ -254,7 +236,7 @@ async function main() {
     check('malformed payloads are a no-op, not a crash', threw === undefined)
   }
 
-  // 17 / 18 — a read-only turn is not one the rule covers -> silence (native & PTC).
+  // 14 / 15 — a read-only turn is not one the rule covers -> silence (native & PTC).
   {
     const h = await open()
     h.observe('s1', 1, '只读侦察，没有分类行。')
@@ -271,7 +253,7 @@ async function main() {
     check('stays silent when the previous PTC turn only dispatched read-only tools', !injected(d))
   }
 
-  // 19 — in PTC the behavior tool is visible ONLY on the dispatch event, and that event
+  // 16 — in PTC the behavior tool is visible ONLY on the dispatch event, and that event
   // carries no `turn`: attribution goes through the root call id.
   {
     const h = await open()
@@ -281,7 +263,7 @@ async function main() {
     check('reminds when the previous turn dispatched a behavior tool through run_code', injected(d))
   }
 
-  // 20 — an unattributable dispatch must be LOUD: silence there would mean the eligibility
+  // 17 — an unattributable dispatch must be LOUD: silence there would mean the eligibility
   // rule has gone blind, which is exactly the failure mode this plugin exists to expose.
   {
     const h = await open()
@@ -293,11 +275,17 @@ async function main() {
   console.log('\n汇总: ' + (checks - failures) + '/' + checks + ' 通过' + (failures === 0 ? '  ✓ 全绿' : '  ✗ ' + failures + ' 项失败'))
 
   if (CONTROL_MODE) {
-    const missing = REQUIRED_CONTROL_FAILURES.filter(name => !failedNames.includes(name))
-    console.log(missing.length === 0
-      ? '阴性对照符合预期：' + REQUIRED_CONTROL_FAILURES.length + ' 条指定断言全部失败（共 ' + failures + ' 项失败）—— 断言确实抓得住"该提醒时不提醒/乱提醒"的实现。'
-      : '⚠ 阴性对照不符合预期：这些断言在对照版上竟然通过了 → ' + missing.join(' | '))
-    process.exitCode = missing.length === 0 ? 0 : 1
+    const required = new Set(REQUIRED_CONTROL_FAILURES)
+    const failed = new Set(failedNames)
+    const missing = REQUIRED_CONTROL_FAILURES.filter((name) => !failed.has(name))
+    const extra = failedNames.filter((name) => !required.has(name))
+    const ok = missing.length === 0 && extra.length === 0
+    console.log(ok
+      ? '阴性对照符合预期：恰好 ' + REQUIRED_CONTROL_FAILURES.length + ' 条指定断言失败（一一对应，共 ' + failures + ' 项失败）—— 断言确实抓得住"该提醒时不提醒/乱提醒"的实现。'
+      : '⚠ 阴性对照不符合预期：'
+        + (missing.length > 0 ? '这些断言在对照版上竟然通过了 → ' + missing.join(' | ') : '')
+        + (extra.length > 0 ? (missing.length > 0 ? '；' : '') + '这些断言意外多失败了 → ' + extra.join(' | ') : ''))
+    process.exitCode = ok ? 0 : 1
     return
   }
   process.exitCode = failures === 0 ? 0 : 1

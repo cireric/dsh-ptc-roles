@@ -44,6 +44,16 @@
 // zero-import rule above — keep it in sync with subagent/src/depth.ts if the
 // harness ever changes. Both signals are read from fields the harness documents
 // as public; nothing here reaches into framework internals.
+//
+// ── why intent-gate-watchdog.mjs carries its own COPY of resolveDepth ─────────
+// Not an oversight: the two plugins must NOT share a sibling module, because the
+// only cache-buster this deployment has (`dev_reload_preset`) rewrites `?v=N` on
+// the `.mjs` files referenced FROM agent.cordis.yml. A shared `depth.mjs` would
+// keep one constant specifier forever, so a fix to it would never reach a session
+// — the host's ESM URL cache would keep serving the old generation, silently.
+// With the arithmetic copied into each entry file, every edit rides a `?v=N` bump
+// of a file the reload tool actually rewrites. Keep the two copies identical; a
+// drift shows up as the depth assertions failing in ONE verifier and not the other.
 
 export const name = 'role-presentation'
 

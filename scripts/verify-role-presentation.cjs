@@ -8,17 +8,22 @@
 // 恢复型子代理。那些路径恰恰是「子代理静默留在 PTC = run_code 逃逸」的入口，必须直接断言。
 //
 // 用法：
-//   node scripts/verify-role-presentation.cjs            # 校验当前插件（期望 11/11，退出码 0）
+//   node scripts/verify-role-presentation.cjs            # 校验当前插件（期望 11/11）
 //   node scripts/verify-role-presentation.cjs --control  # 阴性对照：跑**冻结在仓库里的旧版**
-//                                                            # （期望恰好 5 项失败，退出码 1）
+//                                                        # （期望恰好 5 项失败）
+//
+// 退出码契约（三个脚本统一）：**0 = 本次运行符合预期**，1 = 不符合。所以 --control 在
+// 「恰好 5 项失败」时也退 0 —— 旧版全绿（断言空转）或坏得超出预期都会让退出码说话。
 //
 // 阴性对照为什么必须跑：断言若在旧版上也全绿，说明它测不出「子代理静默留在 PTC」这个
 // 真正的漏洞，那 11/11 就是空转。冻结副本 = `scripts/fixtures/role-presentation.prev.mjs`，
-// 与 `docs/evidence/2026-09-13-role-presentation-hardening.json` 里记的
+// 与 `docs/evidence/2026-09-13-lane-role-presentation-hardening.json` 里记的
 // sha256 `eb123c76…` 逐字节一致 —— **不要编辑它**，改了就断了与证据的对应关系。
+// （证据文件名带 `lane-` 是改名前的原名，按「冻结件不改名」保留；fixture 则随 4b56202 改名为
+// `role-presentation.prev.mjs`，0 行变化 —— 该证据文件的 `negativeControlFixture` 字段仍用旧路径。）
 // 通用钩子仍是 `LANE_PLUGIN_PATH=<任意 .mjs>`（相对路径按当前工作目录解析）。
 //
-// 全程只读：不联网、不调模型、不写文件。退出码非 0 表示有断言失败。
+// 全程只读：不联网、不调模型、不写文件。
 
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -167,9 +172,12 @@ async function main() {
 
   console.log('\n汇总: ' + (checks - failures) + '/' + checks + ' 通过' + (failures === 0 ? '  ✓ 全绿' : '  ✗ ' + failures + ' 项失败'))
   if (CONTROL_MODE) {
-    console.log(failures === 5
+    const ok = failures === 5
+    console.log(ok
       ? '阴性对照符合预期（恰 5 项失败）：断言确实抓得住旧版的静默 PTC 漏洞。'
       : '⚠ 阴性对照不符合预期（应为 5 项失败）—— 要么冻结副本被改过，要么断言被改弱了。')
+    process.exitCode = ok ? 0 : 1
+    return
   }
   process.exitCode = failures === 0 ? 0 : 1
 }
