@@ -105,12 +105,18 @@ dev_reload_preset preset=agent-lanes                      # 输出里必须出�
 `sha256.previousRevisionControl` 一致）。它**已入库**，所以阴性对照不再依赖 `/tmp`。
 
 
-**⚠️ 关联已变动（2026-09-13 文档重构）**：本节的 `sha256.current`（`408a8ca0…`）记录的是**取证当时**的字节。
+**⚠️ 关联已变动（2026-09-13 文档重构 + 2026-09-15 改名）**：本节的 `sha256.current`（`408a8ca0…`）记录的是**取证当时**的字节。
 同日的文档重构为消除「外部文档引用 HANDOFF」而改了插件里的**一行注释**（`HANDOFF §8 G2` → 指向 ADR），
 所以**当前工作树的 sha256 已变为** `cab14ad812715753860128b9881b533f832c65bf5888f9ef50737530bc1902f8` —— **行为完全不变**（纯注释）。
 含义：①这条关联的**时间点**是取证时，不是今天；②宿主仍按 `?v=1` 缓存着旧字节，
 要让它吃到新注释需 `dev_reload_preset` + 新会话（HANDOFF 接手清单里那一步本来就会做）。
-**冻结的阴性对照**（`scripts/fixtures/lane-role-presentation.prev.mjs`，`eb123c76…`）**未改动**，对照关系仍然成立。
+
+**⚠️ 冻结副本已改名（2026-09-15，`4b56202`）**：本节的 `negativeControlFixture`
+（`scripts/fixtures/lane-role-presentation.prev.mjs`）随 preset 改名迁移为
+`scripts/fixtures/role-presentation.prev.mjs` —— `git show --stat 4b56202 -- scripts/fixtures` 显示 **0 行变化**，
+**sha256 仍是 `eb123c76…`**，与本 JSON 的 `sha256.previousRevisionControl` 一致 ⇒ 对照关系仍然成立（只是路径变了）。
+本 JSON 的 `negativeControlFixture` / `howToReproduce` 字段按「冻结证据不改写」保留旧路径；上面这条是唯一的路径更正。
+同理，`scripts/verify-lane-role-presentation.cjs` → `scripts/verify-role-presentation.cjs`、`preset/agent-lanes/` → `preset/ptc-roles/`。
 
 **边界（别误读）**：这个单元校验不依赖宿主，所以**在本会话就能下结论**；但插件**在宿主里真正生效**
 仍需**新会话**（`?v=1` 已 bump，已运行会话保持旧代）。要确认生效，新会话里派一个角色子代理，
@@ -227,6 +233,13 @@ A 版 70 行 design 宣言 vs B 版 5 行规划 persona 的取舍理由）。
 
 ## 10. `2026-09-15-ptc-roles-in-host-verification.json`
 
+> **⚠️ 已被证据 ⑫ 取代（代次维度）**：本节的宿主内观测**全部是 `?v=1` 那一代**（⑩ 记
+> `intent-gate-watchdog.mjs` sha `1e35761f…`、单测 16/16）。此后插件已连跳数代
+> （G-5 返工 → `?v=4`、2026-09-15 复审修订 → `?v=5`/`?v=6`），**当前代次**的宿主内证据在 **⑫**。
+> ⑩ 的**结论仍然成立**（挂载、角色派发、白名单匹配是 id/白名单级事实，不随插件代次变化），
+> 但**不要**用它的 sha 或断言数去核对今天的行为。按「冻结证据不改写」的纪律，本 JSON 原文不动，
+> 更正只写在这一层。
+
 **它证明了什么**：改名后的 preset id `ptc-roles` 在宿主内**真的挂载**、角色**真的能派出去且白名单精确匹配**、新交付的**意图门看门狗真的注入提醒** —— HANDOFF §1 的两项欠账（`ptc-roles` 这个 id 的宿主内证据 = 0、看门狗在宿主内零观测）就此清零。
 
 | 字段 | 值 | 含义 |
@@ -238,14 +251,14 @@ A 版 70 行 design 宣言 vs B 版 5 行规划 persona 的取舍理由）。
 | `crossChecks.sha256SameCount` / `DiffCount` | 10 / 0 | 4 个文件 + 6 个 persona 的 sha256 与仓库逐一相同 ⇒ 宿主读到的就是仓库这份 |
 | `crossChecks.siblingPresets` | `["ptc-roles"]` | `~/.dsh/.agent-presets/` 下**只剩** ptc-roles ⇒ HANDOFF §1「运行时仍未切换」已过期 |
 | `findings[3]`（P-4） | 全文 grep 67 ↔ 精确匹配 **1** | HANDOFF §2.4 给的取证命令**不可靠**（见边界） |
-| `rawScriptOutput` | 5 条命令逐字 | 行为脚本 `✓4 ✗0 !0`；插件单测 11/11 与 **16/16（记录当时**的断言数；看门狗单测在 G-5 之后已扩到 20/20），两条 `--control` 阴性对照按预期失败 |
+| `rawScriptOutput` | 5 条命令逐字 | 行为脚本 `✓4 ✗0 !0`；插件单测 11/11 与 **16/16（记录当时**的断言数；看门狗单测此后经 G-5 扩到 20/20、又于 2026-09-15 删 config.markers 降至 **17/17**），两条 `--control` 阴性对照按预期失败 |
 
 **怎么得到的**（复现方法）：
 
 ```bash
 node scripts/verify-ptc-roles.cjs --raw          # ✓4 ✗0 !0
 node scripts/verify-role-presentation.cjs        # 11/11（--control 恰 5 项失败）
-node scripts/verify-intent-gate-watchdog.cjs     # 记录当时 16/16；**当前期望 20/20**（--control 指定 10 条断言全败）
+node scripts/verify-intent-gate-watchdog.cjs     # 记录当时 16/16；**当前期望 17/17**（--control 恰 9 条断言失败，判据为集合相等）
 node scripts/verify-ptc-roles.cjs --all          # 阳性对照：其他工作区提权计数 20（非空转）
 
 # 看门狗注入：turn 2 才可能发生（先让 turn 1 漏掉门行，再发一条真实用户消息）
