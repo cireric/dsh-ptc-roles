@@ -336,7 +336,7 @@
   # matches, so the tool answers "无相对 .mjs 引用" and never bumps ?v=N. Without the
   # bump the host's ESM cache keeps serving the OLD plugin generation to every new
   # session (measured 2026-09-13). Keep it bare.
-  name: ./role-presentation.mjs?v=6
+  name: ./role-presentation.mjs?v=7
 
 # 意图门看门狗：per-turn 的 Phase 0 纪律在「漏了」时没有任何代价，于是静默衰减
 #（本项目**取证当时**实测：26 轮里只有 2 轮的可见回复输出过 —— 这是取证当时的窗口，
@@ -346,7 +346,7 @@
 #（persona 的 Phase 0 也只对这类轮次要求门行）。
 # 见插件头部注释与 scripts/verify-intent-gate-watchdog.cjs。
 - id: intent-gate-watchdog
-  name: ./intent-gate-watchdog.mjs?v=7
+  name: ./intent-gate-watchdog.mjs?v=8
 
 - id: role-explorer
   name: '@deepseek-ai/dsh-tool-subagent'

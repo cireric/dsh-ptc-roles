@@ -56,6 +56,13 @@
 //      ⚠ BEHAVIOR_TOOLS is a deliberate second copy of the same list in
 //      `scripts/verify-ptc-roles.cjs` (its compliance denominator). Drift is visible,
 //      not silent: when the two disagree the compliance rate flips.
+//   6. "EMITTED" MEANS THE FIRST LINE OF THE TURN'S FIRST TEXT REPLY. The contract says
+//      the line is the reply's FIRST line, so a marker further down — or in a later
+//      message of the same turn — is NOT a declaration: it reaches the user only after
+//      the actions it was meant to announce. Same criterion as the verifier's compliance
+//      numerator (`verify-ptc-roles.cjs`, `rec.first`). Until 2026-09-16 the plugin
+//      accepted a hit ANYWHERE, so a second-line line scored 0 in the metric while
+//      silencing the watchdog — one contract, two criteria. Keep them equal.
 //
 // Zero `@deepseek-ai/*` imports on purpose (a preset directory lives under the
 // user home, where Node cannot resolve the harness packages); Node builtins are
@@ -88,12 +95,12 @@ const BEHAVIOR_TOOLS = new Set([
 
 /** The single reminder appended when the previous turn skipped the gate. */
 const REMINDER = [
-  '[intent-gate-watchdog] 上一轮是会改变行为的轮次（要委派 / 要拒绝 / 要提问 / 要改文件），但没有输出门行。',
-  '这一行的读者是**用户**，用途是动手前对齐需求：用结果说清你判断他要什么、依据是哪一点，再给出做法。格式（语言随对话）：',
-  'Intent: <bucket> — <结果/目的> (because: <你话里让我这么读的那一点>); I will <做法>。',
-  '`Intent:` 是字面 marker，照抄勿译；桶只取这六个：research / implementation / investigation / evaluation / fix / open-ended。',
-  '⚠ 两件别做：①别照抄用户的话（复述 ≠ 理解）；②别塞内部记账（turn/step 号、看门狗或插件状态、',
-  '证据文件名、脚本通过数）—— 用户拿这些做不了决定。这一行是承诺不是标签，请在回复第一行补上。',
+  '[intent-gate-watchdog] 上一轮是会改变行为的轮次（委派 / 拒绝 / 提问 / 改文件），但回复里没有门行。',
+  '请在回复**第一行**补上（语言随对话）：',
+  'Intent: <桶> — <你要的结果，一句话>（依据：<你话里让我这么读的那一点>）；我打算 <做法>。',
+  '`Intent:` 是字面 token，照抄勿译；桶只取六个：research / implementation / investigation / evaluation / fix / open-ended。',
+  '这一行的读者是**用户**：别照抄他的话，也别塞内部记账（turn/step 号、插件状态、证据文件名、脚本通过数）。',
+  '例（与本轮无关）：Intent: fix — 你要的是定位 401 的根因并修掉（依据：你贴的报错与「别再复现」）；我先复现再改。',
 ].join('\n')
 
 /** Deep-freeze a plain value in place (mirrors llm's `freezeMessage`). */
@@ -152,7 +159,7 @@ export function apply(ctx) {
   const markers = DEFAULT_MARKERS
   const warn = (message) => ctx.logger?.warn('[' + name + '] ' + message)
 
-  /** sessionId -> turn -> whether the marker appeared in that turn's assistant text. */
+  /** sessionId -> turn -> { seenText, declared }：判据是**该轮首条有文本消息的首行**（design choice 6）。 */
   const turns = new Map()
   /** sessionId -> turn -> whether a behavior-changing tool ran in that turn (design choice 5). */
   const acting = new Map()
@@ -174,11 +181,17 @@ export function apply(ctx) {
       if (event?.type === 'assistant/message') {
         const turn = event.data?.turn
         if (typeof turn !== 'number') return
+        // 判据 = 该轮**首条有文本的 assistant 消息的首行**：空文本不占「首条」，之后的文本也
+        // 不再改判（与 verify-ptc-roles.cjs 的合规分子 rec.first 逐字同口径）。
         const text = messageText(event.data?.message)
-        const seen = markers.some(marker => text.includes(marker))
         let byTurn = turns.get(sessionId)
         if (byTurn === undefined) { byTurn = new Map(); turns.set(sessionId, byTurn) }
-        byTurn.set(turn, (byTurn.get(turn) ?? false) || seen)
+        const rec = byTurn.get(turn) ?? { seenText: false, declared: false }
+        if (!rec.seenText && text.trim() !== '') {
+          rec.seenText = true
+          rec.declared = markers.some(marker => text.split('\n')[0].includes(marker))
+        }
+        byTurn.set(turn, rec)
         for (const key of [...byTurn.keys()]) if (key < turn - 1) byTurn.delete(key)
         return
       }
@@ -236,9 +249,10 @@ export function apply(ctx) {
       const sessionId = agent?.session?.id
       if (sessionId === undefined) return decision
       if (reminded.get(sessionId) === turn) return decision                  // (2) once per turn
-      // `undefined` (no previous assistant output observed) is NOT a miss: only an
-      // explicit `false` — a real previous turn whose text lacked the marker — reminds.
-      if (turns.get(sessionId)?.get(turn - 1) !== false) return decision
+      // 记录不存在（上一轮没有任何 assistant 消息）**不算漏**；只有明确的 declared === false
+      // —— 上一轮确实回复过、但**首行**没有门行 —— 才提醒。
+      const previous = turns.get(sessionId)?.get(turn - 1)
+      if (previous === undefined || previous.declared !== false) return decision
       // Design choice 5: the persona only requires the line on behavior-changing
       // turns, so only those are ever nudged.
       if (acting.get(sessionId)?.get(turn - 1) !== true) return decision

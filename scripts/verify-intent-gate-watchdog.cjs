@@ -18,6 +18,9 @@
 //
 // 全程只读：不联网、不调模型、不写文件。
 //
+// ⚠ 文本契约检查（D）只在正常模式跑：对照 fixture 的**文案**故意不是现行契约，拿它做文本一致性
+//   检查只会凭空多出失败；那一段的阴性对照是它自己的四条内存变异（⑤–⑧）。
+//
 // ⚠ 对照 fixture 是**活**的阴性对照：它的 sha 与冻结证据 ⑩ 不一致是**预期**的——断言清单在演进
 // （先加 eligibility 三条、再删 config.markers 三条），冻结证据记的是**当时那次运行**的字节。
 
@@ -43,6 +46,9 @@ const REQUIRED_CONTROL_FAILURES = [
   'malformed options.subagentDepth skips and warns',
   'reminds at most once per turn',
   // 设计取舍 5（只提醒「会改变行为」的轮次）——对照版没有这个判据，所以这三条也必须在它身上失败。
+  // 设计取舍 6（判据 = 首行）：对照版按「任意位置命中」，所以这两条也必须在它身上失败。
+  'reminds when the marker is only on a later line of the first reply',
+  'reminds when the marker is only in a later message of the turn',
   'stays silent when the previous turn ran no behavior-changing tool',
   'stays silent when the previous PTC turn only dispatched read-only tools',
   'reports an unattributable dispatch instead of staying silent',
@@ -104,6 +110,113 @@ async function open() {
 const ENTER = (messages) => ({ kind: 'enter', messages })
 const injected = (decision) => Array.isArray(decision?.messages) && decision.messages.length > 1
 
+// ── 契约一致性（D）：插件的注入文案 ↔ persona 的模板 ─────────────────────────
+//
+// 门行的**契约**在两处各写了一遍：persona 是 system prompt（定义规则），插件是注入的提醒
+// （近端重述）。它漂移过两次 —— token 迁移要同时改两处；判据也一度不一致（「任意位置」vs「首行」）。
+// 下面把**能机械核对**的几条钉住：漂移即 FAIL，且每条都配一条内存变异对照证明不是空转。
+//
+// `--control` 下**不跑**这一段：对照 fixture 是**行为**阴性对照，它的文案故意不是现行契约，
+// 拿它做文本一致性检查只会凭空多出无意义的失败。这一段自己的阴性对照是下面四条内存变异。
+const PERSONA_PATH = path.join(__dirname, '..', 'preset', 'ptc-roles', 'personas', 'orchestrator.md')
+
+/**
+ * 抽 `const <name> = [ '…', '…' ]` 里的字符串字面量；解析不出返回 undefined。
+ *
+ * 必须按**深度扫描**而不是找第一个 `]`：提醒的第一行是 `[intent-gate-watchdog] …`，
+ * 那个 `]` 会把数组提前截断（实测踩中，靠下面的「解析不出就 FAIL」守卫暴露出来 —— 守卫是有效的）。
+ */
+function arrayStrings(src, name) {
+  const start = src.indexOf('const ' + name + ' = [')
+  if (start < 0) return undefined
+  const open = src.indexOf('[', start)
+  if (open < 0) return undefined
+  let body = ''
+  let depth = 0
+  let inString = false
+  for (let i = open; i < src.length; i += 1) {
+    const ch = src[i]
+    if (inString) {
+      body += ch
+      if (ch === '\\') { i += 1; body += src[i] === undefined ? '' : src[i]; continue }
+      if (ch === "'") inString = false
+      continue
+    }
+    if (ch === "'") { inString = true; body += ch; continue }
+    if (ch === '[') depth += 1
+    else if (ch === ']') { depth -= 1; if (depth === 0) break }
+    body += ch
+  }
+  if (depth !== 0 || inString) return undefined
+  const out = []
+  const re = /'((?:[^'\\]|\\.)*)'/g
+  let m
+  while ((m = re.exec(body)) !== null) out.push(m[1].replace(/\\n/g, '\n'))
+  return out.length === 0 ? undefined : out
+}
+
+/** 六个桶的顺序（两处必须同一份枚举）。 */
+function bucketSeq(text) {
+  const m = /research\s*\/\s*implementation\s*\/\s*investigation\s*\/\s*evaluation\s*\/\s*fix\s*\/\s*open-ended/.exec(text)
+  return m === null ? undefined : m[0].split(/[^a-z-]+/).filter(Boolean)
+}
+
+/** 契约漂移清单（空 = 一致）。 */
+function contractFindings(pluginSrc, personaText) {
+  const findings = []
+  const markers = arrayStrings(pluginSrc, 'DEFAULT_MARKERS')
+  const reminderLines = arrayStrings(pluginSrc, 'REMINDER')
+  if (markers === undefined) findings.push('插件里解析不出 DEFAULT_MARKERS（结构变了吗）')
+  if (reminderLines === undefined || reminderLines.length < 4) findings.push('插件里解析不出 REMINDER（结构变了吗）')
+  if (findings.length > 0) return findings
+  const reminder = reminderLines.join('\n')
+  for (const mk of markers) {
+    if (!personaText.includes(mk)) findings.push('persona 里找不到插件匹配的字面 token「' + mk + '」')
+    if (!reminder.includes(mk)) findings.push('提醒里找不到自己匹配的 token「' + mk + '」')
+  }
+  const pb = bucketSeq(personaText)
+  const rb = bucketSeq(reminder)
+  if (pb === undefined) findings.push('persona 里解析不出六个桶（枚举被改写了？）')
+  else if (rb === undefined) findings.push('提醒里解析不出六个桶（枚举被改写了？）')
+  else if (pb.join('/') !== rb.join('/')) findings.push('六桶不一致：persona=' + pb.join('/') + ' vs 提醒=' + rb.join('/'))
+  if (!/FIRST line/.test(personaText)) findings.push('persona 不再要求门行落在 FIRST line')
+  if (!/第一行/.test(reminder)) findings.push('提醒不再要求补在第一行')
+  const example = reminderLines.find((l) => l.trim().indexOf('例') === 0)
+  if (example !== undefined && !markers.some((mk) => example.includes(mk))) {
+    findings.push('提醒里的示例行不以任何 marker 开头：' + example.slice(0, 40))
+  }
+  return findings
+}
+
+/** 契约检查自证：真文件比一次 + 四条内存变异各自必须被抓到。 */
+function contractSelfTest(pluginSrc, personaText) {
+  const out = []
+  const clean = contractFindings(pluginSrc, personaText)
+  out.push({ name: '契约一致：插件 token / 六桶 / 首行要求 ↔ persona 模板', ok: clean.length === 0, detail: clean.join('；') })
+  const control = (label, findings, needle) => {
+    const hit = findings.some((f) => f.includes(needle))
+    out.push({ name: label, ok: hit, detail: hit ? '' : '期望报告含「' + needle + '」，实得：' + (findings.join('；') || '（无 finding）') })
+  }
+  const mutate = (text, from, to) => { const next = text.split(from).join(to); return next === text ? undefined : next }
+  const personaNoToken = mutate(personaText, 'Intent:', 'IntentX:')
+  control('对照⑤：persona 的 token 被改写 ⇒ 报告 token 漂移',
+    personaNoToken === undefined ? [{ p: '对照组失效：变异目标不存在' }] : contractFindings(pluginSrc, personaNoToken),
+    personaNoToken === undefined ? '永不匹配' : 'Intent:')
+  const personaNoBuckets = mutate(personaText, 'research / implementation / investigation / evaluation / fix / open-ended', 'research / implementation / investigation / evaluation / fix')
+  control('对照⑥：persona 的桶少一个 ⇒ 报告六桶漂移',
+    personaNoBuckets === undefined ? [{ p: '对照组失效：变异目标不存在' }] : contractFindings(pluginSrc, personaNoBuckets),
+    personaNoBuckets === undefined ? '永不匹配' : '六个桶')
+  const pluginNoFirstLine = mutate(pluginSrc, '**第一行**', '**某处**')
+  control('对照⑦：提醒不再要求「第一行」⇒ 报告要求漂移',
+    pluginNoFirstLine === undefined ? [{ p: '对照组失效：变异目标不存在' }] : contractFindings(pluginNoFirstLine, personaText),
+    pluginNoFirstLine === undefined ? '永不匹配' : '第一行')
+  const pluginExample = mutate(pluginSrc, 'Intent: fix — ', 'Fix: — ')
+  control('对照⑧：提醒的示例行丢掉 token ⇒ 报告示例漂移',
+    pluginExample === undefined ? [{ p: '对照组失效：变异目标不存在' }] : contractFindings(pluginExample, personaText),
+    pluginExample === undefined ? '永不匹配' : '示例')
+  return out
+}
+
 async function main() {
   const sha = crypto.createHash('sha256').update(fs.readFileSync(PLUGIN)).digest('hex')
   console.log('plugin: ' + PLUGIN + (CONTROL_MODE ? '   [NEGATIVE CONTROL — 期望指定断言失败]' : ''))
@@ -140,6 +253,26 @@ async function main() {
     h.act('s1', 1)
     const d = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 2, step: 1 })
     check('stays silent when the previous turn emitted the marker', !injected(d))
+  }
+
+  // 3b / 3c — the criterion is the FIRST LINE of the turn's FIRST text reply
+  // (design choice 6). A marker further down the same message, or in a later message of
+  // the same turn, is not a declaration: it reaches the user after the actions it was
+  // supposed to announce. Both cases below must fail on the negative control.
+  {
+    const h = await open()
+    h.observe('s1', 1, '先说一句。\nIntent: research — 去查一下。')
+    h.act('s1', 1)
+    const d = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 2, step: 1 })
+    check('reminds when the marker is only on a later line of the first reply', injected(d))
+  }
+  {
+    const h = await open()
+    h.observe('s1', 1, '没有分类行。')
+    h.observe('s1', 1, 'Intent: research — 补一句。')
+    h.act('s1', 1)
+    const d = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 2, step: 1 })
+    check('reminds when the marker is only in a later message of the turn', injected(d))
   }
 
   // 4 — no previous-turn data (first turn) is NOT a miss.
@@ -270,6 +403,21 @@ async function main() {
     h.dispatch('s1', 'write', 'call_never_seen')
     check('reports an unattributable dispatch instead of staying silent',
       h.state.warns.some(w => w.includes('no attributable turn')))
+  }
+
+  if (!CONTROL_MODE) {
+    console.log('\n契约一致性（D —— 插件文案 ↔ persona 模板；--control 下跳过）:')
+    let pluginSrcText
+    let personaText
+    try {
+      pluginSrcText = fs.readFileSync(PLUGIN, 'utf8')
+      personaText = fs.readFileSync(PERSONA_PATH, 'utf8')
+    } catch (e) {
+      check('preset 插件与 persona 可读', false, String((e && e.message) || e))
+    }
+    if (pluginSrcText !== undefined && personaText !== undefined) {
+      for (const t of contractSelfTest(pluginSrcText, personaText)) check(t.name, t.ok, t.detail)
+    }
   }
 
   console.log('\n汇总: ' + (checks - failures) + '/' + checks + ' 通过' + (failures === 0 ? '  ✓ 全绿' : '  ✗ ' + failures + ' 项失败'))
