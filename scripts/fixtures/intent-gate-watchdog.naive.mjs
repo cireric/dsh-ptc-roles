@@ -15,11 +15,11 @@ import { randomUUID } from 'node:crypto'
 
 export const name = 'intent-gate-watchdog'
 
-const DEFAULT_MARKERS = ['意图判定']
+const DEFAULT_MARKERS = ['Intent:']
 
 const REMINDER = [
-  '[intent-gate-watchdog] 上一轮没有输出「意图判定」行。',
-  '规则（orchestrator persona 的 Phase 0）：动手之前先用一行分类并说明计划，以字面量「意图判定」开头。',
+  '[intent-gate-watchdog] 上一轮没有输出门行。',
+  '规则（orchestrator persona 的 Phase 0）：动手之前先用一行分类并说明计划，以字面量 `Intent:` 开头。',
 ].join('\n')
 
 function deepFreeze(value) {

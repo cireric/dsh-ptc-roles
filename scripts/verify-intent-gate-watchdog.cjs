@@ -136,7 +136,7 @@ async function main() {
   // 3 — compliant previous turn -> silence.
   {
     const h = await open()
-    h.observe('s1', 1, '意图判定：implementation — 先读再改。')
+    h.observe('s1', 1, 'Intent: implementation — 先读再改。')
     h.act('s1', 1)
     const d = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 2, step: 1 })
     check('stays silent when the previous turn emitted the marker', !injected(d))

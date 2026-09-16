@@ -1,0 +1,218 @@
+{
+  "what": "verify-ptc-roles.cjs 的意图门统计（首行口径 + ADR 0002 的 C 项「整场静默」判据）的阳性/阴性路径。每条 case 的 events 逐行喂给 analyze() → intentGateStats()，断言 eligible / eligibleFirst / silent 三个值。",
+  "why": "真机上「整场静默」那场（0%/0 轮）会随会话库滚动窗口消失（pitfalls #15），不落成 fixture 就只剩一次性记忆；而这是 ADR 0002 里「旗舰机制可以整场静默失效」唯一可复核的判据。",
+  "events": "字段口径见 verify-ptc-roles.cjs 的 analyze()：tool/call 带 turn + callId + name（name 命中 BEHAVIOR_TOOLS 才算「会改变行为」）；assistant/message 带 turn + message.content[].text（首行=该轮第一条有文本的 assistant 消息的第一行）。",
+  "cases": [
+    {
+      "name": "整场静默：两个行为轮都没写门行 ⇒ silent",
+      "expect": {
+        "eligible": 2,
+        "eligibleFirst": 0,
+        "silent": true
+      },
+      "events": [
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "callId": "c1",
+            "name": "write"
+          }
+        },
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "直接开干，没有分类行。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 2,
+            "callId": "c2",
+            "name": "bash"
+          }
+        },
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 2,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "继续。"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "有一轮写了门行（首行）⇒ 不静默",
+      "expect": {
+        "eligible": 2,
+        "eligibleFirst": 1,
+        "silent": false
+      },
+      "events": [
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: implementation — 先读再改。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "callId": "c1",
+            "name": "edit"
+          }
+        },
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 2,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "改完了。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 2,
+            "callId": "c2",
+            "name": "bash"
+          }
+        }
+      ]
+    },
+    {
+      "name": "只有只读轮（read 不在 BEHAVIOR_TOOLS）⇒ eligible=0，不该报静默",
+      "expect": {
+        "eligible": 0,
+        "eligibleFirst": 0,
+        "silent": false
+      },
+      "events": [
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "callId": "c1",
+            "name": "read"
+          }
+        },
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "读完了。"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "门行写在第二行 ⇒ 「可见回复」命中但「首行」不命中，仍按首行口径算静默",
+      "expect": {
+        "eligible": 1,
+        "eligibleFirst": 0,
+        "silent": true
+      },
+      "events": [
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "callId": "c1",
+            "name": "explorer"
+          }
+        },
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "先说一句。\nIntent: research — 去查一下。"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "旧 token 仍算合规（legacy 兼容：迁移前的会话不该被判成 0）",
+      "expect": {
+        "eligible": 1,
+        "eligibleFirst": 1,
+        "silent": false
+      },
+      "events": [
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "callId": "c1",
+            "name": "write"
+          }
+        },
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "意图判定：implementation — 老 token。"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

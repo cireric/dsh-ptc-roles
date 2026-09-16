@@ -1,8 +1,10 @@
 # ADR 0001 — 角色化 preset 取代编排 bundle（ptc-roles）
 
-- 日期：2026-09-13
+- 日期：2026-09-13（决策日）
 - 状态：**已采纳**（v1 preset 已实现并**复验通过**，2026-09-13 —— 装配冒烟 + 行为冒烟全绿，
   原始证据 `docs/evidence/2026-09-13-v1-reverify.json`，复现方法见同目录 `README.md` 第 4 节）
+- 本文现状（2026-09-16 记）：**活文档** —— 决策正文之后另有 6 轮追加节（第 4/5/6 轮 + 三次追加），
+  它们与文末「轮次账本」（`docs/evidence/README.md`）共同承载演进史；是否把演进史外移，尚未决定。
 - 取代并删除：`docs/specs/2026-09-13-dsh-agent-lanes-design.md` ——
   那份「编排 bundle：lane 账本 + 并发闸门 + 只读面板」的设计，本文保留其决策依据，正文已删。
 
@@ -32,6 +34,11 @@ bundle 是 profile 级，做不到「只让角色会话 native、日常会话保
 
 ## 决定性证据（v1 设计的前提）
 
+> ⚠️ **2026-09-16 复核**：下表第 1 行（PTC 下只读角色不成立）**只对 0.1.5-rc.2 成立** —— 0.1.6 把 `run_code`
+> 改为受 session 常设文件策略约束的沙箱进程（`read-only` 即写不动），该论证失效；翻转与 allow-list 的价值
+> 因此改为**能力面最小化 + 读范围最小化**（版本事实的唯一来源：`docs/dsh-v0.1.6-ptc-impact.md` §2.2）。
+> **决策本身不变**；本表按 impact 文档的 P1-2，等 `0.1.6-rc.*` 后再改写。
+
 | 结论 | 证据 |
 |---|---|
 | PTC 模式下「只读角色」不成立 | `run_code` 是保留传输，`tools.restrict()` 拒绝命名它；它跑在宿主进程的 worker 里，有 `fs`/`child_process`/`process`，**绕过 DSH 文件沙箱**（A/B 对照：同一工作区外路径 bash 写入被拒、`run_code` 写入成功） |
@@ -47,14 +54,14 @@ bundle 是 profile 级，做不到「只让角色会话 native、日常会话保
 - **第三方框架**（NanmiCoder/dsh-agent-teams 等）：31 个 open issue 恰好命中成本失控
   （#96 太烧 token / #97 无全局并发上限 / #117 OOM / #151 死循环），且宿主同线兼容出过问题；
   其 `role-subagent.js` 是 572 行宿主 `tool-subagent` 副本——vendor 宿主内部代码，违背本项目价值观。
-  完整选型复查见 Mnemon 文档 `12325908`。
+  完整选型复查见 Mnemon 文档 `12325908`（**仓外引用**：本仓不可复核，仅作溯源）。
 - **全 PTC 角色**：三个「只读」角色名不副实（`run_code` 仍可写任意文件）。
 - **全 native preset**：主 agent 每轮吃全量工具 schema（157 个），与 dsh「前缀缓存/成本优化」的定位冲突。
 - **进程外 provider 承载只读角色**：`acp`/`codex`/`claude-code` 的 start capabilities 全 `false`，
   `dsh-sdk` 只支持 `agentOptions` —— persona/toolFilter **带不过去**。
 - **按角色细粒度分发 skills**：技术上可达（web 部署把 host 层 `skill-filesystem` 禁用 ⇒ preset 拥有本地
   发现权；`ctx.skills.register()` 的近层同名覆盖可遮蔽不该有的 skill，且零 import），
-  但 v1 不做，推迟到 v1.1。
+  但 v1 不做，推迟到 v1.1（**2026-09-16：`v1.1` 在仓内无定义**，见「后果」的待办项）。
 
 ## 后果
 
@@ -62,7 +69,8 @@ bundle 是 profile 级，做不到「只让角色会话 native、日常会话保
   以及原规格的两个未验证风险（R1 sidebar slot、R6 client 构建管线）。
 - **代价**：改角色模型/persona 要编辑 preset 文件（无 GUI、无热更新）；MCP 工具改名会让 preset **挂载失败**
   （allow 白名单的未知名 = 响亮失败，这是有意设计）。
-- **待办**：skills 细粒度分发（推迟到 v1.1）。
+- **待办（2026-09-16 复核：仍未做；`v1.1` 无定义，且与 ADR 0002 的「不扩张 / 可能退役到薄版本」关系未定）**：
+  skills 细粒度分发。
 - **sandbox-strip 已结案（2026-09-13）**：原以为「子代理 schema 暴露 `sandbox_permissions`/`justification`
   会烧 turn」，取证后**不做** —— 子会话 `approval/policy = never` 在 answerer 之前就确定性拒绝，
   提权构造上不可用，且没有 per-agent 隐藏 schema 属性的官方钩子；改为在验证脚本里持续检测。

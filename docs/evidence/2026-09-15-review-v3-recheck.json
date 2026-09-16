@@ -1,0 +1,322 @@
+{
+  "date": "2026-09-15",
+  "what": "对 CODE-REVIEW-2026-09-15.md（复审修订 v3）的一次「对评审的评审」：把它的每条裁定 + 落地声明拿去复跑/考古，记录哪些站得住、哪些是新的错，并把只活在滚动会话窗口里的证据（批准链 / ?v 历代 / 归因计数器阳性路径）固化下来。",
+  "why": "v3 自称「事项已全部处理完、可以整份删除」，但它的部分证据只存在于会话库（滚动窗口，pitfalls #15）与该未跟踪文件本身；同时它前一轮（v2）已被自曝出 5 条错（它自己的 §2），所以「已结清」这句话需要独立复核，不能靠文档自证。",
+  "requestedBy": "用户（grill 会话）：「重新审视文档中修订问题」，并逐轮批准了处置方案（见 approvalChain 之外的对话轮次）。",
+  "reviewedDocument": {
+    "path": "CODE-REVIEW-2026-09-15.md",
+    "sha256": "c451a68bf30d70ed9d6431fb6b2b8f0216fd6b0afb2c9eddb57b465ce4e8c514",
+    "bytes": 12416,
+    "disposition": "按它自己的建议**整份删除**（删除前把原文冻结在本文件的 supersededDocument 字段；它是未跟踪文件，删掉即不可恢复）。",
+    "note": "它是快照报告，不被任何入库文档引用（复核时 rg CODE-REVIEW 全仓 0 命中）。"
+  },
+  "method": {
+    "axes": [
+      "事实面：每条「✅ 已落地」是否真有对应的提交/文件内容（git show --stat / git log -S / 直接读文件）",
+      "判断面：事实成立但裁定可疑（零动作 / 降级 / 不拆 这类）",
+      "落地完整性：✅ 属实但只做了一半",
+      "覆盖缺口：v3 自身有没有 v2 那类新错（§2 自曝后同病复发否）",
+      "证据保鲜：哪些证据依赖滚动窗口 ⇒ 会不会随会话库一起蒸发"
+    ],
+    "mechanicalScope": "R-01..R-13 全部 + §2 的 a–e；另外把 §3 基线、§4 命令、§5 边界段一并复跑。",
+    "outOfScope": "并发线的未跟踪产物（docs/2026-09-15-ptc-code-mode-research.md、docs/decisions/0002-*.md、docs/dsh-v0.1.6-ptc-impact.md、docs/ptc-architecture.md、ptc-code-runtime-trace.md、ptc-registry-trace.md）—— 只登记，不定性。",
+    "hostVerification": "本轮**不做**宿主内验证（?v=5 / ?v=6 那一代仍无宿主内证据）；按用户裁定「留痕而不是删掉这句话」。"
+  },
+  "commandsRerun": [
+    {
+      "cmd": "node scripts/verify-intent-gate-watchdog.cjs",
+      "exit": 0,
+      "judgmentLine": "汇总: 17/17 通过  ✓ 全绿",
+      "verdict": "与 §3 声称一致"
+    },
+    {
+      "cmd": "node scripts/verify-intent-gate-watchdog.cjs --control",
+      "exit": 0,
+      "judgmentLine": "阴性对照符合预期：恰好 9 条指定断言失败（一一对应，共 9 项失败）—— 断言确实抓得住\"该提醒时不提醒/乱提醒\"的实现。",
+      "verdict": "与 §3 一致（集合相等判据在）"
+    },
+    {
+      "cmd": "node scripts/verify-role-presentation.cjs",
+      "exit": 0,
+      "judgmentLine": "汇总: 11/11 通过  ✓ 全绿",
+      "verdict": "与 §3 一致"
+    },
+    {
+      "cmd": "node scripts/verify-role-presentation.cjs --control",
+      "exit": 0,
+      "judgmentLine": "阴性对照符合预期（恰 5 项失败）：断言确实抓得住旧版的静默 PTC 漏洞。",
+      "verdict": "与 §3 一致"
+    },
+    {
+      "cmd": "node scripts/verify-ptc-roles.cjs --raw",
+      "exit": 0,
+      "judgmentLine": "汇总: ✓12  ✗0  !0",
+      "verdict": "修改后复跑（本轮给归因计数器加了牙齿 + 5 条自测断言 ⇒ ✓7 → ✓12）；不可归属 0、合规率 11/13 (85%)"
+    }
+  ],
+  "rulingsRecheck": [
+    {
+      "id": "R-01",
+      "verdict": "成立（复现）",
+      "evidence": "--control 判据确实是 failedNames 集合恰等于 REQUIRED_CONTROL_FAILURES；实测恰 9 项失败、exit 0。"
+    },
+    {
+      "id": "R-02",
+      "verdict": "**半成立 → 本轮补完**",
+      "evidence": "原文说「按 rootCallId 去重计数不可归属派发并进汇总行」属实，但**只打印不进判据** ⇒ 归因失明时仍 exit 0，等于「从静默丢弃」变成「静默打印」。本轮改为 FAIL 并补 fixture（见 findings F3）。"
+    },
+    {
+      "id": "R-03",
+      "verdict": "成立",
+      "evidence": "scripts/verify-role-presentation.cjs 引用的证据文件名含 lane- 前缀，文件存在。"
+    },
+    {
+      "id": "R-04",
+      "verdict": "**落地声明为假**",
+      "evidence": "见 findings F1。"
+    },
+    {
+      "id": "R-05",
+      "verdict": "**半落地（同缺陷在修复段复发）**",
+      "evidence": "见 findings F2。"
+    },
+    {
+      "id": "R-06",
+      "verdict": "成立",
+      "evidence": "docs/evidence/README.md 的 §10 顶部有「已被 ⑫ 取代（代次维度）」指针，冻结 JSON 未改。"
+    },
+    {
+      "id": "R-07",
+      "verdict": "成立",
+      "evidence": "preset/ptc-roles/agent.cordis.yml 的看门狗注释已写明 eligibility 收窄（「只在上一轮属于会改变行为的轮次且漏了门行时提醒一次」）。"
+    },
+    {
+      "id": "R-08",
+      "verdict": "成立",
+      "evidence": "git log -S / git grep 全历史：那句复现步骤从未进入任何提交，只存在于未提交的 HANDOFF 草稿 ⇒「零动作」成立。"
+    },
+    {
+      "id": "R-09",
+      "verdict": "成立但基数已失效",
+      "evidence": "判据结论（保守判据、不可改准）不受影响；但它引用的「6 会话 / 30 eligible 轮次」基数已随滚动窗口消失 ⇒ 本轮并入「不可复现」名单（见 evidenceBaseDecay）。"
+    },
+    {
+      "id": "R-10①",
+      "verdict": "成立",
+      "evidence": "两个插件文件头都写了「为何各自持有一份 resolveDepth」的真因（dev_reload_preset 的匹配式只 bump yml 引用的 .mjs）；docs/pitfalls.md #18 同步。"
+    },
+    {
+      "id": "R-10②",
+      "verdict": "成立（同意不拆）",
+      "evidence": "一次扫描报多项，无异议。"
+    },
+    {
+      "id": "R-10③",
+      "verdict": "成立",
+      "evidence": "config.markers 已从实现中删除，只剩 verify-intent-gate-watchdog.cjs:22 一条解释性注释；断言 20 → 17。"
+    },
+    {
+      "id": "R-11",
+      "verdict": "成立（本轮补强举证）",
+      "evidence": "见 approvalChain：三次 ask_user_question 的 answers 事件仍在会话库里，选择逐字可读 ⇒ 越权不成立、批准链在数据面。"
+    },
+    {
+      "id": "R-12",
+      "verdict": "成立（本轮补强举证）",
+      "evidence": "见 generationHistory：?v 历代可从会话日志复现。"
+    },
+    {
+      "id": "R-13",
+      "verdict": "成立",
+      "evidence": "五条命令的退出码实测全 0；verify-ptc-roles.cjs 的 process.exitCode 仍在（本轮给它加了新的 FAIL 来源，契约未变）。"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "高（评审自身的落地栏不可信）",
+      "claim": "R-04 的「✅ 9a9df36：活文档已重写，该句不再存在」为假。",
+      "evidence": [
+        "HANDOFF.md:24 至今仍写着「冻结件（docs/evidence/*、scripts/fixtures/*prev.mjs）按设计保留原名」。",
+        "git log -S\"按设计保留原名\" -- HANDOFF.md 只返回 4b56202（它引入这句）；此后无任何提交增删该串。",
+        "git show --stat 9a9df36 只有 2 个文件（docs/evidence/README.md、docs/pitfalls.md）—— **根本没碰 HANDOFF.md**。",
+        "矛盾本体仍在：4b56202 把 scripts/fixtures/lane-role-presentation.prev.mjs 改名为 role-presentation.prev.mjs（该提交里这文件 0 行变化）。"
+      ],
+      "landedInThisRound": "HANDOFF.md:24 改写为「证据 JSON 保留旧名，但阴性对照 fixture 随改名迁移（sha 未变）」——「保留原名」只对证据 JSON 成立。"
+    },
+    {
+      "id": "F2",
+      "severity": "中（R-05 认定的缺陷类型在同一节复发）",
+      "claim": "docs/evidence/README.md 的 §5 里，R-05 修好了「路径」的现在时断言，却把同一段 13 行之上的「sha」现在时断言留着没动。",
+      "evidence": [
+        "原文（:110）用现在时写「当前工作树的 sha256 已变为 cab14ad8…」。",
+        "实测当前 preset/ptc-roles/role-presentation.mjs = 71cc58b4cf85a5ddd68562c1a5bddd906be14c9653bb13396b9419d5af673080 —— 因为 80b4f7d 重写了该文件的头部注释（该提交对它有 +10 行）。",
+        "同文件 :220 的「= ⑤ 注释里记的当前值」同样是会过期的现在时措辞。"
+      ],
+      "landedInThisRound": "两处都改成「取证当时 / 当前」分离，并写明要今天的值就自己 shasum。"
+    },
+    {
+      "id": "F3",
+      "severity": "中（与 R-01 同型的「单向判据」）",
+      "claim": "R-02 的计数器没有牙齿：unattributable > 0 只打印，process.exitCode = fail === 0 ? 0 : 1 ⇒ 归因瞎到什么程度都退 0；且它的阳性路径只有一次性合成证明，仓库里没有可复跑产物。",
+      "evidence": [
+        "scripts/verify-ptc-roles.cjs 的汇总行与退出码只看 fail 计数；unattributable 从不写进 fail。",
+        "scripts/fixtures/ 原本只有 2 个文件（role-presentation.prev.mjs、intent-gate-watchdog.naive.mjs），都不覆盖这条。",
+        "80b4f7d 的提交信息自述「伪造 ghost rootCallId = 1」—— 那是一次性手工实验，没有留下 fixture。"
+      ],
+      "landedInThisRound": "改为 ✗ FAIL（归因失明是未知异常，与可容忍的 ⊘ 已知自身层泄漏 #7 不同类）+ 新增 scripts/fixtures/attribution-cases.json（5 条 case，含去重与非布尔计数）+ 自测进 PASS/FAIL。"
+    },
+    {
+      "id": "F4",
+      "severity": "低（但落在「唯一知识源」链上）",
+      "claim": "scripts/verify-ptc-roles.cjs 面向用户打印「见 pitfalls #17」，而 #17 是 bash 保守判据，真正该指的是 #9（无 warn 落盘通道）——它自己上面两行的注释写的正是 #9。",
+      "evidence": [
+        "同一分支内注释（#9）与打印文案（#17）互相矛盾。"
+      ],
+      "landedInThisRound": "印刷文案改为 #9。"
+    },
+    {
+      "id": "F5",
+      "severity": "低（归属马虎，F1 的成因）",
+      "claim": "v3 头部把落地说成「80b4f7d（代码）+ 9a9df36（活文档）」，但 git show --stat 显示 80b4f7d 就改了 AGENTS.md / HANDOFF.md / README.md —— 活文档在代码提交里；9a9df36 只补了 evidence/README 与 pitfalls。",
+      "evidence": [
+        "git show --stat 80b4f7d：10 个文件，含 AGENTS.md / HANDOFF.md / README.md。",
+        "git show --stat 9a9df36：2 个文件。"
+      ],
+      "landedInThisRound": "不改历史提交；写实记录在此。"
+    },
+    {
+      "id": "F6",
+      "severity": "中（指标没有负责人）",
+      "claim": "合规率同一个词在本仓库有四个数（8% ~ 85%），差一个数量级的原因是口径与窗口不同；且三绿与「13 轮里 2 轮漏门行」并存，没有任何判定行说明这是否可接受。",
+      "evidence": [
+        "preset/ptc-roles/agent.cordis.yml 注释「26 轮里只有 2 轮」；docs/pitfalls.md #17「6 会话 / 30 eligible 轮次」；本轮实测「1 会话 / 13 轮 / 首行 11」。",
+        "同一会话逐轮：T1✗ T12✗（首行 11/13）。"
+      ],
+      "landedInThisRound": "docs/pitfalls.md 新增 #19：口径 + 窗口 + 日期并排列出，指定为**唯一**口径登记处；yml 注释加指针；本轮实测的 2 轮漏行记为数据面观察（**不接退出码**，理由同 ! 的取舍）。"
+    }
+  ],
+  "positiveControls": {
+    "attributionCounter": {
+      "why": "真机健康会话里该值恒为 0，阳性路径无法自证 ⇒ 必须合成。",
+      "fixture": "scripts/fixtures/attribution-cases.json（5 条 case：健康 0 / ghost-rootCallId 去重后 1 / 无 rootCallId 1 / 只读派发 0 / 两个不同 ghost 2）",
+      "fixtureControl": "把其中一条的 expectUnattributable 临时改成 99 ⇒ 实测 ✗ FAIL（期望 99，实得 0）、汇总 ✓11 ✗1、exit 1 ⇒ 断言不是空转。",
+      "endToEnd": "用一个伪造 HOME 造会话文件（findSessionFiles 走 os.homedir()/.dsh/sessions）：printf 三条 JSONL（顶层 id/cwd/createdAt + system/message + 一条 ghost tool/ptc-dispatch）+ zstd 压缩 + HOME=<临时目录> node scripts/verify-ptc-roles.cjs ⇒ 实测「✗ FAIL 不可归属的 tool/ptc-dispatch: 1 个 rootCallId」、汇总 ✓6 ✗1、exit 1。"
+    },
+    "exitCodeContract": "五条命令实测 exit 全 0（含两个 --control）；本轮新增的 FAIL 路径实测 exit 1。"
+  },
+  "approvalChain": {
+    "why": "R-11 的越权指控依赖会话日志层，而会话库是滚动窗口（pitfalls #15）⇒ 必须在它蒸发前落成证据。",
+    "session": "~/.dsh/sessions/--Users-eric-Project-tests-dsh-plugins-cireric-dsh-ptc-roles--/session-ee97f96a-5187-427c-85fe-0f4395e9532f/session.v3.jsonl.zstd",
+    "observedAt": "2026-09-15（复核当时仍在库中，1649 行）",
+    "asks": [
+      {
+        "seq": 466,
+        "rootCallId": "call_00_FXfzXJYJpXWLtQhOfGvH8044",
+        "answersSeq": 468,
+        "selected": [
+          "② 门行补丁（上面的三文件草稿）(Recommended)",
+          "① AGENTS.md 规则 7 补第三条验证命令",
+          "重写 HANDOFF.md（§1 已过期、§2 五步已完成）"
+        ]
+      },
+      {
+        "seq": 1266,
+        "rootCallId": "call_00_UWIzU5cKpmemppz0qcON0549",
+        "answersSeq": 1268,
+        "selected": [
+          "#3 两条提交（上面的拆分）(Recommended)"
+        ]
+      },
+      {
+        "seq": 1416,
+        "rootCallId": "call_00_9qcbMukcQvopJDXHmJ0o6713",
+        "answersSeq": 1418,
+        "selected": [
+          "① `f096621...HEAD` — 本次会话的两条提交（26 文件 / +1709 −141）(Recommended)"
+        ]
+      }
+    ],
+    "verdict": "三次批准都在 answers 里逐字可读 ⇒ 「未经批准就提交/改名」不成立；同时也说明 v3 只提了前两次，第三次（评审范围本身）没记。"
+  },
+  "generationHistory": {
+    "why": "R-12 的 ?v 换代现场同样只在会话窗口里。",
+    "observed": {
+      "session-ee97f96a-5187-427c-85fe-0f4395e9532f": [
+        "lane-role-presentation.mjs -> ?v=1",
+        "role-presentation.mjs -> ?v=2",
+        "role-presentation.mjs -> ?v=3",
+        "role-presentation.mjs -> ?v=4",
+        "intent-gate-watchdog.mjs -> ?v=2",
+        "intent-gate-watchdog.mjs -> ?v=3",
+        "intent-gate-watchdog.mjs -> ?v=4"
+      ],
+      "90de69ba-6faf-4f1d-a40a-93d555402879": [
+        "同上一组（同一批量 reload 的第二份日志）"
+      ]
+    },
+    "gap": "?v=5（role-presentation）/ ?v=6（intent-gate-watchdog）这一代**没有宿主内证据** —— 本轮亦未验证（用户裁定：留痕，不占用一次新会话）。这一句必须随快照一起活下去，否则「行为面不变」就是无据断言。"
+  },
+  "evidenceBaseDecay": {
+    "why": "把「只能当场测」的证据基数登记在一起，避免下一轮又出现「文档说实测过、但测不回来」。",
+    "items": [
+      {
+        "what": "R-09 的「30 个 eligible 轮次里 read-only-bash-only = 0」",
+        "base": "6 个装了门的会话 / 30 轮",
+        "status": "基数已随滚动窗口消失（本轮脚本只能看到 1 个装了门的主会话 / 13 轮）",
+        "consequence": "结论（保守判据）不受影响；「实测为零」只能当取证当时的记录读（docs/pitfalls.md #17 已加注）"
+      },
+      {
+        "what": "R-11 批准链",
+        "base": "session-ee97f96a…",
+        "status": "复核当时仍在库中",
+        "consequence": "已固化在本文件的 approvalChain"
+      },
+      {
+        "what": "R-12 ?v 历代",
+        "base": "两份会话日志",
+        "status": "复核当时仍在库中",
+        "consequence": "已固化在本文件的 generationHistory"
+      },
+      {
+        "what": "R-02 归因计数器阳性路径",
+        "base": "一次性合成日志",
+        "status": "**从未入库**",
+        "consequence": "本轮补成 fixture + 端到端阳性对照（positiveControls）"
+      }
+    ]
+  },
+  "correctionsThisRound": [
+    "HANDOFF.md:24 —— 「保留原名」只对证据 JSON 成立（F1）。",
+    "docs/evidence/README.md:110 与 :220 —— sha 的现在时断言改为「取证当时 / 当前」分离（F2）。",
+    "scripts/verify-ptc-roles.cjs —— 错指针 #17 → #9（F4）。",
+    "scripts/verify-ptc-roles.cjs —— 不可归属派发由「只打印」升级为 ✗ FAIL，并接入的归因自测（F3）。",
+    "scripts/fixtures/attribution-cases.json —— 新增（F3 的阳性路径）。",
+    "docs/pitfalls.md —— #17 加「基数已失效」注记；新增 #19（合规率口径登记处）；C 表加两行（F6 / F3）。",
+    "preset/ptc-roles/agent.cordis.yml —— 看门狗注释的「26 轮里只有 2 轮」加口径指针（F6）。仅注释，行为不变 ⇒ 不需要 dev_reload_preset，也不需要 bump ?v。",
+    "CODE-REVIEW-2026-09-15.md —— 删除（原文冻结于本文件 supersededDocument）。"
+  ],
+  "howToReproduce": [
+    "node scripts/verify-intent-gate-watchdog.cjs            # 期望 17/17、exit 0",
+    "node scripts/verify-intent-gate-watchdog.cjs --control  # 期望恰 9 项失败、exit 0",
+    "node scripts/verify-role-presentation.cjs               # 期望 11/11、exit 0",
+    "node scripts/verify-role-presentation.cjs --control     # 期望恰 5 项失败、exit 0",
+    "node scripts/verify-ptc-roles.cjs --raw                 # 期望 ✗0 !0、exit 0，并打印合规率与归因自测 5/5",
+    "git log -S\"按设计保留原名\" -- HANDOFF.md                 # 期望只命中 4b56202（F1 的证法）",
+    "shasum -a 256 preset/ptc-roles/role-presentation.mjs     # 期望 71cc58b4…（F2 的证法）"
+  ],
+  "boundaries": [
+    "本文件不主张「v3 的裁定都错」：R-01/R-03/R-06/R-07/R-08/R-10/R-13 复跑后成立（这是对 v3 的正面结论）。",
+    "F1 的定性是「提交记录里没有那个动作」，不是「有人撒谎」——最可能的成因是落地栏的提交归属马虎（F5），但结论上「✅ 已落地」为假。",
+    "合规率**不接退出码**：模型行为不该让套件随机变红。要留的发现落证据，不落门。",
+    "?v=5 / ?v=6 那一代仍无宿主内证据；本轮按用户裁定留痕而非验证。",
+    "并发线的 6 个未跟踪产物只登记、不定性（见 method.outOfScope）。"
+  ],
+  "supersededDocument": {
+    "path": "CODE-REVIEW-2026-09-15.md",
+    "sha256": "c451a68bf30d70ed9d6431fb6b2b8f0216fd6b0afb2c9eddb57b465ce4e8c514",
+    "bytes": 12416,
+    "note": "删除工作树副本前的**冻结原文**：只作历史记录，**不作事实源**（凡与 docs/pitfalls.md、活跃脚本输出冲突的，以后者为准）。",
+    "content": "# 代码评审汇总与修订项（CODE REVIEW · 2026-09-15 · 复审修订 v3 · 已裁决并落地）\n\n> **这是什么**：对**已提交变更** f096621...dab40c6 的一次双轴代码评审（Standards / Spec），\n> 经过 v2 逐条复审、**再经一轮「对评审本身」的独立复核**（编排器亲跑：3 套脚本 + 2 个 `--control` +\n> HEAD 工作树重建 + 会话库实测 + 全历史 `git log -S`），本条 v3 把每条发现收敛成\n> **裁定 + 证据 + 落地状态**。\n> **这是一份快照报告**：它不驱动任何流程、不被其它文档引用；事项已全部处理完，**可以整份删除**。\n> **评审范围**：`4b56202`（refactor: rename agent-lanes to ptc-roles）+ `dab40c6`（feat(watchdog)），\n> 共 **26 文件 / +1709 −141**（`git diff --shortstat 4b56202^ dab40c6` 复核一致）。\n> **落地提交**：`80b4f7d`（代码）+ `9a9df36`（活文档）。\n> **不在范围内**：并发线在评审窗口内写入的未跟踪文件（`docs/dsh-v0.1.6-ptc-impact.md`、\n> `docs/2026-09-15-ptc-code-mode-research.md`、`docs/decisions/0002-*.md`、`docs/ptc-architecture.md`、\n> `ptc-code-runtime-trace.md`、`ptc-registry-trace.md`）。\n\n## 0. 两轴小结（不跨轴选优）\n\n- **Standards**：3 条硬违规 + 4 条判断题；最严重 = **R-02**（合规率分母静默漏计，与「失败必须可见」正面冲突）。\n- **Spec**：0 项缺失；1 项「半做」；1 条真不符（= R-08）；3 条「不符但更严 / 无害」；**越权不成立**（见 R-11）。\n- 两轴分离见效：**同一处改动**在 Standards 是硬违规（R-02 静默丢弃），在 Spec 是「更严但偏离规格的判据」。\n\n## 1. 裁定与落地状态（v3 最终）\n\n**级别**：🔴 硬｜🟡 低危｜🔵 判断题。**状态**：全部已结清。\n\n| 编号 | 级别 | 位置 | v3 裁定 | 落地 |\n|---|---|---|---|---|\n| **R-01** | 🟡 | `verify-intent-gate-watchdog.cjs` `--control` + `fixtures/intent-gate-watchdog.naive.mjs` | **属实**。v2 的「升标过高」校正成立（非运行时缺陷），但**双向判据必须做**：旧判据只校验「指定项都失败」，HEAD 上实测 10 条指定全败 **而总失败 11 条**（多出 malformed-depth）却仍判通过 —— 这类「对照版坏得超出预期」正是断言该抓的。 | ✅ `80b4f7d`：判据改为 `failedNames` 集合**恰等于** `REQUIRED_CONTROL_FAILURES`；fixture 注释同步「恰好 9 条」。实测 `--control` 恰 9 项失败、exit 0 |\n| **R-02** | 🔴 | `verify-ptc-roles.cjs`（原 `:195-198`） | **属实**。`tool/ptc-dispatch` 归因失败**静默丢弃**，是合规率**分母**的漏计；插件 `intent-gate-watchdog.mjs` 对同情形显式 warn。 | ✅ `80b4f7d`：按 `rootCallId` **去重**计数不可归属派发并进汇总行（去重是必需的：`-start` 与完成两个事件会把它翻倍）。阳性路径用合成日志证明：ghost rootCallId → 1（两事件去重为 1）、无 rootCallId → 1、`read` 派发 → 0、健康会话 → 0 |\n| **R-03** | 🟡 | `verify-role-presentation.cjs:17` | **属实**。注释引用的证据文件名缺 `lane-`，真名是 `2026-09-13-lane-role-presentation-hardening.json` | ✅ `80b4f7d` |\n| **R-04** | 🟡 | HANDOFF（v2 时的 HEAD 第 24 行） | **属实**。原文「冻结件按设计保留原名」与 `4b56202` 把 `lane-role-presentation.prev.mjs` 改名为 `role-presentation.prev.mjs`（`git show --stat` 显示 **0 行变化**）矛盾 | ✅ `9a9df36`：活文档已重写，该句不再存在 |\n| **R-05** | 🟡 | `docs/evidence/README.md` §5 | **属实，且比 v2 描述的更严重**：那段「⚠️ 关联已变动」是**改名后新写**的注记，在里面用**现在时**断言一条**当时已不存在**的路径 ⇒ 不只是历史原文断链，是新写的断言本身错 | ✅ `9a9df36`：补「冻结副本已改名（`4b56202`，sha 未变）」段，并把该节的现在时措辞改对 |\n| **R-06** | 🟡→记录项 | 证据 ⑩ | **半属实，降级**。三处 sha/断言数换代全部核对属实，但 **README §12 索引层已有「⑩ 只验过旧代」的指针**；且 v2 建议的「在 ⑩ 顶部加一行」与它自己的「不追改冻结数据」**自相矛盾** | ✅ `9a9df36`：指针加在**索引层**（§10 顶部「已被 ⑫ 取代（代次维度）」），冻结 JSON 一字未动 |\n| **R-07** | 🟡 | `agent.cordis.yml:342` | **属实**。注释「每轮注入一次提醒」未反映 eligibility 收窄 | ✅ `80b4f7d`：注释写明「只在上一轮属于会改变行为的轮次且漏了门行时提醒一次」 |\n| **R-08** | 🟡→零动作 | 旧交接件的复现步骤 | **结论「零动作」成立，但 v2 的机制描述错了**。逐提交、逐 rev 遍历（`git log -S` 全 ref + `git grep` 全历史 + 兄弟仓库 `cireric-dsh-agent-lanes`）后：「直接问一个普通问题」**从未进入任何提交**，只存在于**未提交的 HANDOFF 草稿**里。⇒ 不是「当前树该措辞已消失」，是「**从未入库**」。另：v2 说该步「失效 / 假阴性」也不准 —— 派发工具（`explorer`/`implementer`/…）本身就在 `BEHAVIOR_TOOLS` 里，当时**仍然有效**；失效的只是「纯回答 / 纯只读」那类轮次。 | ✅ 零动作（措辞已不存在于任何入库文件） |\n| **R-09** | 🔵 | `BEHAVIOR_TOOLS` | **属实，但当前无实例**。我按派发参数粗判只读 bash：本项目 6 个装了门的会话 / **30 个 eligible 轮次中 read-only-bash-only = 0** ⇒ 是**保守判据**，不是已观测缺陷。且它**不可**被改准：`edit`/`write` 的 `tool/result` 带前后内容，`bash` 只有 stdout ⇒ 结构上判不出只读。 | ✅ `9a9df36`：落 `docs/pitfalls.md` **#17**（含 30 轮零误算实测 + 「措辞用保守判据、别叫偏差」的命名纪律） |\n| **R-10①** | 🔵 | 两个插件的 `resolveDepth` 副本 | **v2 的「其实已大体自说明」判错**：现有注释只解释了**为何不 import 宿主 `subagent/src/depth.ts`**（零 import 规则），**两文件都没写**「为何两个插件各留一份」。真因：`dev_reload_preset` 的 `/(name: \\.\\/[A-Za-z0-9._-]+\\.mjs)(\\?v=\\d+)?/g` 只 bump **yml 里引用的** `.mjs`，共享兄弟模块 specifier 恒定 ⇒ 修了**静默不生效** | ✅ `80b4f7d`：两处文件头重写该理由；`9a9df36` 落 `docs/pitfalls.md` **#18** |\n| **R-10②** | 🔵 | `verify-ptc-roles.cjs` 双职责 | 同意 **不拆**（一次扫描报多项是优点） | ✅ 零动作 |\n| **R-10③** | 🔵 | `config.markers` | **属实**（YAGNI 死灵活性） | ✅ 已删（v2 期间落地）：`config.markers` 从 `scripts/`+`preset/` 消失（仅剩解释性注释 1 处），断言 20 → **17** |\n| **R-11** | 🟡→已核验 | 批准记录 | **v2 低估了它**：v2 说「仓库无法独立核验」，实际**可核验** —— 会话 `session-ee97f96a-5187-427c-85fe-0f4395e9532f` 里两次 `ask_user_question` 的 answers 事件留有选择（「② 门行补丁 / ① AGENTS 规则 7 / 重写 HANDOFF」与「#3 两条提交」）⇒ 越权不成立、批准链在数据面 | ✅ 记录于此，无需改文件 |\n| **R-12** | 🟡→记录项 | `?v` 换代现场 | 属实。会话日志可见 reload 输出的历代：`intent-gate-watchdog ?v=2/3/4`、`role-presentation ?v=2/3/4`（改名后）与 `lane-role-presentation ?v=1`（改名前言） | ✅ 记录于此 |\n| **R-13** | 🔴（v3 新增） | 三个脚本的退出码 | **v2 完全漏掉**。`verify-ptc-roles.cjs` **从不设退出码**（无 `process.exitCode` ⇒ 全红也 exit 0），而它是唯一守生产行为门的脚本；两个 `--control` 的语义还**相反**（watchdog 符合预期 exit 0、role-presentation 符合预期 exit 1） | ✅ `80b4f7d`：统一为「**0 = 本次运行符合预期**」。实测 5 条命令全 exit 0；人为注入 FAIL 后 `verify-ptc-roles` exit 1；用错 fixture 的对照走 harness error exit 2 |\n\n## 2. v2 自身的新缺陷（本轮一并改正，均已并入 v3）\n\n| # | v2 原文 | 事实 |\n|---|---|---|\n| a | §4 第 6 条：`grep -rn 'config.markers' scripts/ preset/` 注释写「**期望零命中**」 | 实测 **1 命中**（`verify-intent-gate-watchdog.cjs:22` 的解释性注释）。已删该条并改为正确的核验方式 |\n| b | §5 把 `docs/evidence/README.md:248` 的「**当前期望 20/20**」当冻结证据 | 那是**现在时断言**，随 R-10③ 已变假，不属于「记录本身不改」的豁免 ⇒ 已改为 17/17 |\n| c | §5 把 `docs/dsh-v0.1.6-ptc-impact.md:197` 列入「冻结证据」 | 它是**并发线写的、未入库的活计划文档**（0.1.6 升级清单 P3-3），应更新而非冻结 |\n| d | 头部「不在范围内」只提 M HANDOFF.md | §1/§3 已把另外 4 个未提交文件的修复当 ✅ 已落地 ⇒ 基线与正文矛盾。已按「**按工作区状态描述**」统一，并在 `9a9df36` 里把这一切**提交固化**（原先只存在于工作区，一旦丢弃则同步后的活文档全部变错） |\n| e | §4 基线写死「`✓8 ✗0 !0` / 合规率 11/15」 | 脚本自己警告过「会话库是滚动窗口，计数随时漂移」却仍钉死数字。本次复跑为 `✓7 ✗0 !0` / 首行 11/13（85%）—— 数值不同、结论不变 |\n\n## 3. 实测基线（2026-09-15 复审修订后复跑，`80b4f7d` + `9a9df36`）\n\n```\nnode scripts/verify-intent-gate-watchdog.cjs              → 汇总: 17/17 通过  ✓ 全绿                      exit 0\nnode scripts/verify-intent-gate-watchdog.cjs --control    → ✗ 9 项失败，阴性对照符合预期（集合相等）        exit 0\nnode scripts/verify-role-presentation.cjs                 → 汇总: 11/11 通过  ✓ 全绿                      exit 0\nnode scripts/verify-role-presentation.cjs --control       → ✗ 5 项失败，阴性对照符合预期                  exit 0\nnode scripts/verify-ptc-roles.cjs                         → 汇总: ✓7 ✗0 !0；合规率 11/13 (85%)；           exit 0\n                                                            不可归属派发 0（归因路径健康）\n```\n\n- `--control` 的判定行是唯一权威（`阴性对照符合预期…`）；`$?` 表达的是**「本次运行是否符合预期」**，不是「零失败」。\n- 人为注入一条 FAIL 后 `verify-ptc-roles.cjs` 实测 exit **1** —— 新退出码契约的阳性路径已证。\n- R-02 计数器的阳性路径用合成日志证明（真机会话里该值恒为 0，无法自证）。\n\n## 4. 可复跑的核验命令\n\n```bash\nnode scripts/verify-intent-gate-watchdog.cjs              # 17/17\nnode scripts/verify-intent-gate-watchdog.cjs --control    # 恰 9 条失败（集合相等）\nnode scripts/verify-role-presentation.cjs                 # 11/11\nnode scripts/verify-role-presentation.cjs --control       # 恰 5 项失败\nnode scripts/verify-ptc-roles.cjs --raw                   # ✗0 !0 + 合规率 + 不可归属派发计数\ngrep -rn 'config\\.markers' scripts/ preset/               # 仅剩 1 条解释性注释（R-10③ 已删实现）\ngrep -n 'no attributable turn' preset/ptc-roles/intent-gate-watchdog.mjs   # R-02 的同口径参照\n```\n\n## 5. 边界（别误读）\n\n- **并发线仍在写同一仓库**：本轮又发现 3 个新的未跟踪产物（`docs/ptc-architecture.md`、\n  `ptc-code-runtime-trace.md`、`ptc-registry-trace.md`，mtime 落在评审窗口内）。两个提交**都没有**\n  扫入任何未跟踪文件；`docs/dsh-v0.1.6-ptc-impact.md` 的 P3-3 已按 R-13 更新，但它属并发线，\n  **留在工作树未提交**。改文件前先 `git status` 确认无碰撞。\n- **R-09 是权衡不是 bug**（见 #17）：判据必须能从数据面机械核查；按参数猜「是否只读」会变脆。\n- **R-12 / R-11 依赖会话日志层**：本轮已就地在会话库里核到证据，但**会话库是滚动窗口**\n  （`pitfalls.md` #15）⇒ 这几条**不可长期复现**，要留就必须落成证据文件。\n- **`?v=5` / `?v=6` 这一代尚无宿主内证据**：本轮只改了注释与计数器，但「行为面不变」这句本身\n  未经宿主验证 —— 要证，就 `dev_reload_preset preset=ptc-roles` 后开新会话再跑 `verify-ptc-roles`。\n- 本文件是**快照**：事项已全部结清，**建议直接删除**，不要长期保留成第二个「事实源」。\n"
+  }
+}

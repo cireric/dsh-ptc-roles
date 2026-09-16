@@ -3,7 +3,9 @@
 一个 DSH **agent preset**：orchestrator 主 agent + 五个有职责边界的角色子代理。
 
 - 主 agent 保持 **PTC**（省 token），委托出去的子代理切 **native** —— 这样 `toolFilter.allow` 才是
-  **真正的能力边界**，而不是提示性配置。为什么必须这样切、否决过哪些方案：见
+  **真正的能力边界**，而不是提示性配置（**已知例外**：宿主注入的 `subagent` / `list_subagent_models`
+  掩不掉，脚本按 `⊘ 已知自身层泄漏` 容忍并标注 —— 机制见 `docs/pitfalls.md` #7）。
+  为什么必须这样切、否决过哪些方案：见
   [docs/decisions/0001](docs/decisions/0001-role-preset-over-orchestration-bundle.md)。
 
 ## 角色
@@ -43,12 +45,16 @@ ln -s "$R/personas" personas
 
 ```bash
 node scripts/verify-ptc-roles.cjs               # 行为验证（--all 扫全部工作区；--raw 打全工具名）
+                                             # 含三个自测：归因计数器 / 角色事实静态检查 / 意图门统计
+                                             # （fixture: scripts/fixtures/{attribution,intent-gate}-cases.json）
 node scripts/verify-role-presentation.cjs    # 插件单元校验（11 条断言；--control 必须恰 5 项失败）
 node scripts/verify-intent-gate-watchdog.cjs  # 看门狗单元校验（17 条断言；--control 必须恰 9 项失败）
+node scripts/verify-harness-contract.cjs      # 契约门禁（--harness <checkout>）—— **升级 dsh 本体前后各跑一次**
 ```
 
-三个脚本的**退出码契约**统一为「0 = 本次运行符合预期」——`--control` 在预期失败数上也退 0，
+四个脚本的**退出码契约**统一为「0 = 本次运行符合预期」——`--control` 在预期失败数上也退 0，
 所以判定要看脚本自己打印的那行（`阴性对照符合预期…`），不能只看 `$?`。
+契约门禁另有一个 `2`：目标 checkout 或契约载体读不到（**响亮失败**，绝不静默跳过）。
 
 零模型成本。第一个只读 `~/.dsh/sessions`，用 `request/header.header.tools`（**真正发给模型的**工具面）
 判定每个会话的角色 / 模型 / 工具面 / 是否仍是 PTC：期望主 agent `✓ 保持 PTC`、每个角色子代理

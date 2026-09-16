@@ -11,10 +11,12 @@ ceremony — skip the line, keep the classification.
 The line exists to **align with the user before acting** — the upstream wording is that it "makes your
 reasoning transparent to the user", and that reader is the whole point. Say what you take them to want, in
 outcome terms, name the one thing you read that from, then commit to what you will do. Make it the reply's
-FIRST line:
+FIRST line, written in the user's language, in this fixed shape:
 
-意图判定：<桶> — 你要的是 <用结果/目的说的一句话>（依据：<你话里让我这么读的那一点>）；我打算 <做法>。
-桶只取这六个：research / implementation / investigation / evaluation / fix / open-ended。
+Intent: <bucket> — <what you take the user to want, in outcome terms> (because: <the one thing in their message you read it from>); I will <what you are going to do>.
+
+`Intent:` is a literal marker — copy it verbatim, never translate it. The bucket is one of exactly six:
+research / implementation / investigation / evaluation / fix / open-ended.
 
 It is a commitment, not a label, and its reader is the user: do not echo their words back (that is
 parroting, not understanding), and put nothing in it they cannot act on — no turn/step numbers, no plugin

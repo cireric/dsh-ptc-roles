@@ -1,0 +1,46 @@
+{
+  "what": "verify-ptc-roles.cjs「不可归属的 tool/ptc-dispatch」计数器的阳性/阴性路径（复审裁定 R-02）。每条 case 的 events 会被逐行喂给 analyze()，断言 unattributable 集合大小 === expectUnattributable。",
+  "why": "R-02 的计数在真机健康会话里恒为 0，无法自证；而它上一版的证据是一次性合成日志（没有可复跑产物）。所以阳性路径必须落成这份 fixture，否则「修好了」这句话本身不可复核。",
+  "events": "每条 event 是会话 JSONL 的一行（analyze() 只认以 { 开头的行）。字段口径见 scripts/verify-ptc-roles.cjs 的 analyze()：tool/call 提供 callId→turn 映射，tool/ptc-dispatch[-start] 用 rootCallId 回指那一轮。",
+  "cases": [
+    {
+      "name": "健康：tool/call 有 callId，派发用 rootCallId 回指（两个事件都不算失明）",
+      "expectUnattributable": 0,
+      "events": [
+        { "type": "tool/call", "data": { "turn": 1, "callId": "c1", "name": "explorer" } },
+        { "type": "tool/ptc-dispatch-start", "data": { "name": "explorer", "rootCallId": "c1" } },
+        { "type": "tool/ptc-dispatch", "data": { "name": "explorer", "rootCallId": "c1" } }
+      ]
+    },
+    {
+      "name": "ghost rootCallId：-start 与完成两个事件按 rootCallId 去重后计 1（不去重会凭空翻倍）",
+      "expectUnattributable": 1,
+      "events": [
+        { "type": "tool/ptc-dispatch-start", "data": { "name": "implementer", "rootCallId": "ghost-1" } },
+        { "type": "tool/ptc-dispatch", "data": { "name": "implementer", "rootCallId": "ghost-1" } }
+      ]
+    },
+    {
+      "name": "缺 rootCallId：归入占位符 <no rootCallId>，计 1",
+      "expectUnattributable": 1,
+      "events": [
+        { "type": "tool/ptc-dispatch", "data": { "name": "implementer" } }
+      ]
+    },
+    {
+      "name": "只读派发：read 不在 BEHAVIOR_TOOLS ⇒ 不参与行为判据，不计失明",
+      "expectUnattributable": 0,
+      "events": [
+        { "type": "tool/ptc-dispatch", "data": { "name": "read", "rootCallId": "ghost-2" } }
+      ]
+    },
+    {
+      "name": "两个不同的 ghost：计数是集合大小 2，不是布尔",
+      "expectUnattributable": 2,
+      "events": [
+        { "type": "tool/ptc-dispatch", "data": { "name": "bash", "rootCallId": "ghost-a" } },
+        { "type": "tool/ptc-dispatch", "data": { "name": "bash", "rootCallId": "ghost-b" } }
+      ]
+    }
+  ]
+}

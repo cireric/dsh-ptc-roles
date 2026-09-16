@@ -10,7 +10,7 @@
 > **2026-09-14 改名**：preset 由 `agent-lanes` 更名为 `ptc-roles`（项目目录 `cireric-dsh-agent-lanes` → `cireric-dsh-ptc-roles`）——
 > 下列记录里的旧名与旧路径（`preset/agent-lanes/…`、`scripts/verify-agent-lanes.cjs` 等）是**改名前的原件名**，不改写、保持原样。
 
-十三份 JSON 都是原始输出（①–⑥ 是 2026-09-13 的探针与冒烟证据，⑦⑧ 是第 4/5 轮的改动记录，⑨ 是 2026-09-14 的**宿主内**结清验证，⑩ 是 2026-09-15 的**新 id + 看门狗**宿主内验证，⑪ 是同日**意图门失败记录与可复现性**，⑫ 是同日**第二代（`?v=4`）宿主内验证**，⑬ 是同日**角色派发补全**（`librarian` / `oracle`）），**只读证据**，不需要重跑就能复用结论。
+十四份 JSON 都是原始输出（①–⑥ 是 2026-09-13 的探针与冒烟证据，⑦⑧ 是第 4/5 轮的改动记录，⑨ 是 2026-09-14 的**宿主内**结清验证，⑩ 是 2026-09-15 的**新 id + 看门狗**宿主内验证，⑪ 是同日**意图门失败记录与可复现性**，⑫ 是同日**第二代（`?v=4`）宿主内验证**，⑬ 是同日**角色派发补全**（`librarian` / `oracle`），⑭ 是同日**对复审报告 v3 的复核**），**只读证据**，不需要重跑就能复用结论。
 
 ## 1. `2026-09-13-restrict-scope-and-presentAs.json`
 
@@ -107,7 +107,10 @@ dev_reload_preset preset=agent-lanes                      # 输出里必须出�
 
 **⚠️ 关联已变动（2026-09-13 文档重构 + 2026-09-15 改名）**：本节的 `sha256.current`（`408a8ca0…`）记录的是**取证当时**的字节。
 同日的文档重构为消除「外部文档引用 HANDOFF」而改了插件里的**一行注释**（`HANDOFF §8 G2` → 指向 ADR），
-所以**当前工作树的 sha256 已变为** `cab14ad812715753860128b9881b533f832c65bf5888f9ef50737530bc1902f8` —— **行为完全不变**（纯注释）。
+所以**取证当日的当前工作树 sha256 是** `cab14ad812715753860128b9881b533f832c65bf5888f9ef50737530bc1902f8` —— **行为完全不变**（纯注释）。
+（`cab14ad8…` 是**取证当时**的字节，不是今天：`80b4f7d` 后来又重写了该文件的头部注释，
+**2026-09-15 复审复核时实测为** `71cc58b4cf85a5ddd68562c1a5bddd906be14c9653bb13396b9419d5af673080`。
+⇒ 本节所有 sha 一律读作「**取证当时**」，要今天的值就自己 `shasum -a 256 preset/ptc-roles/role-presentation.mjs`。）
 含义：①这条关联的**时间点**是取证时，不是今天；②宿主仍按 `?v=1` 缓存着旧字节，
 要让它吃到新注释需 `dev_reload_preset` + 新会话（HANDOFF 接手清单里那一步本来就会做）。
 
@@ -217,7 +220,7 @@ A 版 70 行 design 宣言 vs B 版 5 行规划 persona 的取舍理由）。
 | `childSessions[2]`（implementer） | `role=implementer ptc=no tools=10` | 第 6 轮改名在宿主内成立（白名单 8 + 2）；`--all` 无 `fixer` WARN 残留 |
 | `findings[1]`（R5-a） | 脚本 `✓ 主 agent 载入 round-5 纪律 persona` | 第 5 轮生效；双证 = 脚本判定 + 编排器自读 system prompt 里的 6 列表与 `Delegation contract` |
 | `findings[3]`（R1-a） | `Error: subagent depth 2 exceeds maxDepth 1` | maxDepth 缓解在宿主内**再次被真实触发**（explorer 调泄漏的 `subagent`），未产生孙代 |
-| `crossChecks.deployedPresetIntegrity` | 4 软链 + 10 文件 sha256 与仓库**逐一相同** | 宿主读到的就是仓库里的；`.mjs` = `cab14ad8…`（= ⑤ 注释里记的当前值） |
+| `crossChecks.deployedPresetIntegrity` | 4 软链 + 10 文件 sha256 与仓库**逐一相同** | 宿主读到的就是仓库里的；`.mjs` = `cab14ad8…`（= ⑤ 注释里记的**取证当时**的值；`80b4f7d` 后为 `71cc58b4…`，见 §5 的注记） |
 | `crossChecks.allowlistDrift` | 5 角色 / 33 项 ↔ 33 项，零漂移 | #12 的漂移风险本轮实测为 0（工具是一次性的，见下） |
 | `crossChecks.repoUntouched` | `M AGENTS.md` / `M HANDOFF.md`（本轮前既有） | 三角色产出全在 gitignore 覆盖的 `scratch/`；`README`/`docs`/`scripts`/`preset` mtime 未变 |
 | `findings[4]`（OBS-a） | explorer 工具面无 shell ⇒ 做不了 `ls`/`shasum`，**如实报告而非编造** | 编排器任务规格写错；反过来是白名单生效的正面证据。**不给 explorer 加 shell** |
@@ -352,6 +355,31 @@ find ~/.dsh -name '*2982160d*'                     # 证据 ⑨ 引用的源会�
 - 两个角色是从**旧代挂载**的会话派出去的；角色行与角色 persona 本轮未改，故这一条对两代同效（新代改的是 orchestrator persona 与看门狗）。
 - 角色任务的**答案质量**只记录「它答了什么」，不构成效用证明。
 
+## 14. `2026-09-15-review-v3-recheck.json`
+
+**它证明了什么**：对 `CODE-REVIEW-2026-09-15.md`（复审修订 v3）的一次**对评审的评审** —— 它的部分裁定站得住，但有两条「✅ 已落地」不成立，且它的证据有一半只活在滚动会话窗口里。本文件是那份快照的**证据承继者**（快照按它自己的建议已删除，原文冻结在 `supersededDocument`）。
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `rulingsRecheck` | R-01…R-13 逐条 verdict | R-01/03/06/07/08/10/13 成立；**R-02 半成立**（只打印不进判据，本轮补牙）；**R-04 落地声明为假**；**R-05 半落地**；R-09 成立但基数失效；R-11/R-12 本轮补强举证 |
+| `findings.F1` | `HANDOFF.md:24` 至今仍写「冻结件按设计保留原名」 | `git log -S` 只命中 `4b56202`（引入该串），`git show --stat 9a9df36` 只有 2 个文件、**没碰 HANDOFF** ⇒ v3 的「该句不再存在」是假声明（成因见 `F5`：落地栏的提交归属马虎） |
+| `findings.F2` | `docs/evidence/README.md:110` 的 sha 现在时断言过期 | R-05 修了同段「路径」的现在时，漏了 13 行之上的「sha」；实测当前 = `71cc58b4…`（`80b4f7d` 重写注释所致） |
+| `findings.F3` | 归因计数器无牙 | `unattributable > 0` 只打印 ⇒ 归因失明也 exit 0；阳性路径原是一次性合成，现已补 fixture |
+| `findings.F6` | 合规率同一个词有四个数（8% ~ 85%） | 口径 + 窗口不同 ⇒ 已在 `docs/pitfalls.md` **#19** 立唯一口径登记处 |
+| `commandsRerun` | 五条命令逐字判定行 + exit | 全部与 v3 的 §3 基线一致（含 `--control` 的判定行） |
+| `positiveControls.attributionCounter` | 伪造 HOME 造会话 ⇒ `✗ FAIL 不可归属的 tool/ptc-dispatch: 1`、exit 1 | F3 的端到端阳性对照（fixture 那一侧另用「期望改成 99」证明断言不空转） |
+| `approvalChain` | 三次 `ask_user_question` 的 `answers` 逐字（seq 468 / 1268 / 1418） | R-11「越权不成立」的原始凭证；**v3 只提了其中两次** |
+| `generationHistory` | `?v=2/3/4` 与 `lane-role-presentation ?v=1` 可从两份会话日志复现 | R-12 的原始凭证；同时记下 `?v=5`/`?v=6` **仍无宿主内证据** |
+| `evidenceBaseDecay` | 四条「只能当场测」的证据基数一览 | R-09 的 30 轮基数已消失、R-02 的阳性路径从未入库 —— 下一轮别再重复这个坑 |
+
+**怎么得到的**（复现方法）：并派三条独立核查线（三套脚本逐条复跑 / git 考古逐条验证 / 活文档一致性），再对**互相矛盾**的两份结论自己重跑仲裁 —— 关键证法见 `howToReproduce`（`git log -S` 与 `shasum` 两条各自钉死 F1/F2）。
+
+**边界（别误读）**：
+- 本文件**不主张**「v3 的裁定都错」：多数裁定复跑后成立，这是对它的正面结论。
+- F1 的定性是「提交记录里没有那个动作」，不是指控动机；最可能成因是落地栏的归属马虎。
+- `supersededDocument.content` 是**冻结原文**，只作历史记录，**不作事实源**（与活跃脚本输出冲突时以脚本为准）。
+- 合规率**不接退出码**：模型行为不该让套件随机变红；要留的发现落证据，不落门。
+
 ## 附 · 轮次与结清状态（从 HANDOFF 搬迁至此：逐轮验证记录）
 
 > HANDOFF 只留**当前要做什么**；逐轮历史归这里，因为它本来就是「验证账本」。
@@ -370,8 +398,10 @@ find ~/.dsh -name '*2982160d*'                     # 证据 ⑨ 引用的源会�
 | 11 | 角色派发补全：`librarian` / `oracle` 宿主内白名单**精确匹配**（8 / 6 项）—— 五个角色行**全部**验过 | ✅ 已结清（⑩ 的 `notVerifiable` 缺口关闭） | ⑬ |
 | 10 | **第二代（`?v=4`）宿主内验证**：新 persona 载入 / 新看门狗字节载入 / 行为轮漏行被提醒 ×2 / 只读轮漏行不提醒（同会话对照） | ✅ 已结清（方法学上先自纠了一次 marker 子串混淆） | ⑫ |
 | 9 | **门行文案返工（G-5）**：marker 驱动退化（门行写成 turn 号 / 看门狗状态 / 证据文件名）⇒ 按上游 `Step 0: Verbalize Intent` 原文**补回我们移植时丢掉的 `[reason]` 槽位**、明确「读者是用户 / 是承诺不是标签 / 不照抄原话」；`.mjs` bump 到 `?v=4` | ✅ 已落地（上游 v4.19.4 与 HEAD 逐字相同已核；单测仍 20/20） | ⑪（`findings[4]` + `upstreamReference`） |
+| 12 | **复审报告 v3 的独立复核**（grill 会话）：13 条裁定逐条复跑 + §2 a–e + §3/§4/§5 复核；逮到 **R-04 的落地声明为假**、**R-05 半落地**、**归因计数器无牙**（R-02 同型病）、错指针 `#17`→`#9`；给计数器补牙 + 可复跑 fixture；合规率口径独立成 **#19** | ✅ 已落地并当场自验（三条修正 + 三套脚本全绿、`--control` 判定行在）；快照按它自己的建议删除，证据 ⑭ 承继其全部结论 | ⑭ |
 
 **仍未做**：`skills` 细粒度分发（推迟 v1.1）；~~sandbox-strip~~ **结案不做**（证据 ⑥）；win32 平台分支（本机无该平台，只能靠设备验证）。
+**仍未做（2026-09-15 复审复核追加）**：`?v=5` / `?v=6` 那一代的**宿主内**证据（要 `dev_reload_preset` + 新会话 + 派角色）；本轮按用户裁定只留痕（见 ⑭ 的 `generationHistory.gap`）。
 
 ## 注意
 

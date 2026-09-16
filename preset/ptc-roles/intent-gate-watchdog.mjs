@@ -66,8 +66,14 @@ import { randomUUID } from 'node:crypto'
 
 export const name = 'intent-gate-watchdog'
 
-/** Literal markers that count as "the gate line was emitted". */
-const DEFAULT_MARKERS = ['意图判定']
+/**
+ * Literal markers that count as "the gate line was emitted". Keep in sync with the
+ * persona's template (personas/orchestrator.md) — the token migrated from 意图判定 to
+ * `Intent:` on 2026-09-16. The verifier (scripts/verify-ptc-roles.cjs) additionally
+ * accepts the legacy token because it scores HISTORICAL sessions; this plugin only ever
+ * looks at the previous turn, so it stays strict.
+ */
+const DEFAULT_MARKERS = ['Intent:']
 
 /**
  * Tools whose use makes a turn "behavior-changing" — the turns the persona's Phase 0
@@ -82,10 +88,10 @@ const BEHAVIOR_TOOLS = new Set([
 
 /** The single reminder appended when the previous turn skipped the gate. */
 const REMINDER = [
-  '[intent-gate-watchdog] 上一轮是会改变行为的轮次（要委派 / 要拒绝 / 要提问 / 要改文件），但没有输出「意图判定」行。',
-  '这一行的读者是**用户**，用途是动手前对齐需求：用结果说清你判断他要什么、依据是哪一点，再给出做法。格式：',
-  '意图判定：<桶> — 你要的是 <结果/目的>（依据：<你话里让我这么读的那一点>）；我打算 <做法>。',
-  '桶只取这六个：research / implementation / investigation / evaluation / fix / open-ended。',
+  '[intent-gate-watchdog] 上一轮是会改变行为的轮次（要委派 / 要拒绝 / 要提问 / 要改文件），但没有输出门行。',
+  '这一行的读者是**用户**，用途是动手前对齐需求：用结果说清你判断他要什么、依据是哪一点，再给出做法。格式（语言随对话）：',
+  'Intent: <bucket> — <结果/目的> (because: <你话里让我这么读的那一点>); I will <做法>。',
+  '`Intent:` 是字面 marker，照抄勿译；桶只取这六个：research / implementation / investigation / evaluation / fix / open-ended。',
   '⚠ 两件别做：①别照抄用户的话（复述 ≠ 理解）；②别塞内部记账（turn/step 号、看门狗或插件状态、',
   '证据文件名、脚本通过数）—— 用户拿这些做不了决定。这一行是承诺不是标签，请在回复第一行补上。',
 ].join('\n')
