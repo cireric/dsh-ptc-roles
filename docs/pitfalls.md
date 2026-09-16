@@ -6,9 +6,17 @@
 
 ## A. 生效路径（改完怎么才算生效）
 
-DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里是**真目录 + 内部 5 个软链**指向本仓库
-（`agent.cordis.yml` / `role-presentation.mjs` / `intent-gate-watchdog.mjs` / `preset.yml` / `personas`）。
+DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里必须是**真目录 + 内部软链**指向本仓库
+（部署清单 = `preset/ptc-roles/` 的全部顶层条目，当前 5 项：`agent.cordis.yml` / `role-presentation.mjs` /
+`intent-gate-watchdog.mjs` / `preset.yml` / `personas`）。**别手工 `ln -s`，用 `make deploy`** ——
+清单由 `scripts/deploy-preset.cjs` 自动发现，`make check` 负责对账（缺项 / 断链 / 指错 / 多余，漂移退 2）。
 
+- **内部条目用软链（本仓库的既定形态）**：`dev_reload_preset` 改写的是部署目录里那份 `agent.cordis.yml`，
+  软链会**透过链接写回本仓库** —— 所以跑完它，`preset/ptc-roles/agent.cordis.yml` 会多出一份 `?v=N` 的 diff，
+  **那是正常的**，别当误改 revert 掉。副本形态**同样能跑**（与官方内置 preset 同形：真目录 + 真文件），
+  但 bump 会落在拷贝上、仓库源**静默**不更新 ⇒ 本仓库统一用软链，别手工改成副本。
+- **整目录做软链会被静默跳过**：发现逻辑按 Dirent 判 `isDirectory()`、不跟随软链（`discovery.ts:303`）⇒
+  部署目录本身是软链时 `make check` 退 2 并点名。
 - 改 `agent.cordis.yml` / `personas/*.md` → **开新会话即生效**（每次新会话重读）。
 - 改 `role-presentation.mjs` → 先 `dev_reload_preset preset=ptc-roles`（bump `?v=N` 绕 ESM 缓存），
   **再开新会话**。⚠️ 该工具只认**不带引号**的 `.mjs` 引用：写成 `'./x.mjs'` 时它回「无相对 .mjs 引用」
@@ -173,6 +181,10 @@ DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里是**真目录 + 内部 5
       只作**对照**——读过插件源码的轮次必然命中「任意文本」，那不是合规。
     - **读数纪律**：写「门在静默衰减」之前先问「哪个窗口」；写「门很健康」之前先问
       「被数进去的那些轮次真的是会改变行为的轮次吗」。
+    - **2026-09-16 判据对齐（插件 ↔ 合规分子）**：看门狗此前按「任意位置命中」判「上一轮有没有门行」，
+      而合规分子是「**首行**」⇒ 「写在第二行」的轮次**指标扣分、看门狗却不提醒**（同一契约两处判据，
+      正是 #12 那类漂移）。现已把插件收到**同一口径**（该轮首条有文本消息的首行；空文本不占「首条」）；
+      单测为此加两条断言（marker 在第二行 / 在第二条消息都必须提醒），阴性对照清单 9 → 11（判据仍是集合相等）。
     - **2026-09-16 门行 token 迁移**：`意图判定` → `Intent:`（persona 模板与插件 `DEFAULT_MARKERS` 同步）。
       合规率脚本的 `INTENT_MARKERS` **同时**接受两个 token —— 插件看**当轮**（严），脚本扫**历史**（宽）；
       去掉旧 token 会把迁移前那批会话的读数改成 0、与上面的回归基线不再可比。**引用旧读数时按当时的 token 读。**
@@ -186,7 +198,8 @@ DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里是**真目录 + 内部 5
 
 | 症状 | 原因 | 修法 |
 |---|---|---|
-| 选择器里没有 `ptc-roles` | 软链没建；或把**目录**做了软链（被静默跳过）；或缺 `agent.cordis.yml` | 确认 `~/.dsh/.agent-presets/ptc-roles/` 是**真目录**且内部 5 个软链在位 |
+| 选择器里没有 `ptc-roles` | 软链没建；或把**目录**做了软链（被静默跳过）；或缺 `agent.cordis.yml` | 跑 `make check`（退 2 会点名是哪一类）→ `make deploy` |
+| `make check` 退 2 | 部署与仓库漂移：缺项 / 断链 / 指错 / 目标目录本身是软链 / 多余项 | `make deploy` 重新部署（目标已存在时它会先列差异再问 y/N） |
 | mount 报错指向 `persona` 行 | `!!js` + `baseUrl` 在 preset 组合里未生效 | 把 persona 文本**内联**进 yml 的 `prefix` / `persona`（literal block），删掉 `!!js` |
 | mount 报错指向 `role-*` 行 | `allow` 里有**未知名**：①工具改名 / MCP server 变更 ②**跨平台**（win32 上 `tool-bash` 被禁用，硬编码 `bash` 的角色行会直接派不出去） | 按 live 工具面核对后改白名单；带 shell 的角色行**必须**用平台表达式且**带引号**（#11）。未知名**响亮失败**是有意设计 |
 | 子代理派出去就报错 | ①model 不在 provider 实时目录 ②模型**不支持**所声明的 `reasoningEffort`（explorer 曾栽在②） | **先读报错原文**：`does not support reasoning effort "X"` ⇒ 删掉该 effort 或换该模型支持的档；`route ... is not allowed for this Session` ⇒ 见 #8 |

@@ -23,18 +23,22 @@
 
 ## 安装
 
-preset 源码在本仓库；DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读取，那里要是**真目录 + 内部软链**
+preset 源码在本仓库；DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读取，那里必须是**真目录 + 内部软链**
 （把整个目录做软链会被发现逻辑**静默跳过**）：
 
 ```bash
-mkdir -p ~/.dsh/.agent-presets/ptc-roles && cd ~/.dsh/.agent-presets/ptc-roles
-R=~/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/preset/ptc-roles
-ln -s "$R/agent.cordis.yml" agent.cordis.yml
-ln -s "$R/role-presentation.mjs" role-presentation.mjs
-ln -s "$R/intent-gate-watchdog.mjs" intent-gate-watchdog.mjs
-ln -s "$R/preset.yml" preset.yml
-ln -s "$R/personas" personas
+make deploy   # 建真目录 + 内部软链；目标已存在时会先列出差异并问 y/N
+make check    # 对账：当前部署 vs 仓库（缺项 / 断链 / 指错 / 多余），漂移退 2
 ```
+
+部署清单由 `scripts/deploy-preset.cjs` **自动发现** `preset/<id>/` 的全部顶层条目（跳过点文件）——
+加一个插件文件不需要改任何文档，也不再有三处手抄的 `ln -s` 清单。
+
+**形态**：内部条目一律软链。副本**也能跑**（与官方内置 preset 同形：真目录 + 真文件），但它会跟
+`dev_reload_preset` 冲突 —— 那个工具改写的是部署目录里那份 `agent.cordis.yml`，软链会**透过链接写回本仓库**
+（这就是 `git status` 里那份 M 的来源），副本则让 bump 落在没人读的拷贝上、仓库源静默不同步。
+唯一的硬规则：**别把 `ptc-roles` 目录本身做成软链**（会被发现逻辑静默跳过）。
+机制细节见 `docs/pitfalls.md` A 节。
 
 ## 使用
 
@@ -44,24 +48,25 @@ ln -s "$R/personas" personas
 ## 验证
 
 ```bash
-node scripts/verify-ptc-roles.cjs               # 行为验证（--all 扫全部工作区；--raw 打全工具名）
-                                             # 含三个自测：归因计数器 / 角色事实静态检查 / 意图门统计
-                                             # （fixture: scripts/fixtures/{attribution,intent-gate}-cases.json）
-node scripts/verify-role-presentation.cjs    # 插件单元校验（11 条断言；--control 必须恰 5 项失败）
-node scripts/verify-intent-gate-watchdog.cjs  # 看门狗单元校验（17 条断言；--control 必须恰 9 项失败）
-node scripts/verify-harness-contract.cjs      # 契约门禁（--harness <checkout>）—— **升级 dsh 本体前后各跑一次**
+make verify    # 四个脚本：行为 / 插件单元 / 看门狗 / 框架契约
+make control   # 两个阴性对照：断言有没有空转
 ```
 
-四个脚本的**退出码契约**统一为「0 = 本次运行符合预期」——`--control` 在预期失败数上也退 0，
-所以判定要看脚本自己打印的那行（`阴性对照符合预期…`），不能只看 `$?`。
-契约门禁另有一个 `2`：目标 checkout 或契约载体读不到（**响亮失败**，绝不静默跳过）。
+| 脚本 | 它证明什么 |
+|---|---|
+| `verify-ptc-roles.cjs` | **行为**（零模型成本，只读 `~/.dsh/sessions`）：用 `request/header.header.tools`（**真正发给模型的**工具面）判定每个会话的角色 / 模型 / 工具面 / 是否仍是 PTC；内含归因 / 角色事实静态 / 意图门统计三个自测 |
+| `verify-role-presentation.cjs` | 翻转插件的单元校验（深度判据四层，`docs/pitfalls.md` #10） |
+| `verify-intent-gate-watchdog.cjs` | 看门狗的单元校验 + 契约一致性（插件 token / 六桶 / 首行要求 ↔ persona 模板） |
+| `verify-harness-contract.cjs` | **框架契约门禁** —— 升级 dsh 本体**前后各跑一次**：变红的那条直接指出 preset 侧要改哪一处（`--harness <checkout>`，默认 `~/.dsh/dsh-harness`） |
 
-零模型成本。第一个只读 `~/.dsh/sessions`，用 `request/header.header.tools`（**真正发给模型的**工具面）
-判定每个会话的角色 / 模型 / 工具面 / 是否仍是 PTC：期望主 agent `✓ 保持 PTC`、每个角色子代理
-`✓ PASS native + 白名单精确匹配`，并带一行 `⊘ 已知自身层泄漏` —— 那是已知且已定位的现象
-（`docs/pitfalls.md` #7），不是白名单写错。
+**判据是各脚本自己打印的判定行** —— 不是退出码，也不是写进任何文档的断言条数（条数随改动变，抄进文档必漂）。
+四个脚本统一「0 = 本次运行符合预期」，`--control` 在预期失败数上同样退 0；断言集合由脚本内的
+`REQUIRED_CONTROL_FAILURES` / 断言表定义，**多一条也是异常**（判据是集合相等）。契约门禁另有退出码 `2`：
+目标 checkout 或契约载体读不到（**响亮失败**，绝不静默跳过）。
 
-它同时打印**意图门合规率**（逐轮判定 + 首行命中率）。口径：分子分母都只算**会改变行为**的轮次
+行为那支的期望读数：主 agent `✓ 保持 PTC`、每个角色子代理 `✓ PASS native + 白名单精确匹配`，并带一行
+`⊘ 已知自身层泄漏` —— 那是已知且已定位的现象（`docs/pitfalls.md` #7），不是白名单写错。它同时打印
+**意图门合规率**（逐轮判定 + 首行命中率）：口径是分子分母都只算**会改变行为**的轮次
 （要委派 / 要拒绝 / 要提问 / 要改文件），判据与看门狗插件共享同一份工具名单；「任意文本」一栏
 含工具结果，只作对照、不作合规分子（读过插件源码的轮次也会命中）。
 
