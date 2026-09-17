@@ -1,0 +1,63 @@
+{
+  "probe": "2026-09-17-intent-gate-existence-criterion",
+  "question": "意图门的门行，该被要求的是「存在」（动手那条消息里有它）还是「前置」（它所在消息早于动手）？把义务收窄到「存在」之后，读数与真实缺口各是什么？",
+  "why": "v2 前置口径把 40 个会改变行为的轮次里的 35 个判成「未前置」，而这个项目自己的验证脚本同时打印「同一条消息 23 / 整轮无门行 28 / 动后补 16」并把「同消息」那类注解为口径产物。口径若继续与模型的自然形态对撞，看门狗就会在每个行为轮次补一次提醒，而提醒的注入是**永久落库**的（agent-loop/src/agent.ts:373-377）。门要能起作用，先得有一个 100% 可达、可强制的形态。",
+  "answer": "① 把义务定为「存在」，② 前置降为对照读数，③（声明→只读侦察→再动手的因果形态）明确放弃并删掉 persona 里那句逃生口。落地后当场读数：① 22/42 (52%)，② 6/42 (14%)；① 与 ② 的全部差额（16 轮）**首发动作全部是 shell 侦察**（shell 16 / 非 shell 0），即 pitfalls #17 预告的载体耦合，而不是模型漏行。真正的行为缺口只剩 19 轮：整轮无门行 6 + 门行落在动作之后 13。",
+  "criterion": {
+    "v1": "首行 —— 该轮第一条有文本的 assistant 消息的首行含 marker（2026-09-16 起降为对照）",
+    "v2": "前置 —— 门行所在消息的序号 < 承载首个行为动作的载体消息序号（2026-09-16 起为合规分子，2026-09-17 起降为对照）",
+    "v3": "存在（现行合规分子）—— 门行所在消息的序号 ≤ 承载首个行为动作的载体消息序号。门行仍必须是**其所在消息的首行**；「会改变行为」仍 = tool/call 或 tool/ptc-dispatch 的 name 命中 BEHAVIOR_TOOLS（bash/pwsh 无条件计入，保守判据不变）。"
+  },
+  "readings": {
+    "frozenAt": "2026-09-17（改动落地后当场实测）",
+    "command": "node scripts/verify-ptc-roles.cjs",
+    "aggregate": [
+      "意图门合规率（合计 5 个主 agent 会话 / 48 轮，其中会改变行为 42 轮）",
+      "  意图门合规率（① 存在口径）: 22/42 (52%) | 行为动作覆盖 791/1396 (57%)",
+      "  对照口径：② 前置 6/42 | 可见回复 39 | 任意文本 48",
+      "  其中「同消息」达标 16 轮：首发是 shell 侦察 16 轮 / 非 shell 0 轮"
+    ],
+    "causes": {
+      "同一条消息": 16,
+      "整轮无门行": 6,
+      "门行在动作之后": 13,
+      "无法归因": 0
+    },
+    "silentSessions": "1/5（观察项，不接退出码）",
+    "windowDrift": "本窗口是**活的**：同一批改动在几分钟内的两次运行读数就已经不同（eligible 41→42；任意文本 47→48；覆盖率 791/1366 (58%) → 791/1396 (57%)）—— 差额来自**本会话自身在增长**（它也是被统计的 5 个主会话之一）。分子 **① 22/42** 与 **② 6/42** 两次一致。引用一律带时刻与窗口。",
+    "coverageCriterionChange": "覆盖率是**诊断读数**，其窗口随本次口径变化：① 合规的轮次里，与声明同一条消息的动作现在也算「被声明覆盖」（> 改成不早于）。聚合 47%（2026-09-16 基线）→ 58%。② 不合规分支的表达式不变，故两批读数可比的部分仍可比。"
+  },
+  "harnessFacts": {
+    "ordering": "assistant 消息**先**落库（packages/core/agent-loop/src/agent.ts:474-483），**然后**才 executeToolCalls（:488）→ 工具运行时跑 tools/pre-execute 瀑布（packages/core/tools/src/index.ts:1465-1468，可返回 {kind:'deny'}）。⇒ 闸门**有能力**看见同一条消息里的门行。",
+    "unproven": "「插件的 session/event 监听器在 tools/pre-execute 触发之前已收到该消息」是**推断**，未在真机实测 —— 这正是闸门默认 observe 的原因。",
+    "injectionPersists": "agent/pre-step 注入的消息会落进会话（agent.ts:373-377：session.append('user/message', …, {surfaceOp:'append'})）⇒ 提醒不是临时插一下，而是每个被提醒的轮次留一条常驻 user 消息。"
+  },
+  "changed": [
+    "preset/ptc-roles/personas/orchestrator.md —— Phase 0 重写：① 存在为硬规则；② 前置降为「更好但只被度量」；删掉「同一次生成⇒锚不住」的论证与那句逃生口（「接受本轮被判成事后报告」）；歧义换成三条硬规则（不可逆 → 问 / 用户价值判断 → 问 / 改回代价 ≤ 一次编辑 → 不问并把假设写进回复）；补上游缺的 Assumptions Check 与 Challenge 两行模板。",
+    "preset/ptc-roles/intent-gate-watchdog.mjs —— 判据换 ①；新增 tools/pre-execute 闸门（默认 observe，config.gate='enforce' 才拒绝，每轮最多一次）；提醒 7 行压到 3 行；新增 observe 模式的竞态诊断行（RACE_REPORT）。",
+    "scripts/verify-ptc-roles.cjs —— 主口径换 ①、② 降对照；新增「同消息达标 N 轮：首发 shell S / 非 shell K」交叉打印；成因直方图改为与合规率同源（此前遍历全部会话，23 vs 16 不一致）。",
+    "scripts/fixtures/intent-gate-cases.json —— 两处期望按实跑翻转（同消息 / PTC 阴性 → 合规），并新增 ② 对照断言。",
+    "scripts/verify-intent-gate-watchdog.cjs —— 断言翻转 + 闸门 8 条新断言 + 契约 D 锚点换成 ① 措辞 + 修掉「变异目标消失时 control() 抛 TypeError」的老缺陷；REQUIRED_CONTROL_FAILURES 由 12 条重定为 16 条（按实跑集合）。",
+    "scripts/fixtures/intent-gate-watchdog.naive.mjs —— 对照版补上一个「第一直觉的坏闸门」（无条件拒、不看配置、不看是否真实用户轮、无每轮一次标志、覆盖下游决定、不记竞态），使 5 条闸门断言真正由逻辑失败而非「handler 缺失」失败。",
+    "preset/ptc-roles/agent.cordis.yml —— 看门狗行挂 config.gate（默认 observe）；dev_reload_preset 后 intent-gate-watchdog.mjs -> ?v=10。"
+  ],
+  "controls": {
+    "verify": "make verify rc=0：verify-ptc-roles 汇总 ✓46 ✗0 !0；role-presentation 11/11；watchdog 36/36；harness-contract ✓13 ✗0。",
+    "control": "make control rc=0：三支阴性对照判定行均为「符合预期」且判据是**集合相等**（5 条 / 16 条 / 1 条，一一对应）。",
+    "antiVacuity": "S4 用一次性变异副本（LANE_PLUGIN_PATH 指向临时目录，事后删除）逐条反证：<= 改 < 翻 3a+23+24；gateEnforcing 常真/常假分别翻 18+23 / 19+21；去掉 denied 标志翻 20；去掉 userTurn 判据翻 21；非 allow 直通改 if(false) 翻 22；竞态条件取反翻 23/24；REMINDER/RACE_REPORT 互换翻 25。",
+    "registration": "open() 现在捕获 tools/pre-execute，插件不订阅即抛错并 exit 2（阳性控制 M8 实测）。"
+  },
+  "notProven": [
+    "**真机的时序**：assistant/message 与 tools/pre-execute 的先后只由源码顺序与单测的合成事件支持；真机结论要等观察会话（见 nextStep）。",
+    "**闸门开关在宿主里真的被读到**：config.gate 的传递路径有官方先例（app-boot 的 user-patch 测试里 'export function apply(ctx, config)'），但本 preset 这一行未在宿主内实测。",
+    "**效用**：① 的读数只证「门行有没有落在载体消息里」，不证「因此决策更正确」，也不证提醒/闸门让人更守纪律。",
+    "**长期不衰减**：单窗口读数，会话库是滚动窗口（pitfalls #15）。"
+  ],
+  "howToReproduce": [
+    "node scripts/verify-ptc-roles.cjs            # 合计行 + 每会话行 + 交叉打印",
+    "node scripts/verify-ptc-roles.cjs --raw      # 另附工具面明细",
+    "make verify && make control                  # 判据是各脚本自己打印的判定行",
+    "grep -n 'mjs?v=' preset/ptc-roles/agent.cordis.yml   # 期望 intent-gate-watchdog.mjs -> ?v=10"
+  ],
+  "nextStep": "观察模式取证（必须由人在**新会话**里跑，`?v=10` 才对它生效）：1) 观察会话里 RACE_REPORT 一次都不出现 ⇒ 闸门看得到同一条消息里的门行，不会假拒；2) 出现 ⇒ 时序竞态成立，闸门不能开。两项都过之后把 config.gate 改成 enforce（每轮最多拒一次 + 拒绝理由自带补救话术），再取一次读数。"
+}

@@ -5,6 +5,7 @@
 > 所以它可以随时整份重写或删掉重建。
 > 项目目录：`/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles`
 > 本次重写：**2026-09-16**（上一版停在 09-15）；同日二次更新：部署脚本与 Makefile 落地（§1）。
+> **2026-09-17 更新**：门行判据换成 v3「① 存在档」+ 闸门以 `observe` 落地（§1 / §2 第 3 步）。
 
 ## 0. 先确认你在哪个 preset 下
 
@@ -15,7 +16,7 @@
 2. system prompt 里有 `## Specialists` 的 **6 列表**（含 `Topology`、`Mode`）与 `## Delegation contract` 段，
    且门行的模板是**英文 + 字面 token `Intent:`**。
 
-## 1. 当前状态（2026-09-16）
+## 1. 当前状态（2026-09-17）
 
 - **宿主版本**：本机跑的是 `0.1.5-rc.2`（checkout `/Users/eric/Project/tests/deepseek-harness`，
   `git describe` = `dsh-v0.1.5-rc.2-139-gc291e7961a`）；本地**没有** 0.1.6 的 tag。
@@ -27,9 +28,22 @@
   `scripts/deploy-preset.cjs` **自动发现** `preset/<id>/` 的全部顶层条目 ⇒ 加插件文件不再需要改文档
   （原先 README / pitfalls A / HANDOFF 三处各手抄一份 5 条 `ln -s`）。脚本退出码：0 符合预期 / 1 出错或被拒 /
   2 = `--check` 发现漂移。
+- **门行判据 = v3「① 存在档」（2026-09-17 落地）**：合规分子 = 门行落在**承载首个行为动作的那条
+  消息**里、且为该消息首行；**②「门行更早」降为对照读数**，**③「声明 → 只读侦察 → 再动手」明确放弃**
+  （结构上不可保证，见 #20）。理由与代价：`docs/pitfalls.md` #19。**v3 首份基线：① 22/42（52%）、
+  ② 6/42（14%）**，差额 16 轮**首发全是 shell 侦察（16/16）** ⇒ 旧口径量的主要是载体耦合（#17），
+  不是模型漏行；真正的缺口只剩 19 轮（整轮无门行 6 + 动后补 13）。
+- **闸门（`tools/pre-execute`）随行默认 `observe`（2026-09-17）**：只记账；若「闸门在动作到达时
+  没看到门行」而该轮最终合规，就注入竞态诊断行（`RACE_REPORT`）。`config.gate: enforce` 才拒绝，
+  且**每轮最多一次**、拒绝理由自带补救话术。
+- **看门狗提醒 7 行 → 3 行（2026-09-17）**：提醒经 `agent/pre-step` 注入的消息会**永久落库**
+  （`agent-loop/src/agent.ts:373-377`），旧口径下约 87% 的行为轮次各留一条逐字相同的常驻消息 ——
+  那是重复，不是信息。
 - **规则 7 已更新（2026-09-16，用户批准）**：改为 `make verify` / `make control` +「判据是各脚本打印的判定行」，
-  去掉内联断言条数（原写「三个脚本」，且看门狗条数停在 `17/17` —— 实测已是 `24/24`，见下）。
-- **插件代次**：`role-presentation.mjs?v=7` / `intent-gate-watchdog.mjs?v=8`（`dev_reload_preset` 输出确认）。
+  去掉内联断言条数（原写「三个脚本」，且看门狗条数停在 `17/17`，当天实测就已不是它 —— 正是「文档抄数字必漂」
+  的实例；故本文件与 README 一律不再登记条数，判据只看各脚本打印的判定行）。
+- **插件代次**：以 `preset/ptc-roles/agent.cordis.yml` 里的 `?v=` 为准（本文件不登记那个数字 —— 它每次改动都会漂）。
+  改了 `.mjs` 必须 `dev_reload_preset preset=ptc-roles`（输出须含 `x.mjs -> ?v=N`）**再开新会话**。
   persona 与插件都是**挂载时读取** ⇒ 改完必须开新会话才生效（`docs/pitfalls.md` A 节）。
 - **门行 token 迁移（2026-09-16）**：`意图判定` → **`Intent:`**（persona 模板与插件 `DEFAULT_MARKERS` 同步）；
   合规率脚本的 `INTENT_MARKERS` **同时**接受两个 token（插件看当轮=严、脚本扫历史=宽）。口径与理由：`docs/pitfalls.md` #19。
@@ -38,33 +52,37 @@
 - **四支脚本的当前读数**（退出码契约：`0` = 本次运行符合预期；**判据是各脚本打印的判定行**，
   下表只是 2026-09-16 的快照，条数会随改动变 —— 别把数字抄进长期文档）：
 
-  | 脚本 | 期望 |
+  | 脚本 | 期望（判据 = 它自己打印的判定行，**不登记条数**） |
   |---|---|
-  | `verify-ptc-roles.cjs` | `✓24 ✗0 !0`（含归因 / 角色事实静态 / 意图门统计三个自测） |
-  | `verify-role-presentation.cjs` | `11/11`；`--control` 恰 5 项失败 |
-  | `verify-intent-gate-watchdog.cjs` | `24/24`（含 D 契约一致性）；`--control` 恰 11 条失败（判据是集合相等） |
-  | `verify-harness-contract.cjs` | `✓13 ✗0`；读不到 checkout ⇒ 退出码 `2`（响亮失败） |
+  | `verify-ptc-roles.cjs` | 四类自测（角色事实静态 / 行为工具名单一致性 / 归因计数 / 意图门统计）全 ✓ 且 `✗0`；没有会话时判定行会**明说**「行为判据本次未验证」，zstd 缺失直接退 `2` |
+  | `verify-role-presentation.cjs` | `汇总: <n>/<n> 通过  ✓ 全绿`；`--control` 判据 = 失败**集合**恰等于 `REQUIRED_CONTROL_FAILURES` |
+  | `verify-intent-gate-watchdog.cjs` | `汇总: <n>/<n> 通过  ✓ 全绿`（含 D 契约一致性）；`--control` 同样判集合相等 |
+  | `verify-harness-contract.cjs` | `✗0`，判定行末尾带**目标 checkout**；读不到 checkout ⇒ 退出码 `2`（响亮失败） |
 
 - **ADR**：0001 已补版本作用域（决定性证据第 1 行只对 0.1.5-rc.2 成立）与状态行；0002 状态已改「**已采纳**」，
   证据窗口标注「尚未计时」（A 项依赖 0.1.6），其 **C / D / E 三项已先行落地并自验**。
 - **文档语言政策（2026-09-16 用户确认）**：正文中文；文件名 / 标识符 / 契约 token 用英文。
   **未落纸**（`AGENTS.md` 属规则文件，写入需人工确认）—— 别自作主张把正文翻成英文。
-- **工作区状态**：本轮四笔提交已入库（`git log --oneline -4`）：`feat(watchdog)` → `chore(tooling)` →
-  `docs(preset)` → `docs`。其中 `docs` 那笔**同时携带** 09-16 批的残留文档文本（`pitfalls #19` 的判据对齐段）——
-  它与本轮改动在同一份 diff 里交织，非交互拆分必然拆错，故按「代码侧 / 工具侧 / 文档侧」分笔，
-  而不是按轮次硬拆。
+- **工作区状态**：09-16 的四笔（`feat(watchdog)` → `chore(tooling)` → `docs(preset)` → `docs`）之后，
+  09-17 又落**三笔**，仍按「**代码侧 / 工具侧 / 文档侧**」分笔，不按轮次硬拆 —— 理由与上次同：09-17 评审轮的
+  未提交文本（`pitfalls #21`、`evidence/README §15`、CI 会话夹具、漂移守卫）与本轮 v3 改动在同一份 diff 里
+  交织，非交互拆分必然拆错。每笔的 body 里都写明了它**同时携带**哪些跨批残留。
 
 ## 2. 你接手后要做什么（按顺序）
 
 1. **开一个新会话**（persona 与 `.mjs` 都是挂载时读取），跑 §0 的两条自检。
 2. **`make verify` + `make control`**（判据是各脚本打印的判定行，退出码 `0` 不等于零失败），再
    `make check` 确认部署仍与仓库一致（漂移退 2）。
-3. **等 `0.1.6-rc.*`**：升级**前后各**跑一次 `node scripts/verify-harness-contract.cjs --harness <checkout>`
+3. **闸门开闸前置（2026-09-17 新增）**：新会话里跑一轮真实工作，然后读会话日志看字面量 `RACE_REPORT`
+   出现过没有 —— **没出现** ⇒ 闸门确实看得见同一条消息里的门行，可把 `agent.cordis.yml` 的 `gate`
+   改成 `enforce`（**独立一笔**）；**出现** ⇒ 时序竞态成立，保持 `observe` 并回头改判据。
+   冻结读数与边界：`docs/evidence/2026-09-17-intent-gate-existence-criterion.json`。
+4. **等 `0.1.6-rc.*`**：升级**前后各**跑一次 `node scripts/verify-harness-contract.cjs --harness <checkout>`
    —— 它就是那次升级的差异报告（包改名那条还会给出疑似新名）；然后按 impact 文档的 P0–P3 执行，
    **P0-1 是 engine 行改名**（`workflow-worker-thread` → `workflow-ptc`，且别照抄官方的 `disabled: true`）。
-4. **开证据窗口**（ADR 0002）：rc 之后计时，并当场记一条**带日期戳**的基线；口径必须带「口径 + 窗口 + 日期」
+5. **开证据窗口**（ADR 0002）：rc 之后计时，并当场记一条**带日期戳**的基线；口径必须带「口径 + 窗口 + 日期」
    （登记处 `docs/pitfalls.md` #19）。
-5. **未结事项**（都已登记，别重复决策）：B（每角色成本归因 —— 窗口判定里「成本」那一侧能否测出改善全靠它）、
+6. **未结事项**（都已登记，别重复决策）：B（每角色成本归因 —— 窗口判定里「成本」那一侧能否测出改善全靠它）、
    F / G / H（条件押注）、`skills` 细粒度分发（`v1.1` 在仓内无定义，见 ADR 0001 的待办）、
    以及 **看门狗 / 验证基建 / 门行契约迁移三处仍无 ADR** —— 本轮裁定「只纠事实」，不补新决策记录。
 

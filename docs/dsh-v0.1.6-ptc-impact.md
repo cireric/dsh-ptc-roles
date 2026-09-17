@@ -194,7 +194,7 @@ P2-1 的具体写法（**注意 profile patch 对 config 是整行替换，非�
 |---|---|---|
 | P3-1 | **先在独立 profile 灰度**（如 `web-016`）装 0.1.6 + 最小 bundle 集，验证 preset 后再动主 profile | 主 profile 有 18 个第三方 bundle，其中 `dsh-better-sidebar` 徽章只声明验证到 `0.1.5-rc.2`，且其 `cordis.patch.yml` 带「duplicate prefix route 会让整棵插件树失败」的硬失败逻辑 |
 | P3-2 | 升级 dsh 本体后跑 `security_audit` 并与基线 JSON diff | `AGENTS.md` 规则 5 |
-| P3-3 | 复跑三个 verify 脚本（`✗0 !0` / `11/11` + `--control` 恰 5 项 / `17/17` + `--control` 恰 9 项） | `AGENTS.md` 规则 7 |
+| P3-3 | 复跑 `make verify` + `make control`（判据 = 各脚本自己打印的判定行；`--control` 是**集合相等**。**不登记条数** —— 条数随改动变，抄进文档必漂） | `AGENTS.md` 规则 7 |
 
 ---
 
