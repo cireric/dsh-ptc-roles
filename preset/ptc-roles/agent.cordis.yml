@@ -336,17 +336,22 @@
   # matches, so the tool answers "无相对 .mjs 引用" and never bumps ?v=N. Without the
   # bump the host's ESM cache keeps serving the OLD plugin generation to every new
   # session (measured 2026-09-13). Keep it bare.
-  name: ./role-presentation.mjs?v=7
+  name: ./role-presentation.mjs?v=9
 
 # 意图门看门狗：per-turn 的 Phase 0 纪律在「漏了」时没有任何代价，于是静默衰减
 #（本项目**取证当时**实测：26 轮里只有 2 轮的可见回复输出过 —— 这是取证当时的窗口，
 # 不是今天的读数：口径 / 窗口 / 日期见 docs/pitfalls.md #19，别把 8% 和 85% 混着读）。
-# 本行只在**上一轮属于会改变行为的轮次
-#（要委派 / 要拒绝 / 要提问 / 要改文件）且漏了门行**时提醒一次；只读轮次与纯回答不提醒
-#（persona 的 Phase 0 也只对这类轮次要求门行）。
+# 判据（2026-09-17 起）= ① 存在档：上一轮属于会改变行为的轮次，而门行没有落在**承载第一次动手的
+# 那条消息**里（它必须是该消息的首行）⇒ 提醒一次；只读轮次与纯回答不提醒（persona 的 Phase 0 也只
+# 对这类轮次要求门行）。**同一条消息里的门行算数**；②「门行早于动手」只作对照读数（见 #19）。
 # 见插件头部注释与 scripts/verify-intent-gate-watchdog.cjs。
 - id: intent-gate-watchdog
-  name: ./intent-gate-watchdog.mjs?v=8
+  name: ./intent-gate-watchdog.mjs?v=10
+  # 闸门（tools/pre-execute）随本行配置：`observe` 只记账 + 注入竞态诊断行，`enforce` 才真的拒绝
+  # （每轮最多一次）。默认 observe 是 fail-safe —— 配置缺失/写错都退回记账，不会因为一处笔误开始拦人。
+  # 开闸的前置条件：观察会话里 RACE_REPORT 一次都没出现（见插件 design choice 7 与单测的闸门断言）。
+  config:
+    gate: observe
 
 - id: role-explorer
   name: '@deepseek-ai/dsh-tool-subagent'
@@ -357,7 +362,7 @@
     maxDepth: 2
     agentOptions:
       provider: commandcode
-      model: meituan/LongCat-2.0:free
+      model: deepseek/deepseek-v4.1-flash
       # No reasoningEffort on purpose: LongCat-2.0:free is a thinking model with
       # NO selectable reasoning_effort levels, so declaring one fails the child's
       # route preflight ("... does not support reasoning effort ..."). It thinks

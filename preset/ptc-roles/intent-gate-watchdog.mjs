@@ -9,7 +9,7 @@
 // end of the prompt (the preset persona IS the system prompt's `prefix`), so
 // recency weighted the last ~100k tokens of tool output far above it.
 //
-// HOW IT WORKS — two official hook points, each with in-tree precedent:
+// HOW IT WORKS — three official hook points, each with in-tree precedent:
 //   * `session/event` — the session firehose, typed as `SessionEvent` (so every
 //     persisted event type arrives, tool events included; core/session/src/index.ts:72).
 //     Two things are observed per turn: whether the marker appeared in the assistant
@@ -22,6 +22,9 @@
 //     Skeleton from packages/guard/repeat-tool-reminder/src/index.ts:229 — the
 //     official "advisory nudge" guard: delegate with `next()`, then fold in only
 //     its own message, never vetoing.
+//   * `tools/pre-execute` — the ONLY point that can stop a call (pitfalls #20;
+//     packages/core/tools/src/index.ts:1465-1468; PTC inner dispatches pass through it too,
+//     ptc.ts:541-545). Ships in `observe` mode by default — see design choice 7.
 //
 // DESIGN CHOICES (each one is a path where a naive version fails silently)
 //   1. NEVER VETO. The downstream decision is awaited first and returned
@@ -56,13 +59,28 @@
 //      ⚠ BEHAVIOR_TOOLS is a deliberate second copy of the same list in
 //      `scripts/verify-ptc-roles.cjs` (its compliance denominator). Drift is visible,
 //      not silent: when the two disagree the compliance rate flips.
-//   6. "EMITTED" MEANS THE FIRST LINE OF THE TURN'S FIRST TEXT REPLY. The contract says
-//      the line is the reply's FIRST line, so a marker further down — or in a later
-//      message of the same turn — is NOT a declaration: it reaches the user only after
-//      the actions it was meant to announce. Same criterion as the verifier's compliance
-//      numerator (`verify-ptc-roles.cjs`, `rec.first`). Until 2026-09-16 the plugin
-//      accepted a hit ANYWHERE, so a second-line line scored 0 in the metric while
-//      silencing the watchdog — one contract, two criteria. Keep them equal.
+//   6. "DECLARED" MEANS THE MARKER SAT ON THE FIRST LINE OF THE MESSAGE THAT CARRIES
+//      THE FIRST BEHAVIOR ACTION — or of an earlier message in the same turn. The earlier
+//      form is the better one and is still MEASURED (the verifier reports it as the 前置
+//      contrast reading, `rec.declSeq < rec.firstActCarrier`); it is no longer what this
+//      plugin nags about, and it is no longer the obligation. Two harness facts bound the
+//      shape that IS required:
+//        · text and tool calls inside one assistant message are a SINGLE generation
+//          (agent-loop/src/agent.ts:466-489), so the line has to be in that message while
+//          the call is being made — which is exactly what `tools/pre-execute` sees;
+//        · a message with no tool call ENDS the turn (agent.ts:487-488), so
+//          "declare in a message of its own, then act" is impossible in this harness.
+//      One criterion, three readers: this plugin's reminder, its pre-execute gate, and the
+//      verifier's compliance numerator (`verify-ptc-roles.cjs`). The two drifted apart once
+//      already (2026-09-16, "anywhere" vs "first line"), which is why the口径 is registered
+//      in docs/pitfalls.md #19. Keep them equal.
+//   7. THE GATE IS OPT-IN AND FAIL-SAFE. `apply(ctx, config)` reads `config.gate`; anything
+//      other than the literal 'enforce' means observe-only. The reason is an ORDERING
+//      assumption that cannot be proven statically — whether the CURRENT message's
+//      `assistant/message` event reaches this listener before `tools/pre-execute` fires — so
+//      observe mode reports a suspected race as a data-plane line instead of denying what may
+//      be a compliant call, and 'enforce' is switched on only after that report stays empty.
+//      At most ONE deny per turn, so a model that ignores the reason is never walled in.
 //
 // Zero `@deepseek-ai/*` imports on purpose (a preset directory lives under the
 // user home, where Node cannot resolve the harness packages); Node builtins are
@@ -95,12 +113,27 @@ const BEHAVIOR_TOOLS = new Set([
 
 /** The single reminder appended when the previous turn skipped the gate. */
 const REMINDER = [
-  '[intent-gate-watchdog] 上一轮是会改变行为的轮次（委派 / 拒绝 / 提问 / 改文件），但回复里没有门行。',
-  '请在回复**第一行**补上（语言随对话）：',
-  'Intent: <桶> — <你要的结果，一句话>（依据：<你话里让我这么读的那一点>）；我打算 <做法>。',
-  '`Intent:` 是字面 token，照抄勿译；桶只取六个：research / implementation / investigation / evaluation / fix / open-ended。',
-  '这一行的读者是**用户**：别照抄他的话，也别塞内部记账（turn/step 号、插件状态、证据文件名、脚本通过数）。',
-  '例（与本轮无关）：Intent: fix — 你要的是定位 401 的根因并修掉（依据：你贴的报错与「别再复现」）；我先复现再改。',
+  '[intent-gate-watchdog] 上一轮是会改变行为的轮次（委派 / 拒绝 / 提问 / 改文件），但门行没有出现在**承载第一次动手的那条消息**里 —— 它必须是那条消息的首行。',
+  '桶只取六个：research / implementation / investigation / evaluation / fix / open-ended；`Intent:` 是字面 token，照抄勿译。这一行的读者是**用户**：别照抄他的话，也别塞内部记账（turn/step 号、插件状态、证据文件名、脚本通过数）。',
+  '例（与本轮无关）：Intent: fix — 你要的是定位 401 的根因并修掉（依据：你贴的报错）；我先复现再改。',
+].join('\n')
+
+/** The gate's deny reason: its single, in-place shot at telling the model what is missing. */
+const GATE_REASON = [
+  '[intent-gate] 这一次调用没有门行垫底 —— 本轮还没有出现过那个六桶行。',
+  '先在下一条消息写上它（是该消息的**首行**），再重发刚才的调用：',
+  'Intent: <桶> — <你要的结果>（依据：<你话里让我这么读的那一点>）；我打算 <做法>。',
+].join('\n')
+
+/**
+ * Observe-mode diagnostic (design choice 7). Injected — and therefore written into the session
+ * log — when the gate saw no declaration at call time but the turn still scores compliant.
+ * That pair is a false-deny candidate; logger.warn has no sink in this deployment (pitfalls #9),
+ * so the data plane is the only channel that keeps it falsifiable.
+ */
+const RACE_REPORT = [
+  '[intent-gate-watchdog] observe 取证：闸门在第一次动手到达时**没有看到**门行，而该轮最终判为合规 —— 假拒候选（事件时序竞态）。',
+  '⇒ 开闸（config: { gate: enforce }）之前必须先查清这一条；它是数据面证据，别删。',
 ].join('\n')
 
 /** Deep-freeze a plain value in place (mirrors llm's `freezeMessage`). */
@@ -155,44 +188,81 @@ function resolveDepth(agent) {
  * Install the watchdog's listeners.
  * @param ctx - plugin context; listeners are scoped to it and disposed with it.
  */
-export function apply(ctx) {
+export function apply(ctx, config) {
   const markers = DEFAULT_MARKERS
+  // Fail-safe, not fail-silent: anything but the literal 'enforce' keeps the gate in observe
+  // mode, so a mistyped key can never start denying calls. The switch itself is pinned by the
+  // unit test's two gate assertions (observe never denies / enforce denies once).
+  const gateEnforcing = config !== null && typeof config === 'object' && config.gate === 'enforce'
   const warn = (message) => ctx.logger?.warn('[' + name + '] ' + message)
 
-  /** sessionId -> turn -> { seenText, declared }：判据是**该轮首条有文本消息的首行**（design choice 6）。 */
+  /** sessionId -> turn -> { declSeq, firstActCarrier, acting }（判据见 design choice 6）。 */
   const turns = new Map()
-  /** sessionId -> turn -> whether a behavior-changing tool ran in that turn (design choice 5). */
-  const acting = new Map()
-  /** sessionId -> callId -> turn, so a dispatch event (which carries no `turn`) can be attributed. */
+  /** sessionId -> callId -> { turn, carrier } —— 派发事件（无 turn）靠它归属轮次与「载体消息」。 */
   const callTurns = new Map()
+  /** sessionId -> 单调递增的 assistant 消息序号；只在同一轮内比较先后。 */
+  const msgSeq = new Map()
+  /** sessionId -> 最近一条 assistant 消息的序号 —— 紧随其后的 tool/call 就产生自它。 */
+  const lastMsg = new Map()
   /** sessionId -> the turn this plugin already reminded. */
   const reminded = new Map()
-  const markActing = (sessionId, turn) => {
-    let byTurn = acting.get(sessionId)
-    if (byTurn === undefined) { byTurn = new Map(); acting.set(sessionId, byTurn) }
-    byTurn.set(turn, true)
-    for (const key of [...byTurn.keys()]) if (key < turn - 1) byTurn.delete(key)
+  /** sessionId -> the turn of the most recent turn-carrying event (tools/pre-execute has none). */
+  const lastTurn = new Map()
+  /** sessionId -> the turn a REAL user message opened; machine-driven turns are out of scope. */
+  const userTurn = new Map()
+  /** sessionId -> turn -> { wouldDeny, denied } — what the gate saw, and what it did. */
+  const gateSeen = new Map()
+  const gateRec = (sessionId, turn) => {
+    let byTurn = gateSeen.get(sessionId)
+    if (byTurn === undefined) { byTurn = new Map(); gateSeen.set(sessionId, byTurn) }
+    let rec = byTurn.get(turn)
+    if (rec === undefined) { rec = { wouldDeny: false, denied: false }; byTurn.set(turn, rec) }
+    return rec
   }
+  const recFor = (sessionId, turn) => {
+    let byTurn = turns.get(sessionId)
+    if (byTurn === undefined) { byTurn = new Map(); turns.set(sessionId, byTurn) }
+    let rec = byTurn.get(turn)
+    if (rec === undefined) {
+      rec = { declSeq: undefined, firstActCarrier: undefined, acting: false }
+      byTurn.set(turn, rec)
+    }
+    return rec
+  }
+  /** 记一次行为动作：**首个**动作的载体消息序号决定该轮合不合规（design choice 6）。 */
+  const noteAction = (sessionId, turn, carrier) => {
+    const rec = recFor(sessionId, turn)
+    rec.acting = true
+    if (rec.firstActCarrier === undefined) rec.firstActCarrier = carrier
+  }
+  /** 合规（① 存在档）= 确实动过手，且门行落在**承载第一次动手的那条消息**或其之前（含同一条）。 */
+  const compliant = (rec) => rec !== undefined && rec.acting === true
+    && rec.declSeq !== undefined && rec.firstActCarrier !== undefined
+    && rec.declSeq <= rec.firstActCarrier
 
   ctx.on('session/event', (session, event) => {
     try {
       const sessionId = session?.id
       if (sessionId === undefined) return
+      if (typeof event?.data?.turn === 'number') lastTurn.set(sessionId, event.data.turn)
       if (event?.type === 'assistant/message') {
         const turn = event.data?.turn
         if (typeof turn !== 'number') return
-        // 判据 = 该轮**首条有文本的 assistant 消息的首行**：空文本不占「首条」，之后的文本也
-        // 不再改判（与 verify-ptc-roles.cjs 的合规分子 rec.first 逐字同口径）。
+        // 每条 assistant 消息都占一个序号（**包括没有文本的纯工具调用消息** —— 它正是那些
+        // tool/call 的载体消息；漏掉它，载体映射会整体前移一格）。
+        const seq = (msgSeq.get(sessionId) ?? 0) + 1
+        msgSeq.set(sessionId, seq)
+        lastMsg.set(sessionId, seq)
         const text = messageText(event.data?.message)
-        let byTurn = turns.get(sessionId)
-        if (byTurn === undefined) { byTurn = new Map(); turns.set(sessionId, byTurn) }
-        const rec = byTurn.get(turn) ?? { seenText: false, declared: false }
-        if (!rec.seenText && text.trim() !== '') {
-          rec.seenText = true
-          rec.declared = markers.some(marker => text.split('\n')[0].includes(marker))
+        if (text.trim() !== '') {
+          const rec = recFor(sessionId, turn)
+          // 认**第一次**出现的门行（该行必须是某条消息的**首行**），之后的文本不再改判。
+          if (rec.declSeq === undefined && markers.some(marker => text.split('\n')[0].includes(marker))) {
+            rec.declSeq = seq
+          }
         }
-        byTurn.set(turn, rec)
-        for (const key of [...byTurn.keys()]) if (key < turn - 1) byTurn.delete(key)
+        const byTurn = turns.get(sessionId)
+        if (byTurn !== undefined) for (const key of [...byTurn.keys()]) if (key < turn - 1) byTurn.delete(key)
         return
       }
       // `tool/call` names the tool AND carries the turn. In PTC the outer call is
@@ -200,30 +270,67 @@ export function apply(ctx) {
       if (event?.type === 'tool/call') {
         const turn = event.data?.turn
         if (typeof turn !== 'number') return
+        // 载体 = 产生这次调用的那条消息（tool/call 事件紧随它的 assistant/message）。
+        const carrier = lastMsg.get(sessionId) ?? -1
         const callId = event.data?.callId
         if (typeof callId === 'string') {
           let byCall = callTurns.get(sessionId)
           if (byCall === undefined) { byCall = new Map(); callTurns.set(sessionId, byCall) }
-          byCall.set(callId, turn)
-          for (const [id, seen] of byCall) if (seen < turn - 1) byCall.delete(id)
+          byCall.set(callId, { turn, carrier })
+          for (const [id, seen] of byCall) if (seen.turn < turn - 1) byCall.delete(id)
         }
-        if (BEHAVIOR_TOOLS.has(event.data?.name)) markActing(sessionId, turn)
+        if (BEHAVIOR_TOOLS.has(event.data?.name)) noteAction(sessionId, turn, carrier)
         return
       }
       if (event?.type === 'tool/ptc-dispatch' || event?.type === 'tool/ptc-dispatch-start') {
         const name = event.data?.name
         if (!BEHAVIOR_TOOLS.has(name)) return
-        const turn = callTurns.get(sessionId)?.get(event.data?.rootCallId)
-        if (typeof turn !== 'number') {
+        const owner = callTurns.get(sessionId)?.get(event.data?.rootCallId)
+        if (owner === undefined) {
           // Loud, never silent: an unattributable dispatch means the eligibility rule
           // above can no longer see this turn. Asserted by the unit test's PTC case.
           warn('behavior tool "' + String(name) + '" has no attributable turn (rootCallId ' + String(event.data?.rootCallId) + ')')
           return
         }
-        markActing(sessionId, turn)
+        noteAction(sessionId, owner.turn, owner.carrier)
       }
     } catch (err) {
       warn('session/event observer failed: ' + String(err))
+    }
+  })
+
+  /**
+   * The gate — ORDERS, never vetoes: the downstream decision is awaited first and returned
+   * untouched unless it is `allow`. Deny is gated on `gateEnforcing` (design choice 7).
+   */
+  ctx.on('tools/pre-execute', async (exec, next) => {
+    let decision
+    try {
+      decision = await next()
+    } catch (err) {
+      warn('downstream tools/pre-execute failed: ' + String(err))
+      throw err
+    }
+    try {
+      if (decision?.kind !== 'allow') return decision
+      const toolName = exec?.name
+      if (!BEHAVIOR_TOOLS.has(toolName)) return decision
+      const sessionId = exec?.agent?.session?.id
+      if (sessionId === undefined) return decision
+      const turn = lastTurn.get(sessionId)
+      if (turn === undefined || userTurn.get(sessionId) !== turn) return decision
+      const rec = recFor(sessionId, turn)
+      // 载体 = 产生这次调用的那条消息；同一条消息里的门行算数，这正是 ① 档的定义。
+      const carrier = lastMsg.get(sessionId) ?? -1
+      if (rec.declSeq !== undefined && rec.declSeq <= carrier) return decision
+      const gate = gateRec(sessionId, turn)
+      gate.wouldDeny = true
+      if (!gateEnforcing || gate.denied) return decision
+      gate.denied = true
+      return { kind: 'deny', reason: GATE_REASON }
+    } catch (err) {
+      warn('could not evaluate the intent gate: ' + String(err))
+      return decision
     }
   })
 
@@ -248,14 +355,21 @@ export function apply(ctx) {
       if (depth !== 0) return decision                                      // (3) orchestrator only
       const sessionId = agent?.session?.id
       if (sessionId === undefined) return decision
+      userTurn.set(sessionId, turn)
       if (reminded.get(sessionId) === turn) return decision                  // (2) once per turn
-      // 记录不存在（上一轮没有任何 assistant 消息）**不算漏**；只有明确的 declared === false
-      // —— 上一轮确实回复过、但**首行**没有门行 —— 才提醒。
+      // 记录不存在（上一轮没有任何 assistant 消息）**不算漏**。只有「确实动过手、且门行没赶在
+      // 动手之前」才提醒 —— 判据与合规分子同口径（design choice 6），两处已经漂移过一次。
       const previous = turns.get(sessionId)?.get(turn - 1)
-      if (previous === undefined || previous.declared !== false) return decision
-      // Design choice 5: the persona only requires the line on behavior-changing
-      // turns, so only those are ever nudged.
-      if (acting.get(sessionId)?.get(turn - 1) !== true) return decision
+      if (previous === undefined || previous.acting !== true) return decision
+      const gate = gateSeen.get(sessionId)?.get(turn - 1)
+      if (compliant(previous)) {
+        // Observe-mode取证（design choice 7）：闸门在动作到达时没看到门行，而该轮最终合规
+        // ⇒ 假拒候选。它不是提醒，是**证据**，所以只在观察模式、且确有其事时注入一次。
+        if (gate?.wouldDeny === true && gate.denied !== true) {
+          return { ...decision, messages: [...decision.messages, pluginMessage(RACE_REPORT, name)] }
+        }
+        return decision
+      }
       reminded.set(sessionId, turn)
       return { ...decision, messages: [...decision.messages, pluginMessage(REMINDER, name)] }
     } catch (err) {
