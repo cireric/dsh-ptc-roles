@@ -1,0 +1,5 @@
+{"type":"session","id":"synthetic-non-ptc-main","cwd":"/tmp/ptc-fixture-workspace","createdAt":1735689600000,"delegationDepth":0}
+{"type":"system/message","data":{"turn":1,"message":{"role":"system","content":[{"type":"text","text":"You are the orchestrator. Phase 0 — Intent Gate (classify EVERY user message)"}]}}}
+{"type":"request/header","data":{"header":{"tools":[{"name":"read"},{"name":"write"}],"config":{"model":"fixture-model"}}}}
+{"type":"assistant/message","data":{"turn":1,"message":{"role":"assistant","content":[{"type":"text","text":"没有门行，直接动手。"}]}}}
+{"type":"tool/call","data":{"turn":1,"step":1,"callId":"c1","name":"write","arguments":"{}"}}

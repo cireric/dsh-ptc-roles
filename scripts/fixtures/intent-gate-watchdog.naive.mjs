@@ -7,7 +7,10 @@
 //   ③ 不判深度（连子代理一起提醒，畸形深度也不警告）        → 应在三条 depth 断言失败
 //   ④ 不限制每轮一次（同一 turn 每个 step 都提醒）          → 应在 once-per-turn 断言失败
 //   ⑤ 不看"这一轮该不该有门行"（只读轮次也提醒）           → 应在三条 eligibility 断言失败
-// 期望：恰好上面这 9 条失败，其余全过（否则说明对照版坏得超出了预期，或断言写弱了）。
+//   ⑥ 闸门是"无条件拒"：不看 config.gate（观察模式也拒）、不限每轮一次、不看本轮是不是真人开的、
+//      覆盖下游决定、也不留竞态取证                 → 应在五条闸门/取证断言失败
+// 期望：恰好上面这 16 条失败，其余全过（否则说明对照版坏得超出了预期，或断言写弱了）。
+// 具体清单由脚本内的 REQUIRED_CONTROL_FAILURES 持有（判据是集合相等），本注释不重复登记条数细节。
 //
 // 改这个文件前先读上面这段：它的"错误"是被要求的。
 
@@ -17,10 +20,19 @@ export const name = 'intent-gate-watchdog'
 
 const DEFAULT_MARKERS = ['Intent:']
 
+const BEHAVIOR_TOOLS = new Set([
+  'write', 'edit', 'bash', 'pwsh',
+  'explorer', 'librarian', 'oracle', 'implementer', 'designer',
+  'subagent', 'subagent_fork', 'subagent_codex', 'subagent_claude_code', 'ralph',
+  'ask_user_question',
+])
+
 const REMINDER = [
   '[intent-gate-watchdog] 上一轮没有输出门行。',
   '规则（orchestrator persona 的 Phase 0）：动手之前先用一行分类并说明计划，以字面量 `Intent:` 开头。',
 ].join('\n')
+
+const GATE_REASON = '[intent-gate] 这一次调用没有门行垫底 —— 先写 `Intent: <桶> — …`，再重发。'
 
 function deepFreeze(value) {
   if (value !== null && typeof value === 'object') {
@@ -68,6 +80,15 @@ export function apply(ctx) {
     } catch (err) {
       warn('session/event observer failed: ' + String(err))
     }
+  })
+
+  // ⑥ 闸门（tools/pre-execute）的"第一直觉版"：下游决定 await 了、行为工具也认出来了，
+  // 但除此之外全部不讲道理 —— 不看 config.gate（观察模式也拒）、不看本轮是不是真人开的、
+  // 每轮不限一次（没有 `denied` 位）、下游不是 allow 也照样换成自己的 deny、也不留竞态取证。
+  ctx.on('tools/pre-execute', async (exec, next) => {
+    const decision = await next()
+    if (!BEHAVIOR_TOOLS.has(exec?.name)) return decision
+    return { kind: 'deny', reason: GATE_REASON }
   })
 
   ctx.on('agent/pre-step', async (payload, next) => {

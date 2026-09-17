@@ -16,7 +16,7 @@
 //   * 版本差异事实与 rc 后的修复清单是 docs/dsh-v0.1.6-ptc-impact.md 的活（唯一来源）。
 //
 // 用法：
-//   node scripts/verify-harness-contract.cjs                             # $DSH_CHECKOUT 或本机默认路径
+//   node scripts/verify-harness-contract.cjs                             # --harness → $DSH_CHECKOUT → ~/.dsh/dsh-harness
 //   node scripts/verify-harness-contract.cjs --harness /path/to/dsh      # 指向灰度 checkout
 //
 // 退出码契约（与另外三个脚本一致）：0 = 本次运行符合预期；有 ✗ FAIL 才非 0；
@@ -29,6 +29,7 @@
 
 const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 
 const REPO = path.join(__dirname, '..')
@@ -45,7 +46,10 @@ const SOURCES = {
   runtimeTypes: 'packages/core/agent/src/runtime-types.ts',
   agentLoop: 'packages/core/agent-loop/src/agent.ts',
 }
-const DEFAULT_HARNESS = '/Users/eric/Project/tests/deepseek-harness'
+// 默认 harness 与 Makefile 同源的单链：`--harness` → `$DSH_CHECKOUT` → `~/.dsh/dsh-harness`。
+// **不写死本机绝对路径**：写死会让「契约门禁通过」这句判定行可能来自另一棵树，而输出里只有一行
+// 路径串可辨（2026-09-17 评审 M6）。换机后路径不存在 ⇒ 走 missingFiles 分支退 2（响亮）。
+const DEFAULT_HARNESS = path.join(os.homedir(), '.dsh', 'dsh-harness')
 
 function readIf(file) {
   try { return fs.readFileSync(file, 'utf8') } catch { return undefined }
@@ -300,7 +304,7 @@ function main() {
     if (c.ok) { console.log('  ✓ ' + c.name); pass += 1 }
     else { console.log('  ✗ FAIL ' + c.name + '（' + c.detail + '）'); fail += 1 }
   }
-  console.log('\n汇总: ✓' + pass + '  ✗' + fail)
+  console.log('\n汇总: ✓' + pass + '  ✗' + fail + '（目标 checkout: ' + harness + '）')
   if (fail === 0) console.log('  ⇒ 契约成立：这份 preset 依赖的框架口径与目标 checkout 一致（升级后重跑即是差异报告）。')
   process.exitCode = fail === 0 ? 0 : 1
 }

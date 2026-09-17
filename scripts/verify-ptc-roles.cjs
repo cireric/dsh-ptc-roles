@@ -15,16 +15,16 @@
 //     ⚠️ 口径：**seeded 子会话继承父日志的事件**，其计数可能包含父的调用（输出里标 `(seeded)`）；
 //     而已知自身层泄漏 / 角色子代理的判定不受影响。
 //
-//   * **意图门合规率**（intent gate）：逐轮判定主 agent「有没有输出门行」，并打印首行命中率。
+//   * **意图门合规率**（intent gate）：逐轮判定主 agent「有没有输出门行」。合规判据是 **① 存在口径**：
+//     门行所在消息的序号 ≤ 承载**首个**行为动作的那条消息的序号（同一条消息里的门行**算数** ——
+//     文本与工具调用是同一次生成，且没有工具调用的消息会结束本轮，见 pitfalls #19/#20）。
+//     旧的 **② 前置口径**（门行**早于**动作载体）降为**对照读数**（「最好更早」），不再接合规分子。
 //     门行 = 字面量 `Intent:`，与 preset/ptc-roles/intent-gate-watchdog.mjs 的 DEFAULT_MARKERS **同口径**
 //     （两处必须同步改；本脚本另收旧 token `意图判定`，因为扫的是历史会话，见下方 INTENT_MARKERS 注释）。为什么要把它做进脚本：这个门的失败记录**只能当场测**——会话库是滚动窗口，
 //     过一阵就测不回来了（见 docs/evidence/2026-09-15-intent-gate-failure-record.json）。
 //     只统计 isPresetRoot 且创建于 PERSONA_V2_SINCE 之后的主 agent 会话（旧 persona 的输出形式不同，混进来会污染率）。
 //     **合规分子与分母都只算「会改变行为」的轮次**（要委派 / 要拒绝 / 要提问 / 要改文件）—— persona 的
 //     Phase 0 只在那些轮次要求门行；判据是同口径的 BEHAVIOR_TOOLS（见下），与看门狗插件**共享同一份列表**。
-//     三个口径：「首行」（该轮第一条有文本的 assistant 消息的第一行）是**合规分子**；「可见回复」（该轮
-//     任何 assistant 文本含 marker）与「任意文本」（该轮任何事件行含 marker，**含工具结果**）只作对照——
-//     读过插件源码的轮次会命中「任意文本」，那不是合规。
 //     **单场静默可观测化**（ADR 0002 的 C 项）：合计率会把「一场 0%」平均掉，所以另按**会话**点名
 //     「整场静默」——它是数据面观察、不接退出码（同 pitfalls #19 的取舍）。
 //
@@ -56,8 +56,20 @@ const os = require('node:os')
 const path = require('node:path')
 
 const PTC_MARK = 'is the only tool you can call directly'
-const PROJECT_CWD = '/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles'
-const SESSIONS_ROOT = path.join(os.homedir(), '.dsh', 'sessions')
+// 默认工作区 = 本仓库根（`scripts/..`）。**不写死绝对路径**：换机 / 换 clone / 改目录名时，
+// 写死会让「本项目下没有会话」静默退 0，而判定行看起来一切正常（2026-09-17 评审 M2/F-14）。
+// `--cwd <path>` 覆盖；`--all` 仍然扫全部工作区。
+const DEFAULT_PROJECT_CWD = path.resolve(__dirname, '..')
+let SESSIONS_ROOT = process.env.PTC_SESSIONS !== undefined && process.env.PTC_SESSIONS.trim() !== ''
+  ? path.resolve(process.env.PTC_SESSIONS)
+  : path.join(os.homedir(), '.dsh', 'sessions')
+
+/** `--control-sessions`：本次运行的输入是**合成会话夹具**，判据 = 失败集合相等（复盘 P1-2）。 */
+const CONTROL_SESSIONS = process.argv.includes('--control-sessions')
+/** 合成夹具 `scripts/fixtures/sessions-ci/main.jsonl` 上**必须**失败的那几条（名字与 failLine 一致）。 */
+const REQUIRED_FIXTURE_FAILURES = ['主 agent 不是 PTC']
+/** 夹具会话的 cwd —— 会话扫描按工作区过滤，所以夹具模式必须把工作区也指过去。 */
+const FIXTURE_CWD = '/tmp/ptc-fixture-workspace'
 
 /**
  * 期望的模型可见工具面（顺序无关）。
@@ -178,25 +190,74 @@ function findSessionFiles() {
     for (const e of entries) {
       const p = path.join(dir, e.name)
       if (e.isDirectory()) walk(p)
-      else if (e.name.endsWith('.zstd')) out.push(p)
+      // `.jsonl` = 明文合成会话（CI 夹具）。真机会话一律 `.zstd`。
+      else if (e.name.endsWith('.zstd') || e.name.endsWith('.jsonl')) out.push(p)
     }
   }
   walk(SESSIONS_ROOT)
   return out
 }
 
+/** zstd 可用性：**先探测**。缺失时逐文件静默跳过 = 行为判据整段消失却仍退 0（评审 M2/F-4）。 */
+function zstdAvailable() {
+  try { execFileSync('zstd', ['--version'], { stdio: 'ignore' }); return true } catch { return false }
+}
+
+/** 解不开的按类记账：ENOENT（环境缺 zstd）与其余（文件损坏 / 超 maxBuffer）是两类事实。 */
+const decodeFailures = { enoent: 0, other: 0 }
+
 function decode(file) {
-  try { return execFileSync('zstd', ['-dc', file], { maxBuffer: 1 << 29 }).toString('utf8') } catch { return undefined }
+  // 明文合成会话（CI 夹具）：直接读 —— 这条路径让「非 PTC 主 agent」这类分支能被合成输入触发，
+  // 而不是只能等真机上恰好出现（复盘 P1-2）。
+  if (file.endsWith('.jsonl')) {
+    try { return fs.readFileSync(file, 'utf8') } catch { decodeFailures.other += 1; return undefined }
+  }
+  try { return execFileSync('zstd', ['-dc', file], { maxBuffer: 1 << 29 }).toString('utf8') }
+  catch (err) {
+    // 不写空 catch（AGENTS.md 全局 Never 表）：解不开这件事必须留下**分类计数**，否则
+    // 「全部解不开」与「一个都没坏」在读数上长得一模一样。
+    if (err && err.code === 'ENOENT') decodeFailures.enoent += 1
+    else decodeFailures.other += 1
+    return undefined
+  }
+}
+
+/** 工作区比较：先归一，再退到 realpath —— 同一目录的两种写法（软链 / 尾斜杠）不该被 filter 掉。 */
+function sameCwd(a, b) {
+  if (typeof a !== 'string' || a === '') return false
+  const abs = path.resolve(a)
+  if (abs === b) return true
+  let ra
+  let rb
+  try { ra = fs.realpathSync(abs) } catch { return false }
+  try { rb = fs.realpathSync(b) } catch { return false }
+  return ra === rb
 }
 
 function analyze(raw) {
   const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', escalations: [], intentTurns: new Map(), unattributable: new Set() }
-  /** callId -> turn，用于把 `tool/ptc-dispatch`（无 turn）归回它所属的那一轮。 */
+  /** callId -> { turn, carrier }：把无 turn 的 `tool/ptc-dispatch` 归回它所属的那一轮，并记下载体消息。 */
   const callTurns = new Map()
+  /** 单调递增的 assistant 消息序号（**含纯工具调用消息**）；①/② 判据只比较同一轮内的消息先后。 */
+  let msgSeq = 0
+  /** 最近一条 assistant 消息的序号 —— 紧随其后的 tool/call 产生自它。 */
+  let lastMsgSeq = -1
   const recFor = (t) => {
     let rec = result.intentTurns.get(t)
-    if (rec === undefined) { rec = { any: false, reply: false, first: false, seenText: false, acting: false }; result.intentTurns.set(t, rec) }
+    if (rec === undefined) {
+      rec = { any: false, reply: false, first: false, seenText: false, acting: false,
+        declSeq: undefined, firstActCarrier: undefined, carriers: [] }
+      result.intentTurns.set(t, rec)
+    }
     return rec
+  }
+  /** 记一次行为动作及其载体消息序号（① 口径：**首个**动作的载体决定该轮合不合规）。
+   *  同时记下首个动作的**工具名** —— 成因分类要用它认出「开轮 shell 侦察」（pitfalls #17）。 */
+  const noteAction = (t, carrier, name) => {
+    const rec = recFor(t)
+    rec.acting = true
+    rec.carriers.push(carrier)
+    if (rec.firstActCarrier === undefined) { rec.firstActCarrier = carrier; rec.firstActName = name }
   }
   for (const line of raw.split('\n')) {
     if (!line.startsWith('{')) continue
@@ -209,12 +270,13 @@ function analyze(raw) {
     const toolName = event.data && event.data.name
     if (event.type === 'tool/call' && typeof turn === 'number') {
       const callId = event.data && event.data.callId
-      if (typeof callId === 'string') callTurns.set(callId, turn)
-      if (BEHAVIOR_TOOLS.has(toolName)) recFor(turn).acting = true
+      // 载体 = 产生这次调用的那条消息（tool/call 事件紧随它的 assistant/message）。
+      if (typeof callId === 'string') callTurns.set(callId, { turn, carrier: lastMsgSeq })
+      if (BEHAVIOR_TOOLS.has(toolName)) noteAction(turn, lastMsgSeq, toolName)
     } else if ((event.type === 'tool/ptc-dispatch' || event.type === 'tool/ptc-dispatch-start') && BEHAVIOR_TOOLS.has(toolName)) {
       const rootCallId = event.data && event.data.rootCallId
-      const t = callTurns.get(rootCallId)
-      if (typeof t === 'number') recFor(t).acting = true
+      const owner = callTurns.get(rootCallId)
+      if (owner !== undefined) noteAction(owner.turn, owner.carrier, toolName)
       // 归因失败**绝不静默**（按 rootCallId 去重：同一派发会同时出 -start 与完成两个事件，
       // 按事件计数会把数字凭空翻倍）。插件 intent-gate-watchdog.mjs 在同情形 warn；
       // 这里没有 warn 通道（pitfalls #9），所以它必须进**数据面**：计数并进汇总行。
@@ -225,10 +287,16 @@ function analyze(raw) {
       if (INTENT_MARKERS.some((m) => line.includes(m))) rec.any = true
       if (event.type === 'assistant/message') {
         const text = messageText(event)
+        msgSeq += 1
+        lastMsgSeq = msgSeq
         if (INTENT_MARKERS.some((m) => text.includes(m))) rec.reply = true
-        if (text.trim() !== '' && !rec.seenText) {
-          rec.seenText = true
-          if (INTENT_MARKERS.some((m) => text.split('\n')[0].includes(m))) rec.first = true
+        if (text.trim() !== '') {
+          if (!rec.seenText) {
+            rec.seenText = true
+            if (hasFirstLineMarker(text)) rec.first = true
+          }
+          // ① / ② 的共用输入：认**第一次**出现的门行（某条消息的首行），之后不再改判。
+          if (rec.declSeq === undefined && hasFirstLineMarker(text)) rec.declSeq = msgSeq
         }
       }
     }
@@ -275,13 +343,79 @@ function analyze(raw) {
   return result
 }
 
-/** 「整场静默」判据 —— 打印与自测**共用同一份**，两处漂移会让 C 项变成空转。 */
-function gateSilent(s) { return s.eligible > 0 && s.eligibleFirst === 0 }
+/** 首行（**该轮第一条有文本的 assistant 消息**的首行）是否是门行 —— 三个口径共用这一个判断。 */
+function hasFirstLineMarker(text) { return INTENT_MARKERS.some((m) => text.split('\n')[0].includes(m)) }
 
-/** 逐轮统计：首行 / 可见回复 / 任意文本 三个口径各命中几轮。 */
+/**
+ * ① 存在口径（合规判据，2026-09-17 起）：门行所在消息的序号 **≤** 承载**首个**行为动作的
+ * 载体消息序号 —— 同一条消息里的门行**算数**。
+ *
+ * 为什么同消息算数：文本与工具调用在同一条 assistant 消息里是**同一次生成**
+ * （agent-loop/src/agent.ts:466-489），而**没有工具调用的消息会结束本轮**（agent.ts:487-488），
+ * 所以「单发一条声明再动手」在本框架里不可能；模型能写的那一行只能与动作同处一条消息。
+ * ② 前置口径（`declSeq < firstActCarrier`，见 declaredBefore）**不再**是义务，只作对照读数。
+ * 口径登记处：docs/pitfalls.md #19。
+ */
+function declared(rec) {
+  return rec !== undefined && rec.acting === true && rec.declSeq !== undefined
+    && rec.firstActCarrier !== undefined && rec.declSeq <= rec.firstActCarrier
+}
+
+/** ② 前置口径 —— **对照读数**（「最好更早」）：门行所在消息严格早于首个动作的载体消息。 */
+function declaredBefore(rec) {
+  return rec !== undefined && rec.acting === true && rec.declSeq !== undefined
+    && rec.firstActCarrier !== undefined && rec.declSeq < rec.firstActCarrier
+}
+
+/** 「整场静默」判据（① 口径）—— 打印与自测**共用同一份**，两处漂移会让 C 项变成空转。 */
+function gateSilent(s) { return s.eligible > 0 && s.eligibleDeclared === 0 }
+
+/** 开轮首发是 shell 侦察 —— 「门行 + 侦察同消息」在 ② 下必然不算前置（pitfalls #17）。 */
+const SHELL_TOOLS = new Set(['bash', 'pwsh'])
+
+/**
+ * 一轮的**诊断标签**（2026-09-17 复盘 P1）：原先只有一个 ✗，病因得靠人肉复现会话日志才知道。
+ * `ok` / `ok-same-message` 都是**合规**（① 口径）；后者单独标出来，因为它是①与②的**唯一**分歧面，
+ * 也是 pitfalls #17 里 shell 首发那一类的所在（`✓[同消息]`）。
+ * 失败三种的标签不变：`✗[无门行]` / `✗[动后补]` / `✗[无法归因]`。
+ */
+function turnVerdict(rec) {
+  if (rec === undefined || rec.acting !== true) return 'not-acting'
+  if (rec.firstActCarrier === undefined) return 'unattributable'
+  if (rec.declSeq === undefined) return 'no-marker'
+  if (rec.declSeq === rec.firstActCarrier) return 'ok-same-message'
+  if (rec.declSeq > rec.firstActCarrier) return 'after-action'
+  return 'ok'
+}
+
+const CAUSE_LABEL = {
+  'ok-same-message': '同消息', 'no-marker': '无门行', 'after-action': '动后补',
+  unattributable: '无法归因', 'not-acting': '-',
+}
+
+/** 逐轮诊断标签：合规 = `✓`（同消息者标 `✓[同消息]`），失败 = `✗[成因]`（与 turnVerdict 同一份判据）。 */
+function verdictLabel(rec) {
+  const v = turnVerdict(rec)
+  if (v === 'ok') return '✓'
+  if (v === 'ok-same-message') return '✓[' + CAUSE_LABEL[v] + ']'
+  return '✗[' + (CAUSE_LABEL[v] || v) + ']'
+}
+
+/**
+ * 逐轮统计：① 存在口径（**合规分子**）+ 行为动作覆盖率 + ② 前置口径与两个文本口径（对照）
+ * + 「门行与首动作同消息」的拆读数。
+ *
+ * ① 与 ② 都由**同一批记录**、同一组判据函数（declared / declaredBefore）算出 —— 不复制分类器，
+ * 否则两个读数会各自漂移（pitfalls #19 记的正是「同一个词有四个数」）。
+ */
 function intentGateStats(r) {
   const turns = [...r.intentTurns.keys()].sort((a, b) => a - b)
-  const s = { turns, first: 0, reply: 0, anywhere: 0, eligible: 0, eligibleFirst: 0 }
+  const s = {
+    turns, first: 0, reply: 0, anywhere: 0,
+    eligible: 0, eligibleFirst: 0, eligibleDeclared: 0,
+    contrastEligible: 0, sameMsg: 0, sameMsgShell: 0, sameMsgNonShell: 0,
+    acts: 0, actsCovered: 0,
+  }
   for (const t of turns) {
     const rec = r.intentTurns.get(t)
     if (rec.first) s.first += 1
@@ -290,9 +424,44 @@ function intentGateStats(r) {
     if (rec.acting) {
       s.eligible += 1
       if (rec.first) s.eligibleFirst += 1
+      if (declared(rec)) s.eligibleDeclared += 1
+      if (declaredBefore(rec)) s.contrastEligible += 1
+      // 拆读数（pitfalls #17）：**① 合规**且门行与首个动作同处一条消息的轮次里，首发是不是 shell 侦察。
+      // 「① 合规」这个前置条件不能省 —— 它才是与上方诊断行（「门行与首动作同消息」）对齐的口径；
+      // 少了它，声明落在首次动手**之后**的轮次（`declSeq === firstActCarrier` 对它们也成立）会被多算进来。
+      if (declared(rec) && rec.declSeq === rec.firstActCarrier) {
+        s.sameMsg += 1
+        if (rec.firstActName !== undefined && SHELL_TOOLS.has(rec.firstActName)) s.sameMsgShell += 1
+        else s.sameMsgNonShell += 1
+      }
+      // 覆盖率是**连续读数**：声称要做的动作里，有多少条消息在「声明已经存在」之后。
+      // 起算点与合规判据同源：① 合规（含同消息）时声明所在消息**就是**起算点（`carrier >= declSeq`）；
+      // 不合规（声明落在首次动手之后）时，声明所在那条消息本身也不算被覆盖（`carrier > declSeq`）——
+      // 那是历史口径，保住与 2026-09-16 基线的可比性。declSeq 缺失 ⇒ 一个都不覆盖。
+      const coverFrom = rec.declSeq === undefined ? undefined : (declared(rec) ? rec.declSeq : rec.declSeq + 1)
+      for (const carrier of rec.carriers) {
+        s.acts += 1
+        if (coverFrom !== undefined && carrier >= coverFrom) s.actsCovered += 1
+      }
     }
   }
   return s
+}
+
+/**
+ * 三行聚合读数（会话级与合计级**共用**同一份渲染，避免两处格式字面量各自漂移）。
+ * 每行都必须带全三个数：① 合规分子/分母、② 对照分子、拆读数（同消息 / shell 首发 / 非 shell）。
+ */
+function gateLines(s, labelPrefix, indent) {
+  const lines = []
+  lines.push(indent + labelPrefix + '意图门合规率（① 存在口径）: '
+    + s.eligibleDeclared + '/' + s.eligible + ' (' + rate(s.eligibleDeclared, s.eligible) + ')'
+    + ' | 行为动作覆盖 ' + s.actsCovered + '/' + s.acts + ' (' + rate(s.actsCovered, s.acts) + ')')
+  lines.push(indent + '对照口径：② 前置 ' + s.contrastEligible + '/' + s.eligible
+    + ' | 可见回复 ' + s.reply + ' | 任意文本 ' + s.anywhere)
+  lines.push(indent + '其中「同消息」达标 ' + s.sameMsg + ' 轮：首发是 shell 侦察 ' + s.sameMsgShell + ' 轮 / 非 shell '
+    + s.sameMsgNonShell + ' 轮（pitfalls #17：门行与侦察同处一条消息，在 ② 下必然不算前置）')
+  return lines
 }
 
 /**
@@ -321,6 +490,73 @@ function attributionSelfTest() {
 //
 // 单一源 = preset 的 yml。这里只做**比对**：不生成 EXPECTED、不动挂载路径、不参与运行时判定。
 const PRESET_YML = path.join(__dirname, '..', 'preset', 'ptc-roles', 'agent.cordis.yml')
+const WATCHDOG_PLUGIN = path.join(__dirname, '..', 'preset', 'ptc-roles', 'intent-gate-watchdog.mjs')
+
+/** 抽 `NAME = new Set([ … ])` 里的字符串字面量（按出现顺序）；解析不出返回 undefined（**响亮**，不当成空集）。 */
+function arrayStrings(text, name) {
+  const marker = name + ' = new Set(['
+  const start = text.indexOf(marker)
+  if (start < 0) return undefined
+  const open = start + marker.length
+  const close = text.indexOf('])', open)
+  if (close < 0) return undefined
+  const out = []
+  const re = /'([^']*)'|"([^"]*)"/g
+  let m
+  while ((m = re.exec(text.slice(open, close))) !== null) out.push(m[1] !== undefined ? m[1] : m[2])
+  return out.length > 0 ? out : undefined
+}
+
+/**
+ * BEHAVIOR_TOOLS 的跨文件守卫（2026-09-17 评审 M5）。
+ * 这个名单**同时**决定插件「要不要提醒」与本脚本「合规率分母」：漂移不会报错，只会让读数变形，
+ * 而 pitfalls #19 记的恰恰是「同一个词有四个数、没人能从数字反推病因」。姊妹事实 resolveDepth 的
+ * 两份复本有 verify-harness-contract.cjs 的逐字断言，这个名单此前**没有任何守卫** —— 实测把任一侧
+ * 加一个假工具名，三支脚本全绿。判据同 roleFacts：解析不出即 FAIL，并带内存变异对照。
+ */
+function behaviorToolsSelfTest() {
+  let pluginText
+  try { pluginText = fs.readFileSync(WATCHDOG_PLUGIN, 'utf8') }
+  catch (err) { return [{ name: '读插件源码（' + WATCHDOG_PLUGIN + '）', ok: false, detail: String(err && err.message || err) }] }
+
+  const mine = [...BEHAVIOR_TOOLS]
+  const compare = (theirs) => {
+    if (theirs === undefined) return '解析不出 ' + WATCHDOG_PLUGIN + ' 里的 BEHAVIOR_TOOLS 字面量（写法变了？）'
+    if (theirs.length !== mine.length) return '条数不同：插件 ' + theirs.length + ' / 本脚本 ' + mine.length
+    const at = mine.findIndex((tool, i) => theirs[i] !== tool)
+    if (at >= 0) return '第 ' + (at + 1) + ' 项不同：插件 ' + JSON.stringify(theirs[at]) + ' / 本脚本 ' + JSON.stringify(mine[at])
+    return ''
+  }
+
+  const out = []
+  const bad = compare(arrayStrings(pluginText, 'const BEHAVIOR_TOOLS'))
+  out.push({
+    name: '插件的 BEHAVIOR_TOOLS 与本脚本逐字一致（顺序也一致）',
+    ok: bad === '',
+    detail: bad === '' ? '' : bad + ' —— 两处必须同口径（踩过：2026-09-16「任意位置」vs「首行」）',
+  })
+
+  const mutated = pluginText.replace("'ask_user_question',", "'zzz_control_tool',")
+  if (mutated === pluginText) out.push({ name: '对照①：插件换掉一个工具名 ⇒ 报告名单漂移', ok: false, detail: '对照组本身失效：变异目标文本不存在' })
+  else {
+    const detail = compare(arrayStrings(mutated, 'const BEHAVIOR_TOOLS'))
+    // 基础世界已经漂移时（上面那条已经红），「换一个名字」的差异会被条数差异抢先命中 ——
+    // 此时只要**报告了差异**就算这条对照成立；基础世界干净时仍要求点名那个假名字。
+    out.push({
+      name: '对照①：插件换掉一个工具名 ⇒ 报告名单漂移',
+      ok: detail !== '' && (detail.includes('zzz_control_tool') || bad !== ''),
+      detail: detail === '' ? '没报差异 —— 断言空转' : detail,
+    })
+  }
+
+  const removed = pluginText.replace(/const BEHAVIOR_TOOLS = new Set\(\[[\s\S]*?\n\]\)\n/, '')
+  if (removed === pluginText) out.push({ name: '对照②：插件的名单整块消失 ⇒ 报告解析失败', ok: false, detail: '对照组本身失效：变异目标文本不存在' })
+  else {
+    const detail = compare(arrayStrings(removed, 'const BEHAVIOR_TOOLS'))
+    out.push({ name: '对照②：插件的名单整块消失 ⇒ 报告解析失败', ok: detail !== '', detail: detail === '' ? '没报差异 —— 空 vs 空被判成了「一致」' : detail })
+  }
+  return out
+}
 const README_FILE = path.join(__dirname, '..', 'README.md')
 
 /** 求值一条 allow 项：普通名字原样返回；`!!js "expr"` 按 yml 的语义求值（只为比对）。 */
@@ -476,6 +712,11 @@ function roleFactsSelfTest() {
 /**
  * C（ADR 0002「单场合规失败的可观测化」）的自证：「整场静默」在真机上会随滚动窗口消失，
  * 所以用合成日志 fixture 把阳性/阴性路径钉住。口径见 scripts/fixtures/intent-gate-cases.json。
+ *
+ * 每条 case 同时钉**两个口径**：`eligibleDeclared`（① 存在，合规分子）与 `contrastEligible`（② 前置，对照）。
+ * 两者相等只说明 case 没落在①与②的分歧面上；「门行与首动作同消息」那两条正是分歧点（①=1 / ②=0），
+ * 它们在 fixture 里**必须同时**被断言 —— 否则「② 只是对照读数」这句话就没有可执行的定义
+ * （而 ② 的分母与 ① 共用 eligible，不另设字段）。
  */
 const GATE_FIXTURE = path.join(__dirname, 'fixtures', 'intent-gate-cases.json')
 
@@ -491,9 +732,12 @@ function gateSelfTest() {
     const s = intentGateStats(analyze(raw))
     const silent = gateSilent(s)
     const want = c.expect || {}
-    const ok = s.eligible === want.eligible && s.eligibleFirst === want.eligibleFirst && silent === want.silent
+    const ok = s.eligible === want.eligible && s.eligibleDeclared === want.eligibleDeclared
+      && s.contrastEligible === want.contrastEligible
+      && s.acts === want.acts && s.actsCovered === want.actsCovered && silent === want.silent
     return { name: c.name, ok, detail: '期望 ' + JSON.stringify(want) + '，实得 eligible=' + s.eligible
-      + ' eligibleFirst=' + s.eligibleFirst + ' silent=' + silent }
+      + ' eligibleDeclared=' + s.eligibleDeclared + ' contrastEligible=' + s.contrastEligible
+      + ' acts=' + s.acts + ' actsCovered=' + s.actsCovered + ' silent=' + silent }
   })
 }
 
@@ -511,22 +755,67 @@ function compare(tools, expected) {
 function main() {
   const args = process.argv.slice(2)
   const all = args.includes('--all')
+  const cwdFlag = args.indexOf('--cwd')
+  const sessionsFlag = args.indexOf('--sessions')
+  if (sessionsFlag >= 0 && args[sessionsFlag + 1] !== undefined) {
+    SESSIONS_ROOT = path.resolve(args[sessionsFlag + 1])
+  } else if (CONTROL_SESSIONS) {
+    SESSIONS_ROOT = path.join(__dirname, 'fixtures', 'sessions-ci')
+  }
+  const projectCwd = cwdFlag >= 0 && args[cwdFlag + 1] !== undefined
+    ? path.resolve(args[cwdFlag + 1])
+    : (CONTROL_SESSIONS ? FIXTURE_CWD : DEFAULT_PROJECT_CWD)
   const rawOut = args.includes('--raw')
   let pass = 0, fail = 0, warn = 0, escChild = 0, escRoot = 0, escOther = 0
+  /** 失败**名字**清单 —— `--control-sessions` 的判据是它与 REQUIRED_FIXTURE_FAILURES 集合相等。 */
+  const failedNames = []
+  const failLine = (name, text) => { failedNames.push(name); fail += 1; console.log(text) }
   let silentSessions = 0     // 单场「门行整场静默」的会话数（观察项，不接退出码 —— pitfalls #19）
-  const gate = { turns: 0, first: 0, reply: 0, anywhere: 0, eligible: 0, eligibleFirst: 0, sessions: 0 }
+  const gate = { turns: 0, first: 0, reply: 0, anywhere: 0, eligible: 0, eligibleFirst: 0, eligibleDeclared: 0,
+    contrastEligible: 0, sameMsg: 0, sameMsgShell: 0, sameMsgNonShell: 0, acts: 0, actsCovered: 0, sessions: 0 }
+  /** 进了上面的合计的那些轮次记录 —— 下方成因分类 / 拆读数必须只看这一批，否则与合计行对不上。 */
+  const gatedRecs = []
 
   // 角色事实静态检查**先跑**，且不因「没有会话」被跳过 —— 它只读仓库文件（ADR 0002 的 E 项）。
   console.log('角色事实静态检查（E —— 单一源 = preset/ptc-roles/agent.cordis.yml；比对 yml / EXPECTED / README 角色表）:')
   for (const t of roleFactsSelfTest()) {
     if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
-    else { console.log('   ✗ FAIL ' + t.name + '（' + t.detail + '）'); fail += 1 }
+    else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
+  }
+
+  // 判据侧的一致性也是**静态**的：插件「要不要提醒」与本脚本「合规率分母」共用同一份
+  // BEHAVIOR_TOOLS，此前没有任何守卫（见 behaviorToolsSelfTest 的注释）。
+  console.log('\n行为工具名单一致性（插件 intent-gate-watchdog.mjs ↔ 本脚本，逐字 + 顺序）:')
+  for (const t of behaviorToolsSelfTest()) {
+    if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
+    else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
+  }
+
+  // 两支 fixture 自测与「本机有没有会话」无关 ⇒ 提到任何 return **之前**（2026-09-17 评审 M2/F-3：
+  // 原先它们排在会话扫描之后，于是没有会话的机器会整段跳过它们，而脚本仍退 0 报「符合预期」）。
+  console.log('\n归因计数器自测（合成日志 fixture scripts/fixtures/attribution-cases.json —— R-02 的阳性路径）:')
+  for (const t of attributionSelfTest()) {
+    if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
+    else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
+  }
+  console.log('\n意图门统计自测（合成日志 fixture scripts/fixtures/intent-gate-cases.json —— C 项的阳性路径）:')
+  for (const t of gateSelfTest()) {
+    if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
+    else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
   }
 
   const files = findSessionFiles()
   if (files.length === 0) {
-    console.log('\n没找到任何会话文件（' + SESSIONS_ROOT + '）—— 上面的静态检查结论仍有效')
-    console.log('\n汇总: ✓' + pass + '  ✗' + fail + '  !' + warn)
+    console.log('\n! 行为判据**本次未验证**：没找到任何会话文件（' + SESSIONS_ROOT + '）—— 上面的静态检查与 fixture 自测仍有效')
+    console.log('汇总: ✓' + pass + '  ✗' + fail + '  !' + warn)
+    process.exitCode = fail === 0 ? 0 : 1
+    return
+  }
+  if (files.some((f) => f.endsWith('.zstd')) && !zstdAvailable()) {
+    // 响亮而不是静默跳过：解不开会话时，行为判据一条都没跑 —— 退 0 等于把「没验证」说成「符合预期」。
+    console.log('\n✗ FAIL 找不到 zstd —— 有 ' + files.length + ' 个会话文件却一个都解不开：行为判据**本次未验证**。')
+    console.log('  ⇒ 装上 zstd（或让它进 PATH）后重跑；本脚本拒绝在这种状态下报「符合预期」（2026-09-17 评审 M2/F-4）。')
+    process.exitCode = 2
     return
   }
 
@@ -537,19 +826,25 @@ function main() {
     if (raw === undefined) { skipped += 1; continue }
     const a = analyze(raw)
     if (!a.header) continue
-    if (!all && a.header.cwd !== PROJECT_CWD) continue
+    if (!all && !sameCwd(a.header.cwd, projectCwd)) continue
     const id = String(a.header.id)
     const prev = seen.get(id)
     if (!prev || raw.length > prev.raw.length) seen.set(id, { file, raw, ...a })
   }
   if (seen.size === 0) {
-    console.log('本项目下没有会话（用 --all 扫全部工作区）—— 上面的静态检查结论仍有效')
-    console.log('\n汇总: ✓' + pass + '  ✗' + fail + '  !' + warn)
+    console.log('\n! 行为判据**本次未验证**：本工作区（' + (all ? 'ALL' : projectCwd) + '）下没有会话 —— ')
+    console.log('  换过机器 / 换过 clone 路径时用 `--cwd <path>` 指定工作区，或 `--all` 扫全部工作区')
+    console.log('汇总: ✓' + pass + '  ✗' + fail + '  !' + warn)
+    process.exitCode = fail === 0 ? 0 : 1
     return
   }
 
   const rows = [...seen.values()].sort((x, y) => (x.header.createdAt || 0) - (y.header.createdAt || 0))
-  console.log('会话 ' + rows.length + ' 个（工作区 ' + (all ? 'ALL' : PROJECT_CWD) + '），跳过错文件 ' + skipped + '\n')
+  console.log('\n会话 ' + rows.length + ' 个（工作区 ' + (all ? 'ALL' : projectCwd) + '），跳过错文件 ' + skipped + '\n')
+  if (decodeFailures.other > 0) {
+    console.log('! 有 ' + decodeFailures.other + ' 个会话文件解不开（非 zstd 缺失 ⇒ 损坏或超 maxBuffer）—— 它们不在本次判据里')
+    warn += 1
+  }
 
   for (const r of rows) {
     const depth = r.header.delegationDepth || 0
@@ -584,7 +879,12 @@ function main() {
     }
 
     if (depth === 0) {
-      console.log(r.ptc ? '   ✓ 主 agent 保持 PTC（预期）' : '   ! 主 agent 不是 PTC —— 检查底座 tool-presentation 行')
+      // 主 agent 丢掉 PTC 与 :670 的「子代理仍是 PTC」是同一枚硬币的两面 —— 都是底座
+      // tool-presentation 行坏掉的信号，因此同样进 fail、接退出码（2026-09-17 评审 M7：原先
+      // 只打 `!`，而下面的注释把 `!` 明确限定为**合法**的已知现象，它不在那个清单里）。
+      // 这里只对 isPresetRoot 的主会话生效（非 ptc-roles 主会话在上面就 continue 了）。
+      if (r.ptc) { console.log('   ✓ 主 agent 保持 PTC（预期）'); pass += 1 }
+      else { failLine('主 agent 不是 PTC', '   ✗ FAIL 主 agent 不是 PTC —— 检查底座 tool-presentation 行') }
       // round-5 persona 断言：persona 不生效是**静默**的（没有日志通道，见 docs/pitfalls.md #9），
       // 所以这条数据面信号就是「纪律补全是否真的加载」的唯一可查证途径。
       if ((r.header.createdAt || 0) >= PERSONA_V2_SINCE) {
@@ -604,16 +904,21 @@ function main() {
           gate.sessions += 1
           gate.turns += g.turns.length; gate.first += g.first; gate.reply += g.reply; gate.anywhere += g.anywhere
           gate.eligible += g.eligible; gate.eligibleFirst += g.eligibleFirst
-          console.log('   意图门合规率: ' + g.turns.length + ' 轮（会改变行为 ' + g.eligible + ' 轮）| 首行命中 '
-            + g.eligibleFirst + '/' + g.eligible + ' (' + rate(g.eligibleFirst, g.eligible) + ')'
-            + ' | 可见回复命中 ' + g.reply + ' | 任意文本命中 ' + g.anywhere)
-          console.log('   逐轮(首行): ' + g.turns.map((t) => 'T' + t + (r.intentTurns.get(t).first ? '✓' : '✗')).join(' ')
+          gate.eligibleDeclared += g.eligibleDeclared; gate.acts += g.acts; gate.actsCovered += g.actsCovered
+          gate.contrastEligible += g.contrastEligible
+          gate.sameMsg += g.sameMsg; gate.sameMsgShell += g.sameMsgShell; gate.sameMsgNonShell += g.sameMsgNonShell
+          for (const t of g.turns) {
+            const rec = r.intentTurns.get(t)
+            if (rec !== undefined && rec.acting === true) gatedRecs.push(rec)
+          }
+          for (const line of gateLines(g, '', '   ')) console.log(line)
+          console.log('   逐轮（① 存在口径）: ' + g.turns.map((t) => 'T' + t + verdictLabel(r.intentTurns.get(t))).join(' ')
             + ' | 会改变行为: ' + (g.turns.filter((t) => r.intentTurns.get(t).acting).map((t) => 'T' + t).join(' ') || '无'))
           // C（ADR 0002）：总量里的一个「0%」会被平均掉，所以要**按会话**点名「整场静默」——
           // 那是「旗舰机制静默死」唯一的可见形态。它是**观察项**：模型行为不该让套件随机变红（pitfalls #19）。
           if (gateSilent(g)) {
             silentSessions += 1
-            console.log('   ! 本场门行**整场静默**：会改变行为 ' + g.eligible + ' 轮、首行命中 0 —— 见 ADR 0002「旗舰行为机制可以整场静默失效」')
+            console.log('   ! 本场门行**整场静默**：会改变行为 ' + g.eligible + ' 轮、① 存在口径命中 0 —— 见 ADR 0002「旗舰行为机制可以整场静默失效」')
             console.log('     （观察项，不接退出码；要判定是「模型没写」还是「口径把只读轮算进去了」，看上面的逐轮与会改变行为两行）')
           }
         }
@@ -621,25 +926,48 @@ function main() {
       console.log('   工具面: ' + (rawOut ? tools.join(', ') : tools.slice(0, 8).join(', ') + (tools.length > 8 ? ' …' : '')))
       continue
     }
-    if (r.ptc) { console.log('   ✗ FAIL 子代理仍是 PTC：run_code 逃逸还在，白名单不是硬边界'); fail += 1; continue }
+    if (r.ptc) { failLine('子代理仍是 PTC', '   ✗ FAIL 子代理仍是 PTC：run_code 逃逸还在，白名单不是硬边界'); continue }
     if (!r.role) { console.log('   ! WARN 认不出角色（persona 没注入？）'); warn += 1; continue }
     const want = EXPECTED[r.role]
     if (!want) { console.log('   ! WARN 没有 ' + r.role + ' 的期望白名单（新角色没登记进 EXPECTED？）'); warn += 1; continue }
     const d = compare(tools, want)
     const note = d.known.length > 0 ? ' | ⊘ 已知自身层泄漏（非白名单问题）: ' + d.known.join(', ') : ''
     if (d.extra.length === 0 && d.missing.length === 0) { console.log('   ✓ PASS native + 白名单精确匹配（' + want.length + ' 项）' + note); pass += 1 }
-    else { console.log('   ✗ FAIL 白名单不符 | 多出: ' + (d.extra.join(', ') || '无') + ' | 缺失: ' + (d.missing.join(', ') || '无') + note); fail += 1 }
+    else { failLine('角色白名单不符', '   ✗ FAIL 白名单不符 | 多出: ' + (d.extra.join(', ') || '无') + ' | 缺失: ' + (d.missing.join(', ') || '无') + note) }
     if (rawOut) console.log('   工具面: ' + tools.join(', '))
   }
   if (gate.turns > 0) {
-    console.log('\n意图门合规率（合计 ' + gate.sessions + ' 个主 agent 会话 / ' + gate.turns + ' 轮，其中会改变行为 ' + gate.eligible + ' 轮）: 首行命中 '
-      + gate.eligibleFirst + '/' + gate.eligible + ' (' + rate(gate.eligibleFirst, gate.eligible) + ') | 可见回复命中 ' + gate.reply + ' | 任意文本命中 ' + gate.anywhere)
+    console.log('\n意图门合规率（合计 ' + gate.sessions + ' 个主 agent 会话 / ' + gate.turns + ' 轮，其中会改变行为 ' + gate.eligible + ' 轮）')
+    for (const line of gateLines(gate, '', '  ')) console.log(line)
+    {
+      // 成因分类（P1）：分子只有一个数时，「同消息（仍合规，只是没抢在动作前）/ 整轮没写 / 动后补」三者的处置完全不同。
+      // 只统计**进了上面那个合计**的会话（gatedRecs）—— 先前这里遍历的是**全部** rows，
+      // 于是它会把被跳过 / 早于 PERSONA_V2_SINCE 的会话一起数进来，与合计行对不上（实测 23 vs 16）。
+      const causes = { 'ok-same-message': 0, 'no-marker': 0, 'after-action': 0, unattributable: 0 }
+      let shellFirst = 0        // 首发动作是 shell 的轮次（含**合规**的那些）
+      let shellSameMessage = 0  // 其中属于「门行与它同一条消息」的 —— ① 合规、② 不算前置
+      for (const rec of gatedRecs) {
+        const v = turnVerdict(rec)
+        if (causes[v] !== undefined) causes[v] += 1
+        if (rec.firstActName !== undefined && SHELL_TOOLS.has(rec.firstActName)) {
+          shellFirst += 1
+          if (v === 'ok-same-message') shellSameMessage += 1
+        }
+      }
+      console.log('  合规轮里的诊断: 门行与首动作同消息 ' + causes['ok-same-message'] + ' 轮（① 算合规、② 不算前置）'
+        + ' / 整轮无门行 ' + causes['no-marker'] + ' / 门行在动作之后 ' + causes['after-action']
+        + ' / 无法归因 ' + causes['unattributable'])
+      console.log('  其中「同一条消息」那类里，首发动作是 shell 侦察（bash/pwsh）的 ' + shellSameMessage + ' 轮'
+        + ' —— 在 ② 口径下必然不算前置，属口径产物而非模型漏行（pitfalls #17 的载体耦合）；'
+        + '本窗口首发为 shell 的轮次共 ' + shellFirst + ' 轮')
+    }
     console.log('  整场静默的会话: ' + silentSessions + '/' + gate.sessions
       + '（观察项，不进 ✓/✗/! 的账 —— 模型行为不该让套件随机变红，见 pitfalls #19）')
-    console.log('  口径: 分子与分母都只算**会改变行为**的轮次（要委派 / 要拒绝 / 要提问 / 要改文件），行为判据 = '
-      + 'tool/call 或 tool/ptc-dispatch 的 name 命中 BEHAVIOR_TOOLS（与 intent-gate-watchdog.mjs 同口径）；'
-      + 'marker = ' + JSON.stringify(INTENT_MARKERS) + '（与插件的 DEFAULT_MARKERS 同口径）；'
-      + '「任意文本」含工具结果与工具参数 ⇒ 读过插件源码的轮次也会命中，只作对照，不作合规分子。')
+    console.log('  口径: ① 合规 = 门行所在消息的序号 ≤ 承载首个行为动作的载体消息序号（同一条消息算数，pitfalls #19/#20）；'
+      + '② 前置（declSeq < firstActCarrier）只作对照读数，不接合规分子。分子与分母都只算**会改变行为**的轮次'
+      + '（要委派 / 要拒绝 / 要提问 / 要改文件），行为判据 = tool/call 或 tool/ptc-dispatch 的 name 命中 BEHAVIOR_TOOLS'
+      + '（与 intent-gate-watchdog.mjs 同口径）；marker = ' + JSON.stringify(INTENT_MARKERS) + '（与插件的 DEFAULT_MARKERS 同口径）；'
+      + '「可见回复 / 任意文本」只作对照 ——「任意文本」含工具结果与工具参数 ⇒ 读过插件源码的轮次也会命中，那不是合规。')
   }
   const unattributableAll = [...rows].reduce((n, r) => n + (r.unattributable ? r.unattributable.size : 0), 0)
   if (unattributableAll > 0) {
@@ -650,21 +978,13 @@ function main() {
     console.log('✗ FAIL 不可归属的 tool/ptc-dispatch: ' + unattributableAll + ' 个 rootCallId —— 这些轮次的行为判据失明，'
       + '合规率分母偏低（插件 intent-gate-watchdog.mjs 对同情形 warn，见 pitfalls #9）。')
     console.log('  ⇒ 先查 tool/call 的 callId 与派发的 rootCallId 是否还同名同源；别把这个数字降回提示。')
+    failedNames.push('不可归属的 tool/ptc-dispatch')
     fail += 1
   } else {
     console.log('不可归属的 tool/ptc-dispatch: 0（归因路径健康）')
   }
-  // 归因计数的**阳性路径**（真机恒为 0，自证不了）：改用 fixture 里的合成日志断言，见自测说明。
-  console.log('\n归因计数器自测（合成日志 fixture scripts/fixtures/attribution-cases.json —— R-02 的阳性路径）:')
-  for (const t of attributionSelfTest()) {
-    if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
-    else { console.log('   ✗ FAIL ' + t.name + '（' + t.detail + '）'); fail += 1 }
-  }
-  console.log('\n意图门统计自测（合成日志 fixture scripts/fixtures/intent-gate-cases.json —— C 项的阳性路径）:')
-  for (const t of gateSelfTest()) {
-    if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
-    else { console.log('   ✗ FAIL ' + t.name + '（' + t.detail + '）'); fail += 1 }
-  }
+  // 归因计数 / 意图门统计的**阳性路径**由 fixture 自测覆盖 —— 它们与会话库无关，已在上面
+  // （任何 return 之前）跑过。见 2026-09-17 评审 M2/F-3。
   console.log('\n汇总: ✓' + pass + '  ✗' + fail + '  !' + warn)
   console.log('提权请求（实测计数）: ptc-roles 主 agent ' + escRoot + ' / ptc-roles 角色子代理 ' + escChild
     + ' / 其他会话 ' + escOther)
@@ -674,8 +994,25 @@ function main() {
 
   // 退出码契约（三个脚本统一为「0 = 符合预期」）：只有 ✗ FAIL 让退出码非 0。
   // `!` 与脚本内的 ✓/⊘ 标记保持 0 —— 它们按设计包含**合法**的已知现象（`⊘ 已知自身层泄漏`
-  // 见 pitfalls #7、「非 ptc-roles 子代理」跳过、零提权提示），升级为失败会让脚本常态变红而失去信号。
+  // 见 pitfalls #7、「非 ptc-roles 子代理」跳过、零提权提示、门行整场静默），升级为失败会让脚本
+  // 常态变红而失去信号。**主 agent 丢 PTC 不在这个清单里**（2026-09-17 评审 M7：它是 FAIL）。
+  // 「没找到会话 / 本工作区没有会话」也不让退出码非 0，但判定行会显式写「本次未验证」。
   process.exitCode = fail === 0 ? 0 : 1
+
+  // ── 合成会话夹具的阴性对照（复盘 P1-2）────────────────────────────────────
+  // 判据同样是**集合相等**：夹具必须恰好让 REQUIRED_FIXTURE_FAILURES 那几条失败 ——
+  // 「本该红的断言没红」与「夹具坏得超出预期」都判不符合预期。
+  if (CONTROL_SESSIONS) {
+    const missing = REQUIRED_FIXTURE_FAILURES.filter((n) => !failedNames.includes(n))
+    const extra = failedNames.filter((n) => !REQUIRED_FIXTURE_FAILURES.includes(n))
+    const ok = missing.length === 0 && extra.length === 0
+    console.log(ok
+      ? '阴性对照符合预期：合成会话恰好让 ' + REQUIRED_FIXTURE_FAILURES.length + ' 条指定断言失败（一一对应，共 ' + fail + ' 项失败）。'
+      : '⚠ 阴性对照不符合预期：应为指定 ' + REQUIRED_FIXTURE_FAILURES.length + ' 条、实得 ' + fail + ' 条'
+        + (missing.length > 0 ? '；**该失败却没失败**：' + missing.join(' | ') : '')
+        + (extra.length > 0 ? '；**意外多失败**：' + extra.join(' | ') : ''))
+    process.exitCode = ok ? 0 : 1
+  }
 }
 
 main()

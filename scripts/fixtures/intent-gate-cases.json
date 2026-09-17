@@ -1,24 +1,19 @@
 {
-  "what": "verify-ptc-roles.cjs 的意图门统计（首行口径 + ADR 0002 的 C 项「整场静默」判据）的阳性/阴性路径。每条 case 的 events 逐行喂给 analyze() → intentGateStats()，断言 eligible / eligibleFirst / silent 三个值。",
-  "why": "真机上「整场静默」那场（0%/0 轮）会随会话库滚动窗口消失（pitfalls #15），不落成 fixture 就只剩一次性记忆；而这是 ADR 0002 里「旗舰机制可以整场静默失效」唯一可复核的判据。",
-  "events": "字段口径见 verify-ptc-roles.cjs 的 analyze()：tool/call 带 turn + callId + name（name 命中 BEHAVIOR_TOOLS 才算「会改变行为」）；assistant/message 带 turn + message.content[].text（首行=该轮第一条有文本的 assistant 消息的第一行）。",
+  "what": "verify-ptc-roles.cjs 的意图门统计（**① 存在口径 = 合规判据**：门行所在消息的序号 ≤ 承载首个行为动作的载体消息序号，**同一条消息算数**；② 前置口径 `declSeq < firstActCarrier` 降为对照读数；外加行为动作覆盖率与两个文本对照口径）的阳性/阴性路径。每条 case 的 events 逐行喂给 analyze() → intentGateStats()，断言 eligible / eligibleDeclared(=① 合规分子) / acts / actsCovered / silent。",
+  "why": "口径本身会漂（旧「首行 / 任意位置」把与动作同一条消息的门行记成合规 —— 2026-09-16 实测那正是模型最常见的形态；2026-09-17 起 **① 把它认成合规**，② 只作对照），而「整场静默」那场（0%/0 轮）会随会话库滚动窗口消失（pitfalls #15）。不落成 fixture，就只剩一次性记忆。",
+  "events": "事件顺序与真机日志一致：一条 assistant/message 之后紧跟它产生的 tool/call。字段口径见 verify-ptc-roles.cjs 的 analyze()：tool/call 带 turn + callId + name（name 命中 BEHAVIOR_TOOLS 才算「会改变行为」）；ptc-dispatch 无 turn，靠 rootCallId 归回；载体消息 = 产生该 tool/call 的那条 assistant 消息（**含无文本的纯工具调用消息**）。",
   "cases": [
     {
       "name": "整场静默：两个行为轮都没写门行 ⇒ silent",
       "expect": {
         "eligible": 2,
-        "eligibleFirst": 0,
+        "eligibleDeclared": 0,
+        "contrastEligible": 0,
+        "acts": 2,
+        "actsCovered": 0,
         "silent": true
       },
       "events": [
-        {
-          "type": "tool/call",
-          "data": {
-            "turn": 1,
-            "callId": "c1",
-            "name": "write"
-          }
-        },
         {
           "type": "assistant/message",
           "data": {
@@ -37,9 +32,11 @@
         {
           "type": "tool/call",
           "data": {
-            "turn": 2,
-            "callId": "c2",
-            "name": "bash"
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "write",
+            "arguments": "{}"
           }
         },
         {
@@ -56,14 +53,65 @@
               ]
             }
           }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 2,
+            "step": 1,
+            "callId": "c2",
+            "name": "bash",
+            "arguments": "{}"
+          }
         }
       ]
     },
     {
-      "name": "有一轮写了门行（首行）⇒ 不静默",
+      "name": "门行与行为动作写在**同一条消息**里 ⇒ ① 合规（同一次生成，载体就是那条消息）；② 不算前置",
       "expect": {
-        "eligible": 2,
-        "eligibleFirst": 1,
+        "eligible": 1,
+        "eligibleDeclared": 1,
+        "contrastEligible": 0,
+        "acts": 1,
+        "actsCovered": 1,
+        "silent": false
+      },
+      "events": [
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: implementation — 改这个文件。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "edit",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "门行在**更早的消息**里（先声明 + 只读侦察，再动手）⇒ 合规",
+      "expect": {
+        "eligible": 1,
+        "eligibleDeclared": 1,
+        "contrastEligible": 1,
+        "acts": 1,
+        "actsCovered": 1,
         "silent": false
       },
       "events": [
@@ -86,20 +134,22 @@
           "type": "tool/call",
           "data": {
             "turn": 1,
+            "step": 1,
             "callId": "c1",
-            "name": "edit"
+            "name": "read",
+            "arguments": "{}"
           }
         },
         {
           "type": "assistant/message",
           "data": {
-            "turn": 2,
+            "turn": 1,
             "message": {
               "role": "assistant",
               "content": [
                 {
                   "type": "text",
-                  "text": "改完了。"
+                  "text": "读完了，开始改。"
                 }
               ]
             }
@@ -108,9 +158,64 @@
         {
           "type": "tool/call",
           "data": {
-            "turn": 2,
+            "turn": 1,
+            "step": 1,
             "callId": "c2",
-            "name": "bash"
+            "name": "write",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "门行写在动手**之后** ⇒ 事后报告，不算",
+      "expect": {
+        "eligible": 1,
+        "eligibleDeclared": 0,
+        "contrastEligible": 0,
+        "acts": 1,
+        "actsCovered": 0,
+        "silent": true
+      },
+      "events": [
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "先看看。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "write",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: fix — 补写一句。"
+                }
+              ]
+            }
           }
         }
       ]
@@ -119,18 +224,13 @@
       "name": "只有只读轮（read 不在 BEHAVIOR_TOOLS）⇒ eligible=0，不该报静默",
       "expect": {
         "eligible": 0,
-        "eligibleFirst": 0,
+        "eligibleDeclared": 0,
+        "contrastEligible": 0,
+        "acts": 0,
+        "actsCovered": 0,
         "silent": false
       },
       "events": [
-        {
-          "type": "tool/call",
-          "data": {
-            "turn": 1,
-            "callId": "c1",
-            "name": "read"
-          }
-        },
         {
           "type": "assistant/message",
           "data": {
@@ -145,25 +245,30 @@
               ]
             }
           }
-        }
-      ]
-    },
-    {
-      "name": "门行写在第二行 ⇒ 「可见回复」命中但「首行」不命中，仍按首行口径算静默",
-      "expect": {
-        "eligible": 1,
-        "eligibleFirst": 0,
-        "silent": true
-      },
-      "events": [
+        },
         {
           "type": "tool/call",
           "data": {
             "turn": 1,
+            "step": 1,
             "callId": "c1",
-            "name": "explorer"
+            "name": "read",
+            "arguments": "{}"
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "门行写在第二行 ⇒ ① 无声明（也不算 ② 前置）：两处口径都留痕",
+      "expect": {
+        "eligible": 1,
+        "eligibleDeclared": 0,
+        "contrastEligible": 0,
+        "acts": 1,
+        "actsCovered": 0,
+        "silent": true
+      },
+      "events": [
         {
           "type": "assistant/message",
           "data": {
@@ -178,6 +283,16 @@
               ]
             }
           }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "explorer",
+            "arguments": "{}"
+          }
         }
       ]
     },
@@ -185,16 +300,36 @@
       "name": "旧 token 仍算合规（legacy 兼容：迁移前的会话不该被判成 0）",
       "expect": {
         "eligible": 1,
-        "eligibleFirst": 1,
+        "eligibleDeclared": 1,
+        "contrastEligible": 1,
+        "acts": 1,
+        "actsCovered": 1,
         "silent": false
       },
       "events": [
         {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "意图判定：implementation — 先读再改。"
+                }
+              ]
+            }
+          }
+        },
+        {
           "type": "tool/call",
           "data": {
             "turn": 1,
+            "step": 1,
             "callId": "c1",
-            "name": "write"
+            "name": "read",
+            "arguments": "{}"
           }
         },
         {
@@ -206,10 +341,239 @@
               "content": [
                 {
                   "type": "text",
-                  "text": "意图判定：implementation — 老 token。"
+                  "text": "开始改。"
                 }
               ]
             }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c2",
+            "name": "write",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "PTC 阳性：门行在开轮消息里，行为工具在**下一次 run_code** 内派发 ⇒ 合规（载体映射走 rootCallId）",
+      "expect": {
+        "eligible": 1,
+        "eligibleDeclared": 1,
+        "contrastEligible": 1,
+        "acts": 1,
+        "actsCovered": 1,
+        "silent": false
+      },
+      "events": [
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: implementation — 先侦察再动手。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "run_code",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "tool/ptc-dispatch",
+          "data": {
+            "rootCallId": "c1",
+            "parentCallId": "c1",
+            "subCallId": "sub",
+            "name": "read",
+            "arguments": {}
+          }
+        },
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "现在动手。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c2",
+            "name": "run_code",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "tool/ptc-dispatch",
+          "data": {
+            "rootCallId": "c2",
+            "parentCallId": "c2",
+            "subCallId": "sub",
+            "name": "write",
+            "arguments": {}
+          }
+        }
+      ]
+    },
+    {
+      "name": "PTC 阴性（旧 ② 口径）：门行与那一次 run_code 同一条消息、行为工具在其中派发 ⇒ ① 合规、② 不算前置",
+      "expect": {
+        "eligible": 1,
+        "eligibleDeclared": 1,
+        "contrastEligible": 0,
+        "acts": 1,
+        "actsCovered": 1,
+        "silent": false
+      },
+      "events": [
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: implementation — 直接改。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c3",
+            "name": "run_code",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "tool/ptc-dispatch",
+          "data": {
+            "rootCallId": "c3",
+            "parentCallId": "c3",
+            "subCallId": "sub",
+            "name": "write",
+            "arguments": {}
+          }
+        }
+      ]
+    },
+    {
+      "name": "部分覆盖：声明之前的动作不计入覆盖（覆盖率是连续读数，不是布尔；① 仍不合规 —— 声明落在首次动手之后）",
+      "expect": {
+        "eligible": 1,
+        "eligibleDeclared": 0,
+        "contrastEligible": 0,
+        "acts": 3,
+        "actsCovered": 1,
+        "silent": true
+      },
+      "events": [
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "先动手。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "write",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: fix — 补声明。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c2",
+            "name": "bash",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "继续。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c3",
+            "name": "edit",
+            "arguments": "{}"
           }
         }
       ]

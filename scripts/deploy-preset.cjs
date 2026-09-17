@@ -90,6 +90,26 @@ function realpathOrNull(target) {
   try { return fs.realpathSync(target) } catch { return null }
 }
 
+/**
+ * 规范化一个**可能还不存在**的路径：对「最深的已存在祖先」做 realpath，再拼回剩余段。
+ * 只用 realpathSync 会因路径不存在而抛错，只用 path.resolve 又会被路径里的符号链接组件骗过 ——
+ * 而「目标落在本仓库内，拒绝部署」这条安全闸必须是后者也拦得住（2026-09-17 评审 M3：
+ * macOS 的 /tmp → /private/tmp 就能骗过它，实测未拦下）。
+ */
+function canonicalPath(target) {
+  const abs = path.resolve(target)
+  const tail = []
+  let head = abs
+  for (;;) {
+    const real = realpathOrNull(head)
+    if (real !== null) return tail.length === 0 ? real : path.join(real, ...tail.reverse())
+    const parent = path.dirname(head)
+    if (parent === head) return abs
+    tail.push(path.basename(head))
+    head = parent
+  }
+}
+
 /** 源目录的顶层条目（跳过点文件，例如 macOS 的 .DS_Store）。 */
 function sourceEntries(sourceDir) {
   return fs.readdirSync(sourceDir, { withFileTypes: true })
@@ -280,9 +300,12 @@ async function main() {
       refuse('源目录缺 ' + COMPOSITION + '，拒绝部署：' + plan.sourceDir)
     }
     // 断言：目标必须正好是 <preset 根>/<id>（id 已过正则，这里防的是未来重构与 --home 自指）。
-    const expectedTarget = path.join(path.resolve(home, PRESET_ROOT_DIR), id)
-    if (path.resolve(plan.targetDir) !== expectedTarget) refuse('目标路径不合法：' + plan.targetDir)
-    const repoReal = realpathOrNull(REPO_ROOT) || REPO_ROOT
+    // 两侧都必须**先规范化再比**：只比词法路径时，路径里任何符号链接组件（macOS 的 /tmp →
+    // /private/tmp、软链过的 home）都会让下面的「落在仓库内」判定**静默失效** —— 2026-09-17
+    // 评审实测：`--home <仓库>/.fakehome` 未被拦下，照常部署。
+    const expectedTarget = path.join(canonicalPath(home), PRESET_ROOT_DIR, id)
+    if (canonicalPath(plan.targetDir) !== expectedTarget) refuse('目标路径不合法：' + plan.targetDir)
+    const repoReal = canonicalPath(REPO_ROOT)
     if (expectedTarget === repoReal || expectedTarget.startsWith(repoReal + path.sep)) {
       refuse('目标落在本仓库内，拒绝部署（--home 指错了？）：' + expectedTarget)
     }
