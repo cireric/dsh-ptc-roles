@@ -44,7 +44,7 @@
   的实例；故本文件与 README 一律不再登记条数，判据只看各脚本打印的判定行）。
 - **插件代次**：以 `preset/ptc-roles/agent.cordis.yml` 里的 `?v=` 为准（本文件不登记那个数字 —— 它每次改动都会漂）。
   改了 `.mjs` 必须 `dev_reload_preset preset=ptc-roles`（输出须含 `x.mjs -> ?v=N`）**再开新会话**。
-  persona 与插件都是**挂载时读取** ⇒ 改完必须开新会话才生效（`docs/pitfalls.md` A 节）。
+  persona 与插件都是**挂载时读取** ⇒ 改完必须**再发生一次挂载**（新会话或重开 / resume）才生效（`docs/pitfalls.md` A 节）。
 - **门行 token 迁移（2026-09-16）**：`意图判定` → **`Intent:`**（persona 模板与插件 `DEFAULT_MARKERS` 同步）；
   合规率脚本的 `INTENT_MARKERS` **同时**接受两个 token（插件看当轮=严、脚本扫历史=宽）。口径与理由：`docs/pitfalls.md` #19。
   ⚠️ **会话级代次边界**：迁移前挂载的会话里，看门狗只认旧 token —— 你按新 token 写，它仍会提醒一次，那不是漏行。
@@ -73,10 +73,14 @@
 1. **开一个新会话**（persona 与 `.mjs` 都是挂载时读取），跑 §0 的两条自检。
 2. **`make verify` + `make control`**（判据是各脚本打印的判定行，退出码 `0` 不等于零失败），再
    `make check` 确认部署仍与仓库一致（漂移退 2）。
-3. **闸门开闸前置（2026-09-17 新增）**：新会话里跑一轮真实工作，然后读会话日志看字面量 `RACE_REPORT`
-   出现过没有 —— **没出现** ⇒ 闸门确实看得见同一条消息里的门行，可把 `agent.cordis.yml` 的 `gate`
-   改成 `enforce`（**独立一笔**）；**出现** ⇒ 时序竞态成立，保持 `observe` 并回头改判据。
-   冻结读数与边界：`docs/evidence/2026-09-17-intent-gate-existence-criterion.json`。
+3. **闸门开闸前置 —— 已于 2026-09-18 核过并开闸**（`agent.cordis.yml` 的 `gate: enforce`；配置在**挂载时**
+   读取 ⇒ 生效条件是**一次新的挂载**：新会话是，**重开 / resume 也是**（[实测] 2026-09-18 —— 本会话创建于 09-17 23:54，**早于改配置 31 分钟**，19:34 的一次 resume 就已载入 `enforce`；所以别用「会话 id 新不新」判断）。
+   **上电也已实测**：同日阳性对照 —— 刻意不带门行的 `bash` 被**拒**（理由原文 `[intent-gate] 这一次调用没有门行垫底 …`），补门行后同一调用放行（exit 0）⇒ `enforce` 确已生效；该轮因此记入一次**控制性漏行**，日后读数需剔除。
+   判据必须用**可判别读法**：注入前缀 `[intent-gate-watchdog] observe` 是否落在
+   **注入通道**（`agent/inbox/spliced` / `user/message`）—— **不是**子串扫 `RACE_REPORT`（那份写法实测
+   6/39 **假阳性**，全是引用：插件源码 / #19 正文 / 模型复述；已登记为 `pitfalls #23`）。
+   冻结读数（0 次真注入 + 阳性对照 + 两个真机测试实例）：`docs/evidence/2026-09-18-gate-flip-prerequisite.json`。
+   **回滚条件**：日后在注入通道里读到该前缀 ⇒ 时序竞态成立，改回 `observe` 并回头改判据。
 4. **等 `0.1.6-rc.*`**：升级**前后各**跑一次 `node scripts/verify-harness-contract.cjs --harness <checkout>`
    —— 它就是那次升级的差异报告（包改名那条还会给出疑似新名）；然后按 impact 文档的 P0–P3 执行，
    **P0-1 是 engine 行改名**（`workflow-worker-thread` → `workflow-ptc`，且别照抄官方的 `disabled: true`）。
