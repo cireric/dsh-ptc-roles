@@ -73,7 +73,7 @@ make control   # 两个阴性对照：断言有没有空转
 `docs/pitfalls.md` #19（唯一登记处）。
 
 > 改了 `preset/ptc-roles/*.mjs` 之后必须 `dev_reload_preset preset=ptc-roles`（输出要含 `x.mjs -> ?v=N`）
-> **并开新会话** —— 挂载时才读取，运行中的会话保持旧代（`docs/pitfalls.md` A 节）。
+> 改了 `preset/ptc-roles/*.mjs` 之后必须 `dev_reload_preset preset=ptc-roles`（输出要含 `x.mjs -> ?v=N`）**并确保一次新的挂载**（新会话，或重开 / resume —— 判据见 `docs/pitfalls.md` A 节）；仍在运行的会话保持旧代。
 
 ## 文档地图（每份文档只干一件事）
 
@@ -83,5 +83,6 @@ make control   # 两个阴性对照：断言有没有空转
 | `AGENTS.md` | 在这个仓库里 agent **必须遵守的规则**是什么（自动加载） |
 | `docs/pitfalls.md` | 机制 / 坑 / 坏了怎么修 |
 | `HANDOFF.md` | 现在什么状态、接手后要验什么（**临时交接件**，可整份重写） |
+| `docs/ptc-roles-value-vs-upstream.md` | 官方既能委派，这个 preset 还剩什么价值（上游参数面 / 官方 preset / 本仓角色行的逐行对照） |
 | `docs/decisions/` | 当初为什么这样设计、否决过什么 |
 | `docs/evidence/` | 某个结论的原始输出、复现方法、逐轮验证记录 |
