@@ -1,0 +1,37 @@
+{
+  "probe": "2026-09-18-gate-flip-prerequisite",
+  "question": "观察期里 RACE_REPORT（observe 模式的假拒候选诊断行）真的出现过吗？闸门能不能从 observe 开成 enforce？",
+  "why": "插件 design choice 7 把开闸前提定成「假序竞态未被观测到」——因为「插件的 session/event 监听器在 tools/pre-execute 之前已收到该消息」是**推断**（2026-09-17-existence-criterion 的 harnessFacts.unproven）。而 HANDOFF §2.3 把这条前置写成「会话日志里出现过 RACE_REPORT 没有」，这个写法本身会假阳性：这个词同时存在于插件源码、#19 正文与模型的输出里。",
+  "answer": "① 假阳性确认：按字面写法扫，39 份会话命中 6 份，逐条核对**无一条**是注入（插件源码 / #19 正文 / 模型自己的 grep 参数与复述）。② 可判别读法：注入前缀 `[intent-gate-watchdog] observe` 命中 13 次，**全部**落在 assistant/message / tool/call / tool/ptc-dispatch(-start) / tool/result ⇒ **0 次真注入**。③ 阳性对照（#21 第一条）：泛前缀 `[intent-gate-watchdog]` 命中 259 次且**确实落在注入通道**（agent/inbox/spliced / user/message），本会话也实收过一条 REMINDER ⇒ 「0」是「真没有」，不是「测不到」。④ 两个真机测试实例：本会话 turn 2 / turn 3 均为**同消息合规**（declSeq == firstActCarrier），其后并无 RACE_REPORT 注入 —— 按闸门自身记账（`wouldDeny` 只在 `intent-gate-watchdog.mjs:325` 判否时置位、:326-327），这意味着闸门在调用时刻**看见了**门行 ⇒ 那条未验证的时序假设在这两个实例上成立。⇒ 开闸。",
+  "criterion": {
+    "discriminating": "扫**注入前缀** `[intent-gate-watchdog] observe`，并**按事件类型分组**：注入只可能落在 `agent/inbox/spliced` 或 `user/message`（插件经 agent/pre-step 注入；插件头部自陈「注入即写进会话日志」，intent-gate-watchdog.mjs:129-131）。",
+    "naive_rejected": "扫字面 token `RACE_REPORT` —— 实测 6/39 假阳性。已登记为 pitfalls #23。"
+  },
+  "readings": {
+    "frozenAt": "2026-09-18（开闸前后各扫一次；下面读数取自开闸当次）",
+    "scope": "ptc-roles 工作区 39 份会话文件（~/.dsh/sessions/--Users-eric-*-ptc-roles--），含子代理与 seeded 会话",
+    "naiveScan": "命中 6 份（全部为引用，非注入）",
+    "discriminatingScan": "`[intent-gate-watchdog] observe` 13 次，按类型 = {assistant/message, tool/call, tool/ptc-dispatch, tool/ptc-dispatch-start, tool/result}；注入通道命中 0",
+    "positiveControl": "`[intent-gate-watchdog]` 259 次，类型含 agent/inbox/spliced 与 user/message（REMINDER 已落库）；本会话实际收到过一条 REMINDER",
+    "mySessionPerTurn": [
+      "turn 1: declSeq=3 firstActCarrier=1 acting=True => NOT compliant（开轮消息里跑了 shell 侦察却没带门行 —— 看门狗当时的提醒是对的）",
+      "turn 2: declSeq=25 firstActCarrier=25 => COMPLIANT（同消息）",
+      "turn 3: declSeq=43 firstActCarrier=43 => COMPLIANT（同消息）"
+    ]
+  },
+  "reproduction": [
+    "# 逐轮判据（含 T1..Tn 与成因）：node scripts/verify-ptc-roles.cjs",
+    "cd ~/.dsh/sessions/*ptc-roles* && for f in $(find . -name '*.zstd'); do zstd -dc \"$f\"; done | grep -c '\\[intent-gate-watchdog\\] observe'   # 可判别读法（13）",
+    "cd ~/.dsh/sessions/*ptc-roles* && for f in $(find . -name '*.zstd'); do zstd -dc \"$f\"; done | grep -c 'RACE_REPORT'   # 朴素读法（同窗口 6 份文件命中）—— 别用它下结论"
+  ],
+  "unproven": [
+    "「时序竞态绝对不存在」仍是**未证否**：它只在『该轮合规 + 闸门当时没看见门行』这一组合出现时才被触发，本窗口这种组合只有 2 个实例（turn 2 / turn 3）。",
+    "开 enforce 后，这类组合会**当场拒一次** ⇒ 任何真竞态都会以「合规的轮次被拒」这个可见形态出现，而不是静默 —— 失败形态从静默变可见，这是本次开闸的主要收益之一。",
+    "开闸前未在真机验证「同一条消息里门行写在动作**之后**」的形态（生成顺序上不可能，未测）。"
+  ],
+  "changed": [
+    "preset/ptc-roles/agent.cordis.yml —— `gate: observe` → `enforce`，并把开闸依据、可判别读法与陷阱写进该行注释。",
+    "HANDOFF.md §2.3 —— 判据从「子串扫 RACE_REPORT」改为「注入前缀 + 注入通道」，并标注已于 2026-09-18 开闸。",
+    "docs/pitfalls.md —— 新增 #23：读「机制注入过没有」的判别读法与阳性对照要求。"
+  ]
+}

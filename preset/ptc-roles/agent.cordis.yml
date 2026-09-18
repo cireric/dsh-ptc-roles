@@ -348,10 +348,14 @@
 - id: intent-gate-watchdog
   name: ./intent-gate-watchdog.mjs?v=10
   # 闸门（tools/pre-execute）随本行配置：`observe` 只记账 + 注入竞态诊断行，`enforce` 才真的拒绝
-  # （每轮最多一次）。默认 observe 是 fail-safe —— 配置缺失/写错都退回记账，不会因为一处笔误开始拦人。
-  # 开闸的前置条件：观察会话里 RACE_REPORT 一次都没出现（见插件 design choice 7 与单测的闸门断言）。
+  # （每轮最多一次）。配置缺失/写错都退回记账（fail-safe），不会因为一处笔误开始拦人。
+  # **2026-09-18 开闸（enforce）**：前置 = 观察期里没有出现过**真注入**的 RACE_REPORT。读法必须用
+  # **注入前缀**（`[intent-gate-watchdog] observe` 落在 agent/inbox/spliced / user/message），不能用子串扫
+  # `RACE_REPORT` —— 引用插件源码 / pitfalls 正文 / 模型复述都会命中（实测 6/39 假阳性，见 pitfalls #23）。
+  # 冻结读数（0 次真注入 + 阳性对照 + 两个真机测试实例）：
+  # docs/evidence/2026-09-18-gate-flip-prerequisite.json
   config:
-    gate: observe
+    gate: enforce
 
 - id: role-explorer
   name: '@deepseek-ai/dsh-tool-subagent'
