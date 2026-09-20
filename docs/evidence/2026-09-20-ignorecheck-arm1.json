@@ -1,0 +1,132 @@
+{
+  "probe": "2026-09-20-ignorecheck-arm1",
+  "task": "ignorecheck（.gitignore 匹配器 + CLI）—— 冻结契约 v1，第一臂 ptc-roles",
+  "question": "构建型多模块 + 冻结契约的任务上，角色会被怎样使用？成本结构如何？结果有没有硬答案？",
+  "arm": "ptc-roles",
+  "session": "session-a108a27a-cf7a-42a2-934f-60a13979f12e",
+  "workspace": "/Users/eric/Project/tests/ignorecheck",
+  "contractAnchor": "c977d10 spec: freeze CONTRACT v1（唯一 commit；实现未提交）",
+  "mechanism": {
+    "turns": 6,
+    "userOpenedTurns": 1,
+    "steps": 28,
+    "attempts": 0,
+    "retries": 0,
+    "gateDenies": 0,
+    "roleDispatches": [
+      "implementer ×5",
+      "send_message ×2（转向子代理）"
+    ],
+    "dispatchNames": {
+      "bash": 20,
+      "implementer": 5,
+      "write": 3,
+      "send_message": 2,
+      "glob": 1,
+      "read": 1,
+      "web_fetch": 1,
+      "todo_write": 1,
+      "edit": 1,
+      "present": 1,
+      "validate_dsh_ui": 1
+    },
+    "mainUsage": {
+      "uncachedInput": 57285,
+      "output": 69448,
+      "cacheRead": 2454144,
+      "cacheWrite": 0
+    },
+    "children": [
+      {
+        "id": "ec9427d3-60c7-4e28-ae6",
+        "steps": 32,
+        "retries": 0,
+        "rawTokens": 1140704,
+        "returned": "match 模块：13 探针 + A~F 反例 + 9 个额外边界与 git 2.50.1 逐字节一致"
+      },
+      {
+        "id": "bd42cad8-8ea2-48f4-819",
+        "steps": 89,
+        "retries": 4,
+        "rawTokens": 10549321,
+        "returned": "**编排器退回项成立且已修**（字符类在 WM_PATHNAME 语义下不再匹配 /）；node --test 46/46"
+      },
+      {
+        "id": "02db9c09-1a67-4609-a78",
+        "steps": 22,
+        "retries": 0,
+        "rawTokens": 855139,
+        "returned": "T3 交付；真实端到端仍受阻于 T1 未落地"
+      },
+      {
+        "id": "5ced26ad-73c2-4641-88e",
+        "steps": 40,
+        "retries": 0,
+        "rawTokens": 1965430,
+        "returned": "回归锁补齐；**只改了 tests/pattern.test.js**，未碰 src/bin/tools/CONTRACT.md/package.json"
+      }
+    ],
+    "childShareOfRawTokens": "≈85%（子 14,494,594 / 主 2,580,877）—— 与两场调研型的 26–27% 形成强对照：构建型任务的钱花在子代理",
+    "compliance": "1/1 (100%)；覆盖 17/17（user-opened）｜每轮制对照 17/29；T4–T6 是机器开轮的动手轮，v4 口径不计，且看门狗**未拒绝**它们（与插件只对 user-opened 轮生效的守卫一致）"
+  },
+  "acceptanceMineNotItsOwn": {
+    "differential": "node tools/differential.mjs → 13/13 matched, rc=0（我复跑）",
+    "unitTests": "node --test → tests 47 / pass 47 / fail 0, rc=0（我复跑）",
+    "fixtureIntegrity": "tests/fixtures/tree/{.gitignore,docs/.gitignore,src/.gitignore} 与 probes.txt 与契约 §6 字面内容逐字一致 ⇒ 夹具没被改软",
+    "contractIntegrity": "**我先前写的『CONTRACT.md 零 diff』是错的**：我当时跑的是 `git diff <首commit> HEAD -- CONTRACT.md`，而仓库只有一个 commit ⇒ 等于自己跟自己比、永远为空。正确的核对（`git status --porcelain` / `git diff -- CONTRACT.md`）显示：臂一运行期间（mtime 21:40:17）**契约被编排器自己改了 +5/−1 行**，内容是把我契约里写错/没写清的两处实测修正写进去（`--no-index` 的放置位置、`-v` 在取反规则上的行为）。依所有权表 `CONTRACT.md` 归编排器所有 ⇒ 改动合规，但**两臂的契约文本因此不完全相同**。",
+    "outOfListProbe": {
+      "note": "我另取 20 条契约清单之外的路径自建临时树对照（含大小写、取反、目录-only、**、字符类）",
+      "result": "17 一致 / 3 不一致",
+      "divergences": [
+        "sub/app.LOG 与 App.LOG：git 判忽略 rc=0，工具判不忽略 rc=1 —— 原因是 macOS 大小写不敏感（git 在此环境折叠大小写）；契约已把『大小写折叠』列为范围外 ⇒ 不算违约，但意味着它不是 git 的 drop-in",
+        "keep.log：两边 stdout 相同（.gitignore:4:!keep.log），但 git rc=0、工具 rc=1 —— **契约的退出码条款写得不准确**（git 的真实语义是『有模式命中即为 0』，取反也算命中）"
+      ],
+      "specHoleFound": "differential 只比 stdout、不比退出码（契约 §0 也是这么写的）⇒ 那条『退出码与 git 同语义』从未被差异测试覆盖"
+    }
+  },
+  "deliverable": {
+    "files": [
+      "bin/ignorecheck.mjs (4 行)",
+      "src/pattern/index.js (351)",
+      "src/match/index.js (119)",
+      "src/cli/index.js (108)",
+      "tools/differential.mjs (167)",
+      "tests/{pattern,match,cli}.test.js",
+      "tests/fixtures/",
+      "README.md (2,373 B)"
+    ],
+    "autonomous": "开场只有一句『按 CONTRACT.md 实现』，之后 5 轮全是机器续行（21:35 → 21:57，约 22 分钟）"
+  },
+  "observations": [
+    "implementer 首次以 5 次规模出现 ⇒ 冻结契约 + 多模块确是让『写代码的角色』上场的形状",
+    "编排器**退回并让同一个子代理重做**（收尾自陈『编排器退回项成立且已修』）⇒ 委派契约里『绝不接受未核对的报告』这条在真实运行里被执行了",
+    "文件所有权被遵守且子代理自己声明了边界（只碰 tests/pattern.test.js）",
+    "实现**未被提交**：仓库只有冻结那一个 commit ⇒ 交付物没有版本锚，回滚与第二次对照都缺依据 ⇒ 下一份冻结契约应加一条『收尾必须提交』",
+    "本次契约的退出码条款是我写错的（见 divergences）⇒ 冻结契约也可能是错的，越界探针是唯一的发现途径"
+  ],
+  "unproven": [
+    "对照臂未跑（同一冻结 commit 未在官方 ptc preset 下重跑）⇒『有没有可测改善』仍无答案",
+    "上一条 divergences 只覆盖 20 条自选路径，未做穷举"
+  ],
+  "reproduction": [
+    "cd /Users/eric/Project/tests/ignorecheck && node tools/differential.mjs && node --test",
+    "node scripts/verify-ptc-roles.cjs --cwd /Users/eric/Project/tests/ignorecheck",
+    "git -C /Users/eric/Project/tests/ignorecheck log --oneline && git -C /Users/eric/Project/tests/ignorecheck diff $(git -C /Users/eric/Project/tests/ignorecheck rev-list --max-parents=0 HEAD) HEAD -- CONTRACT.md"
+  ],
+  "userVerdict": {
+    "result": "好用",
+    "reason": "能正确识别需求",
+    "taskName": "ignorecheck 冻结契约实现（臂一）",
+    "recordedAt": "2026-09-20"
+  },
+  "verdictPattern": {
+    "runs": "七场真实任务：arm-1 pelican（单块，0 派发）· pelican-bike（多模块+契约，4 角色）· uh1h（多模块+契约，7 角色）· 单车 SVG（单块，0 派发）· 设计差异评估（分析型，3 角色，中性）· 生态调研（调研型，librarian×2，好用）· ignorecheck 臂一（构建型+冻结契约，implementer×5，好用）",
+    "consecutivePositive": "第二次连续「好用」，且第一次落在**构建型**任务上 ⇒ 价值不限于调研型；共同点是任务形状不平凡（可切分 / 要外部取证 / 有冻结契约）",
+    "reading": "两次「好用」的原因都是**过程正确**，不是产物更好：①「明确要查证时能正确派遣 librarian 去干活」②「能正确识别需求」⇒ 用户的价值判据是 **agent 有没有把工作形状读对、按形状分工**；这与「单块任务 0 派发、判定偏低」互为印证",
+    "implication": "对外表述这套 preset 的价值时，应说『**把工作形状读对并据此分工**』，而不是『写出更好的产物』——后者至今没有任何一次证据支持"
+  },
+  "verificationCorrections": [
+    "契约冻结的核对方式写错（commit-vs-commit 恒空）⇒ 正确写法是 git status / git diff -- <file>",
+    "契约 §0 给的基准命令 `git -C <tmp> --no-index check-ignore -v` 顺序有误（`--no-index` 必须在子命令之后），是本人在写作时的错误，由臂一编排器实测发现"
+  ]
+}

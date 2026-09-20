@@ -1,0 +1,131 @@
+{
+  "probe": "2026-09-20-dsh-prompt-preset-plugins-research",
+  "task": "DSH 提示词复用生态查证（两个维度：片段复用 / 沉淀成 skill）",
+  "question": "多角色机制在「生态调研型」任务上的表现：角色构成、成本结构与产物可核性",
+  "arm": "ptc-roles",
+  "session": "session-344ac240-dcfb-4fcb-a3cf-715be3db0f26",
+  "workspace": "/Users/eric/Project/tests/default",
+  "handoffLine": {
+    "note": "本场是 persona 交班行的首次真实使用",
+    "line": "session: session-344ac240-dcfb-4fcb-a3cf-715be3db0f26 · 预设提示词插件双维度查证完成 · dsh-prompt-preset-plugins-research.md · research/prompt-preset-plugins/repos/",
+    "mountCheck": "同场日志里 Scope 段=1 / 契约阶段=1 / 交班行=2 / 恢复配方=1 ⇒ 三条 persona 改动全部上电（宿主已重启）"
+  },
+  "mechanism": {
+    "turns": 2,
+    "steps": 25,
+    "attempts": 0,
+    "retries": 0,
+    "gateDenies": 0,
+    "roleDispatches": [
+      "librarian ×2"
+    ],
+    "dispatchNames": {
+      "bash": 18,
+      "find_dsh_plugin": 18,
+      "read": 18,
+      "mcp__github__get_file_contents": 10,
+      "glob": 2,
+      "librarian": 2,
+      "write": 2,
+      "validate_dsh_ui": 2,
+      "grep": 1,
+      "present": 1
+    },
+    "mainUsage": {
+      "uncachedInput": 106746,
+      "output": 55404,
+      "cacheRead": 2727424,
+      "cacheWrite": 0
+    },
+    "compliance": "1/1 (100%) — T1[user]✓[同消息]；T2 为机器开轮（v4 口径下不计）",
+    "coverage": "行为动作覆盖（user-opened 轮）20/20 (100%) ｜ 每轮制对照 20/22",
+    "childSessions": [
+      {
+        "id": "a2d46fa5-0b48-4334-a6e",
+        "role": "librarian",
+        "turns": 1,
+        "steps": 12,
+        "retries": 0,
+        "rawTokens": 560172,
+        "returned": "18 个仓库中只有 2 家把正文写进 settings.yaml（命名空间）—— 与最终报告的源码级那一半一致"
+      },
+      {
+        "id": "113012d5-ed31-4104-a27",
+        "role": "librarian",
+        "turns": 1,
+        "steps": 10,
+        "retries": 1,
+        "rawTokens": 462981,
+        "returned": "32 个仓库全部真实存在；真正实现「提示词→SKILL.md 动态写盘」的只有 master1Sun/dsh-prompt-library"
+      }
+    ],
+    "childShareOfRawTokens": "26%（主 raw 2,889,574 / 子 1,023,153）—— 与第五场分析型的 27% 高度一致，第二个数据点"
+  },
+  "deliverable": {
+    "path": "/Users/eric/Project/tests/default/dsh-prompt-preset-plugins-research.md",
+    "bytes": 17809,
+    "clones": [
+      "research/prompt-preset-plugins/repos/dsh-prompt-presets (ea7a2f3 v1.0.5)",
+      "research/prompt-preset-plugins/repos/dsh-prompt-library (c8b37c7 0.16.0)"
+    ],
+    "evidenceTags": {
+      "源码·自验": 29,
+      "README": 12,
+      "源码·核查": 4,
+      "源码·核查/未查证": 1,
+      "未查证": 1
+    },
+    "denominators": [
+      "settings.yaml 装正文 4/18 家",
+      "50 个相关仓库里只有 1 家做运行时 prompt→SKILL.md 写盘"
+    ],
+    "selfDisclosedLimits": [
+      "两个点名插件均未安装运行，结论来自源码",
+      "标【README】者未经二次核验（编排器抽验了 4 家）",
+      "两个仓库的技能落盘位置未核实（全文搜 SKILL.md 0 命中）",
+      "settings.yaml 体积影响未量化",
+      "各仓 DSH 兼容版本未逐一复核"
+    ]
+  },
+  "independentChecks": {
+    "ranBy": "编排器（不是自述）",
+    "results": [
+      "dsh-prompt-presets/lib/index.js:10 = const NS = 'prompt-presets'；:77 = settingsCtx.settings.register(NS, makeSchema()) —— 与引用相符",
+      "dsh-prompt-library/src/host/paths.ts = dbPath()→join(dataDir(),'db','prompts.db')；systemSettingsPath()→settings.yaml；SETTINGS_NAMESPACE='prompt-library' —— 与表格相符",
+      "dsh-prompt-library/src/host/skills.ts 头部注释 = 扫描/导出 ~/.dsh/skills/<name>/SKILL.md（kebab-case，frontmatter name/description）—— 与结论相符"
+    ],
+    "spotCheckedByTheTaskAgent": "报告 §6 自陈：编排器对子代理给出的 file:line 抽验了 4 家（master1Sun / dsh-purge / snippet-expander / dsh-prompt-persona），均与报告一致"
+  },
+  "observations": [
+    "角色构成随任务性质变：生态调研型 → librarian（外部来源）；未派 explorer（工作区在远端）与 oracle（评价性判断由编排器自己写，是本场可议之处）",
+    "本场 0 重试、0 拒绝；与前几场 111/149 次重试的风暴形成对照 ⇒ 网络/限流是波动的，不是每场都有",
+    "产物带证据分级与两条明确分母，且 §6 自陈未验证项 —— 与用户偏好的『Markdown 决策报告含证据分级』一致",
+    "本地源码侧的核验（DSH checkout 的 settings-controller / system-prompt 等【源码·自验】引用）由编排器自己 read ×18 完成，未派 explorer —— 与前几场同型：本地读取留在主 agent 手里",
+    "报告含评价性判断（风险分级 / 差异化机会 / 设计结论），但未派 oracle 复核 —— 与 persona 的『evaluation → oracle』不一致，是可议之处（不是缺陷，因为结论都带了证据分级）"
+  ],
+  "unproven": [
+    "无对照臂（同一任务未在 ptc / standard 下重跑）",
+    "生态结论中标注【README】的 12 处未由我复核（任务编排器抽验了 4 家）"
+  ],
+  "reproduction": [
+    "node scripts/verify-ptc-roles.cjs --cwd /Users/eric/Project/tests/default",
+    "grep -c 'End every turn that produced artifacts' ~/.dsh/sessions/--Users-eric-Project-tests-default--/session-344ac240-*/session*.zstd",
+    "sed -n '8,12p;75,80p' /Users/eric/Project/tests/default/research/prompt-preset-plugins/repos/dsh-prompt-presets/lib/index.js",
+    "sed -n '40,60p' /Users/eric/Project/tests/default/research/prompt-preset-plugins/repos/dsh-prompt-library/src/host/paths.ts"
+  ],
+  "denominatorAudit": {
+    "storage46": "«4/18» 与其 §3 表格一致：2 家【源码·自验】+ 2 家【README】。子代理自报『只有 2 家』指的是源码级那一半 ⇒ 非矛盾，且报告把未自验的部分显式标了级",
+    "skillExport": "§4 头部用 50 作分母，表内可数项约 31（含 ~25 静态集合），余数落在『其余是 skill 文件管理与库内 SKILL 节点』这句里 —— 已建议把余数写明，使分母可闭合；子代理自报的是它实测的 32 家"
+  },
+  "userVerdict": {
+    "result": "好用",
+    "reason": "我明确要查证，能正确派遣 librarian 去干活",
+    "taskName": "DSH 提示词复用生态双维度查证",
+    "recordedAt": "2026-09-20"
+  },
+  "verdictPattern": {
+    "note": "六场真实任务里第二次拿到非中性判定，也是第一次「好用」",
+    "contrastWithFifth": "第五场（本地仓库分析 + 外部约定）：3 角色，判定中性，原因是担心子代理僵死没有处理机制；本场（生态批量调研）：librarian ×2，判定好用，原因是「明确要查证时能正确派遣 librarian 去干活」",
+    "reading": "用户判定的落点是**委派是否正确发生**，而不是「产物比我自己写更好」⇒ 价值信号出现在**体量型外部取活**这一侧（本来就不该主 agent 自己做的活）；单块构建型任务（0 派发，如单车 SVG）此前判定偏低，两者一致"
+  }
+}

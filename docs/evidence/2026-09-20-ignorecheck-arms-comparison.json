@@ -1,0 +1,78 @@
+{
+  "probe": "2026-09-20-ignorecheck-arms-comparison",
+  "task": "ignorecheck：同一冻结任务、同一开场句（「按 CONTRACT.md 实现」），两臂唯一变量 = preset",
+  "arms": {
+    "arm1-ptc-roles": {
+      "session": "session-a108a27a-cf7a-42a2-934f-60a13979f12e",
+      "preset": "ptc-roles",
+      "turns": 6,
+      "mainSteps": 28,
+      "childSessions": 4,
+      "childSteps": 183,
+      "roleDispatches": [
+        "implementer ×5",
+        "send_message ×2"
+      ],
+      "mainRaw": 2580877,
+      "childRaw": 14494594,
+      "totalRaw": 17075471,
+      "wallClock": "21:35 → 21:57（约 22 分钟）",
+      "tests": 47,
+      "sourceLines": 1212,
+      "differential": "13/13",
+      "outOfListProbe": "17/20",
+      "contract": "运行中被编排器修正 +5/−1（合规，见臂一证据）",
+      "implementationCommitted": false
+    },
+    "arm2-ptc": {
+      "session": "session-e7cfe422-0294-45be-9a1a-1c7a3ec744b8",
+      "preset": "ptc（官方内置）",
+      "turns": 1,
+      "mainSteps": 27,
+      "childSessions": 0,
+      "childSteps": 0,
+      "roleDispatches": [],
+      "toolFace": "run_code（1 个）—— 官方 ptc 未实例化任何角色工具",
+      "mainRaw": 2679640,
+      "childRaw": 0,
+      "totalRaw": 2679640,
+      "wallClock": "22:11 → 22:19（约 8 分钟）",
+      "tests": 29,
+      "sourceLines": 756,
+      "differential": "13/13",
+      "outOfListProbe": "17/20（与臂一相同的三条差异）",
+      "contract": "未改（原冻结文本）",
+      "implementationCommitted": false
+    }
+  },
+  "verdict": {
+    "outcome": "**在冻结验收上无差异**：两臂 differential 13/13、我的越界探查都是 17/20 且差异条目完全相同 ⇒ 本任务上角色工具**没有带来可测的产出改善**",
+    "cost": "臂一 **6.4×** token（1707 万 vs 268 万）、**2.75×** 墙钟、**8×** 步数",
+    "onlyQualitativeDifference": "臂一多写了 1.6× 代码与 1.6× 测试（含一个更厚的 differential），且发生过一次「编排器退回子代理重做」"
+  },
+  "confounds": [
+    "n=1/臂：单次抽样，方差未量化（臂一的退回循环本身可能是这次抽样特有的）",
+    "工具面不同是根本差异：臂二**根本没有角色工具**（官方 ptc 未实例化）⇒ 本次对比是「有角色工具 vs 没有」，不是「有纪律 vs 无纪律」",
+    "履约输入略不同：臂一的契约在运行中被补了两条实测注记（对臂一有利的信息），臂二用的是原始文本",
+    "任务规模偏小（756–1212 行）；角色工具的收益可能只在更大规模上出现，本次没有证据",
+    "两臂的实现都未提交 ⇒ 无版本锚，无法做二次复现"
+  ],
+  "unproven": [
+    "价值面三格（臂二待填）",
+    "规模化后的成本/收益曲线",
+    "这次比较不能推广到「所有构建型任务」"
+  ],
+  "reproduction": [
+    "node /Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/scripts/verify-ptc-roles.cjs --cwd /Users/eric/Project/tests/ignorecheck",
+    "node ... --cwd /Users/eric/Project/tests/ignorecheck-ptc",
+    "cd /Users/eric/Project/tests/ignorecheck && node tools/differential.mjs && node --test",
+    "cd /Users/eric/Project/tests/ignorecheck-ptc && node tools/differential.mjs && node --test"
+  ],
+  "userVerdictArm2": {
+    "result": "好",
+    "reason": "可能任务相对简单，而多角色天然会消耗更多token（最后委派了5次subagent）",
+    "taskName": "ignorecheck 官方 ptc 对照臂",
+    "recordedAt": "2026-09-20"
+  },
+  "userReading": "用户的读法与本次分析一致：把 6.4× 代价归因于「任务相对简单 + 多角色天然更贵（臂一派了 5 次子代理）」，没有把差异读成「角色无用」—— 与 confounds 里「任务规模偏小」互为印证，也是下一步该跑更大任务的直接理由"
+}
