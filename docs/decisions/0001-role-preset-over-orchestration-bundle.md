@@ -102,7 +102,7 @@ bundle 是 profile 级，做不到「只让角色会话 native、日常会话保
   目录、`model-core` 解析管线、ultrawork、以及 12 个按模型家族分身的 body。
   ②**Specialists 由散列改为表格**（列：领域 / 何时委派 / 何时不委派 / 拓扑 / 只读或可写），并把叶子性从
   末行**脚注**下沉到**每行** —— 脚注与本行分离**正是第 4 轮那条矛盾的成因**。
-  **新副本规则**：该表只写路由事实，**绝不写工具名**（理由见 `AGENTS.md` 第 11 条）。
+  **新副本规则**：该表只写路由事实，**绝不写工具名**（理由见 `docs/pitfalls.md` #12「副本病」：同一事实的第二份副本必然漂移）。
   ③**角色 `continuable` 定案**：spec §2.1(4)/§7.5 写「命名专家为 one-shot」与实现冲突；**以上游为准** ——
   Sisyphus 有一条 MANDATORY 的 Session Continuity（「NEVER start fresh」）⇒ `continuable` 是正确选择，
   spec 那两行已改，本行即决策记录。
