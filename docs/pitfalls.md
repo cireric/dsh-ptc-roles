@@ -381,6 +381,23 @@ DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里必须是**真目录 + �
     - **探针级读法**（reader 未覆盖时）：落 `.tmp/`、写明口径与 n、标注「未复核」；**不得**进 `docs/` 或结论。
       例：一次 `user` 通道构成与 token 三桶统计（`.tmp/measure-injection.md`，未复核）；图像通道探针（`.tmp/measure-images.md`）。
 
+25. **子代理「僵死」的真相：DSH 没有超时与告警，重试预算由适配器决定 —— 本部署是 1000 次 × 单次最长等 15 分钟。**
+    【C】2026-09-20 读源码 + 数据面实测；同日**用户裁决：选 c —— 接受现状，不改路由也不改适配器**（下面第三段就是
+    这个选择的代价，别再重新论证一遍）。
+    - **没有僵死检测**：subagent 包里只有「关掉进程」的上限（`shutdownTimeoutMs` 默认 1000 ms、`disposeGraceMs`），
+      没有 deadline；job 子系统源码里也搜不到超时；`agent-loop` 没有每请求看门狗。
+    - **重试是框架的恢复手段**：执行者 `dsh-llm-retry`（在每一步的持久边界重跑），**策略住在 provider 适配器里**。
+      本部署走的 `@mars-sea/dsh-commandcode-provider` 把 `maxRetries: 1e3` 写死在 `providerRetryPolicy()`（忽略参数、
+      不读配置），退避封顶 15 分钟 ⇒ 一次请求可以静默等很久。**官方适配器是可配的**（`dsh-llm-deepseek` / `dsh-llm-pi-ai`
+      的 `retryPolicy.maxRetries`；旧式扁平 `maxRetries` 已移除并会报错提示），但本部署没走那条路。
+    - **唯一现成的「卡住」信号在数据面**：每次重试在等待前落盘 `llm/retry`（带计划延迟）与 `llm/retry-started`；
+      reader 的常备读数已逐会话打印该计数（[实测] 全库 468 次，单会话最高 149 次）。
+    - **`list_agents` 只有 running / idle / ready**，没有最后活动时间与进度 ⇒「在跑」与「卡住」外观相同；
+      父级只在子代理**结束时**收到结算通知（文案随 `stopReason` 变）。
+    - ⇒ **可做的只有恢复配方**（已写进 persona 的 Failure recovery）：`list_agents` 看状态 → 读该子会话日志的最后事件时间
+      与 `llm/retry` 计数 → `interrupt_agent` 停掉 → 自己接手或重派一个更窄的任务。
+    - **不在本轮**：`--stale <分钟>` 读数（等第一个真实僵死出现时再做，它让「停在半路」事后可查）。
+
 ## C. 排障表（症状 → 原因 → 修法）
 
 | 症状 | 原因 | 修法 |
