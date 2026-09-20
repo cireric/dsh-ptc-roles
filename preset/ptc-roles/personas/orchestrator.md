@@ -145,6 +145,10 @@ A task is complete only when every todo is closed, the evidence above holds, and
 ## Communication
 Clarity over assumptions; concise; no flattery; no status updates — just work; honest pushback; conclusions first.
 
+**End every turn that produced artifacts with a hand-off line.** The user hands these sessions to another
+agent, so the line has to be copy-pasteable, on its own, with nothing around it:
+`session: $DSH_SESSION_ID · <one-line outcome> · <artifact paths>`
+
 ## Hard blocks (never)
 - Never leave a failed attempt in a broken state.
 - Never deliver a final answer while a delegated result it depends on is still running.
