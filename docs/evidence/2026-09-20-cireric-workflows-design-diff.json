@@ -1,0 +1,110 @@
+{
+  "probe": "2026-09-20-cireric-workflows-design-diff",
+  "task": "cireric-workflows 设计取向对照评估",
+  "question": "这套 preset 的多角色机制，在「分析型 + 跨仓库」任务上会不会真的被用上？用上了有没有价值？",
+  "arm": "ptc-roles",
+  "session": "session-ddf8d825-b84f-4e91-9000-d768e426de8a",
+  "workspace": "/Users/eric/Project/tests/default",
+  "userVerdict": {
+    "result": "中性",
+    "reason": "还不确定这套多角色是否完善：子代理僵死（长时间无输出）时可能还需要一套处理机制",
+    "taskName": "cireric-workflows 设计取向对照评估（本文件作者命名）",
+    "recordedAt": "2026-09-20"
+  },
+  "mechanism": {
+    "turns": 3,
+    "steps": 25,
+    "attempts": 1,
+    "roleDispatches": [
+      "explorer ×1",
+      "librarian ×1",
+      "oracle ×1"
+    ],
+    "childSessions": [
+      {
+        "role": "oracle",
+        "id": "579c3f00-eea5-4ef9-8528",
+        "steps": 4,
+        "rawTokens": 83306
+      },
+      {
+        "role": "librarian",
+        "id": "f5627f78-0ca7-456e-a4e7",
+        "steps": 5,
+        "rawTokens": 93459
+      },
+      {
+        "role": "explorer",
+        "id": "66a8e6f8-c52d-4bd9-9ba6",
+        "steps": 15,
+        "rawTokens": 602116
+      }
+    ],
+    "mainUsage": {
+      "uncachedInput": 79465,
+      "output": 45823,
+      "cacheRead": 2037504,
+      "cacheWrite": 0
+    },
+    "childShareOfRawTokens": "27%（与两场构建型任务的 56–64% 相反：分析型任务的钱主要花在主 agent 写报告上）",
+    "compliance": "1/2（user-opened turns 口径）；T1[user]✓[同消息] · T2[机器]✗ · T3[user]✗[动后补]",
+    "gateDeny": "1 次，tool/result @seq 247（turn 3 / step 1）—— 被拒的**是一次角色派发**，模型补写门行后重发成功",
+    "mount": "新 persona 在挂载中（日志含 user-opened turns / Phase 0.5）",
+    "delegationPrompts": "三条都是五段式且带证据要求：explorer 要 file:line、librarian 要官方 URL 并标注未验证、oracle 被要求对抗性评审 + 补全推翻条件"
+  },
+  "deliverable": {
+    "path": "/Users/eric/Project/tests/default/cireric-workflows-agents-skills-design-diff.md",
+    "bytes": 23208,
+    "structure": [
+      "结论摘要",
+      "取证范围",
+      "六条独有设计选择 C1–C6",
+      "逐条「会被什么证据推翻」3.1–3.6"
+    ],
+    "evidenceTags": {
+      "源码": 12,
+      "官方文档": 10,
+      "推断": 2,
+      "未验证": 1
+    },
+    "independentChecks": [
+      "wc -l /Users/eric/Project/tests/cireric-workflows/agents/deepworker.md = 824、researcher.md = 584 —— 与报告及 explorer 的清单逐字相符",
+      "抽查报告引用的 deepworker.md:744 —— 该行原文正是它声称的 QA 门控组合路径测试条款"
+    ],
+    "childReturns": [
+      "oracle：逐条判定（C3/C5 过强 · C6 已被本仓库证据反证 · C2 范畴错误 · C4 依据不可验证），并给出 F1–F6 的缺陷",
+      "librarian：主流 agent 框架对照表，每格附官方文档 URL",
+      "explorer：目标仓库文件清单 + 行数（含 824 / 584）"
+    ],
+    "oracleChangedTheArtifact": "报告里 C1 明标「主张（已收窄）」并补上 opencode 自身的 permission / steps / mode 机制"
+  },
+  "hangHandling": {
+    "question": "子代理僵死时，今天有没有处理机制？（源自用户判定里的理由）",
+    "observed": [
+      "五场任务均未观测到真正的僵死；最长子会话 98.3 分钟后正常收尾",
+      "中止路径被用过：session-aef6f35a（父）日志里 7 条『被停』痕迹，c5d40380（子）自身 2 条"
+    ],
+    "exists": [
+      "角色是 continuable ⇒ 派发不阻塞父级（父拿到 id，子代理跑完发完成通知）",
+      "job_kill（后台任务）/ interrupt_agent（agent 回合）两个杀死开关；框架侧 tool-subagent/src/index.ts:553 与 :143-160",
+      "list_agents 可查 running / idle / ready"
+    ],
+    "missing": [
+      "**没有任何超时/截止时间**（tool-subagent 源码里搜不到 deadline）",
+      "list_agents **没有进度信号**（无步数、无最后活动时间）⇒『还在跑』与『卡住了』外观相同",
+      "没有成文判据：何时该杀、杀完怎么办（ADR 0002 待决 5 登记，本判定是它的第一个真实动机）"
+    ],
+    "proposedFirstStep": "先让『停在半路』可测量：给唯一 reader 加 --stale <分钟>（列出最后一条事件距今超过 N 分钟的会话，带角色/深度/最后事件类型），第一个真实僵死出现后再写判据（无失败不设规则）"
+  },
+  "unproven": [
+    "价值面为『中性』且只有一格判定；机制跑通不等于用户认为有用",
+    "没有对照臂（同一任务未在 ptc / standard 下重跑）⇒「成本或结果有没有可测改善」仍无答案",
+    "本场未做截图像素级验收（任务是文档产出，验收面是引用可核性，已抽查两处）"
+  ],
+  "reproduction": [
+    "node scripts/verify-ptc-roles.cjs --cwd /Users/eric/Project/tests/default",
+    "zstd -dc ~/.dsh/sessions/--Users-eric-Project-tests-default--/session-ddf8d825-*/session*.zstd | grep -c 'intent-gate'",
+    "wc -l /Users/eric/Project/tests/cireric-workflows/agents/*.md",
+    "sed -n '744p' /Users/eric/Project/tests/cireric-workflows/agents/deepworker.md"
+  ]
+}
