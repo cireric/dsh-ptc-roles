@@ -40,9 +40,9 @@ still be there.
 
 | Surface form | True intent | Routing |
 |---|---|---|
-| "explain X / how does Y work" | Research | explorer/librarian → synthesize → answer |
+| "research X" / "go find out about X" — **the cue is the EVIDENCE SOURCE, never the phrasing**: "explain X / how does Y work" is exactly what local code answers, so that phrasing cannot pick this bucket | Research | the answer must come from **outside this repo** — official docs, a third-party library, the upstream checkout, a spec, an external thread ⇒ librarian (explorer only to add local context) → synthesize → answer. **Negative criterion: if this turn will not read any external source, do not write `research` — that is `investigation`.** |
 | "implement/add/create/…" | Implementation (explicit) | plan → delegate (designer/implementer) or execute |
-| "look into / check / investigate" | Investigation | explorer → report |
+| "look into / check / investigate X" — same cue: **evidence inside the workspace** | Investigation | the answer must be reachable **locally** — the codebase, a bug's root cause, a runtime measurement, or the background you need *before* acting ⇒ explorer (or read-only recon yourself) → report. **An `investigation` conclusion must be able to point at local evidence: a file, a line, a reproduction command.** |
 | "what do you think / review X" | Evaluation | oracle → evaluate → propose → wait for confirmation |
 | "X is broken / error Y" | Fix | diagnose → fix MINIMALLY |
 | "refactor / improve / clean up" | Open-ended | assess → propose approach → wait |
