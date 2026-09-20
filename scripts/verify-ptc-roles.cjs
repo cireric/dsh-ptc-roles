@@ -28,6 +28,29 @@
 //     **单场静默可观测化**（ADR 0002 的 C 项）：合计率会把「一场 0%」平均掉，所以另按**会话**点名
 //     「整场静默」——它是数据面观察、不接退出码（同 pitfalls #19 的取舍）。
 //
+//     **分母 = user-opened turns（2026-09-20 起）**。persona 把 Phase 0 的义务限定在
+//     **user-opened turns**（一次授权一行；工具结果 / 子代理完成通知 / 注入提醒 / 回灌图片这类
+//     **机器消息**续跑的轮次是**同一份授权还在跑**，不欠新行），插件只在「本轮 claim 的消息里含
+//     `source.kind === 'user'`」的轮次上设 `userTurn` 并开闸（intent-gate-watchdog.mjs:349,358）。
+//     读者此前按「每轮」做分母，于是插件从未开闸的机器轮次也被算进分母 —— 2026-09-19 两场真实任务里
+//     闸门 0 拒绝而读者报 50–60%，差的就是这个资格口径（persona / 插件**都不动**，只换读者分母）。
+//     - **唯一判据**：该轮起点被 claim 的那批 `user/message` 里**最近于轮起点的那一条**（按 `seq`）
+//       的 `source.kind === 'user'` ⇒ user-opened；其余 kind 一律算**机器开轮**。
+//       `user/message` 事件**不带 `turn` 字段**，只能按 `seq` 与时序反推（用 turn 归属会全空）。
+//     - 合规**分子**仍是 ① 存在口径，只换**分母**：分子/分母都只算 user-opened 且**会改变行为**的轮次。
+//     - **旧「每轮制」读数全部保留**，标为「对照口径（每轮制，旧读数）」；机器开轮的**数量**与其中
+//       **动了手的轮数**打印为**观察项**，不进分子分母（与 pitfalls #19「观察项不接退出码」同取舍）。
+//     - 同一判据的另一处登记是 persona 的字面量 `user-opened turns` —— 两处漂移不会静默：
+//       `userOpenedScopeSelfTest`（同 behaviorToolsSelfTest 的形状）当场报 FAIL。
+//
+//   * **每会话常备读数（2026-09-20 新增）**：① `user/message` 通道构成（总条数 / 真用户 / 机器，
+//     以及**实际见到的 kind 取值表**与解析用的 source 路径计数）；② token **四桶**
+//     （uncachedInput / output / cacheRead / cacheWrite），折叠语义照抄 pitfalls #22②：
+//     计入 `assistant/message`，同一 `(turn, step)` 是**替换**（取最后一条）；`assistant/attempt`
+//     带 usage 时**单独报告**、不并入四桶，并打印 `llm/retry-started` 次数说明重试口径。
+//     ⚠️ 框架里**没有价目表** ⇒ 只报 **token 桶**，不报「成本」；且**不跨会话汇总**
+//     （seeded 会话是父事件的深拷贝，相加会把父的用量算第二遍，pitfalls #22③）。
+//
 //   * **不可归属派发计数**（复审裁定 R-02）：`tool/ptc-dispatch` 回指不到任何 `tool/call` 时既不静默、
 //     也不只是打印 —— 它是 **✗ FAIL**（归因失明 = 判据看不见东西，属未知异常，健康会话必须为 0；
 //     与容忍的 `⊘ 已知自身层泄漏` 不同类，理由见 docs/pitfalls.md #7 与脚本内的注释）。
@@ -158,6 +181,20 @@ const PERSONA_V2_MARK = 'Delegation contract'
 const INTENT_MARKERS = ['Intent:', '意图判定']
 
 /**
+ * 轮次资格口径的**字面量** —— persona 与 reader 各写一份，两处必须同口径。
+ *
+ * persona（`personas/orchestrator.md`）把 Phase 0 的义务写死成 `user-opened turns`；本脚本用同一串
+ * 字面量给合规率的分母命名。这不是文档同步问题，而是**判据同步**问题：口径一改，两边必须同时改，
+ * 否则读者量的是另一个东西（2026-09-16 的「任意位置 vs 首行」就是这么漂的，见 pitfalls #19）。
+ * `userOpenedScopeSelfTest` 逐字比对这条字面量，并带三个内存变异对照证明它不会空转。
+ */
+const USER_OPENED_SCOPE = 'user-opened turns'
+/** persona 文件 —— 口径的另一个登记点（与 BEHAVIOR_TOOLS 的插件↔脚本关系同构）。 */
+const PERSONA_FILE = path.join(__dirname, '..', 'preset', 'ptc-roles', 'personas', 'orchestrator.md')
+/** `user/message.data.source.kind` 取这个值 = **真用户**开的轮；其余 kind 一律算机器开轮。 */
+const USER_KIND = 'user'
+
+/**
  * 「会改变行为」的工具 —— 唯一有权要求门行的那批轮次（persona 的 Phase 0 口径）。
  * **必须与 preset/ptc-roles/intent-gate-watchdog.mjs 的 BEHAVIOR_TOOLS 同口径**：那里用它决定
  * 「要不要提醒」，这里用它决定「合规率的分母」。两处漂移不会静默 —— 合规率会当场翻脸。
@@ -180,6 +217,68 @@ function messageText(event) {
   let text = ''
   for (const b of blocks) if (b && b.type === 'text' && typeof b.text === 'string') text += b.text + '\n'
   return text
+}
+
+/**
+ * `user/message` 的来源 kind —— 只有 `'user'` 是真用户，其余（plugin / subagent-settled /
+ * agent-instructions / skill-catalog / agent-message / skill-invocation …）都是机器写的。
+ *
+ * 两条路径都读：判据的字面位置是 `data.message.source.kind`（框架/插件看到的是 `UserMessage`，
+ * `intent-gate-watchdog.mjs:349` 判的就是 `m.source.kind`），而**落盘**形状把 UserMessage 摊在
+ * `data` 下 ⇒ 实测 386/386 条都在 `data.source.kind`。两条都读、并把**实际走哪条**计数打印出来，
+ * 是为了不让「提取器漏了兜底 ⇒ 全判机器开轮」这种错（pitfalls #24 表②）静默发生。
+ */
+function userMessageSource(event) {
+  const m = event.data && event.data.message
+  if (m && m.source && typeof m.source.kind === 'string') return { kind: m.source.kind, path: 'message' }
+  const d = event.data
+  if (d && d.source && typeof d.source.kind === 'string') return { kind: d.source.kind, path: 'data' }
+  return { kind: undefined, path: 'none' }
+}
+
+/** 事件上的 usage 采样（`assistant/message` / `assistant/attempt` 逐 step 带，见 pitfalls #22①）。 */
+function usageOf(event) {
+  const u = event.data && event.data.usage
+  return u !== null && typeof u === 'object' ? u : undefined
+}
+
+/**
+ * 四桶提取 —— **不自造桶**（pitfalls #22①）：`inputTokens` 只是**未缓存输入**，
+ * 计费输入 = uncachedInput + cacheRead + cacheWrite；`totalTokens` 不当分母，故不读。
+ * 缺字段（例如本机实测多数路由没有 `cacheWriteTokens`）按 0 计，不猜。
+ */
+function bucketsOf(u) {
+  return {
+    uncachedInput: Number(u.inputTokens) || 0,
+    output: Number(u.outputTokens) || 0,
+    cacheRead: Number(u.cacheReadTokens) || 0,
+    cacheWrite: Number(u.cacheWriteTokens) || 0,
+  }
+}
+
+const ZERO_BUCKETS = { uncachedInput: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+const BUCKET_KEYS = ['uncachedInput', 'output', 'cacheRead', 'cacheWrite']
+
+function addBuckets(a, b) {
+  const out = {}
+  for (const k of BUCKET_KEYS) out[k] = a[k] + b[k]
+  return out
+}
+
+/** 千分位 —— 只影响打印，不参与判定。 */
+function num(n) { return n.toLocaleString('en-US') }
+
+/**
+ * token 四桶的折叠（pitfalls #22② 的 ① 与 ②）：**同一 `(turn, step)` 是替换，不是累加**
+ * （取最后一条 `assistant/message` 的 usage）。`assistant/attempt` 另有 usage 时**单独报告**
+ * —— 框架的替换槽由 `llm/retry-started` 关闭（重试的那一次要**加**），这里不替框架做那个加法。
+ */
+function usageTotals(r) {
+  let totals = { ...ZERO_BUCKETS }
+  for (const b of r.usage.bySlot.values()) totals = addBuckets(totals, b)
+  let attempts = { ...ZERO_BUCKETS }
+  for (const s of r.usage.attempts) attempts = addBuckets(attempts, s.buckets)
+  return { totals, attempts }
 }
 
 function findSessionFiles() {
@@ -235,7 +334,16 @@ function sameCwd(a, b) {
 }
 
 function analyze(raw) {
-  const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', escalations: [], intentTurns: new Map(), unattributable: new Set() }
+  const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', escalations: [], intentTurns: new Map(), unattributable: new Set(),
+    // ── 每会话常备读数（2026-09-20）─────────────────────────────────────────
+    /** 逐条 `user/message`：**没有 turn 字段**，只能按 `seq` 归轮（`{ seq, kind }`，文件顺序即 seq 顺序）。 */
+    userMsgs: [],
+    /** 实际见到的 source.kind 取值表（kind → 条数）—— 打印出来供复核。 */
+    userKindCounts: new Map(),
+    /** 解析走了哪条路径（判据字面位置 vs 落盘形状 vs 都没读到）。 */
+    userSourcePaths: { message: 0, data: 0, none: 0 },
+    /** token 折叠：`(turn,step)` → 最后一条 `assistant/message` 的四桶；attempt 另存。 */
+    usage: { bySlot: new Map(), attempts: [], attemptsSeen: 0, retries: 0, samples: 0 } }
   /** callId -> { turn, carrier }：把无 turn 的 `tool/ptc-dispatch` 归回它所属的那一轮，并记下载体消息。 */
   const callTurns = new Map()
   /** 单调递增的 assistant 消息序号（**含纯工具调用消息**）；①/② 判据只比较同一轮内的消息先后。 */
@@ -246,7 +354,9 @@ function analyze(raw) {
     let rec = result.intentTurns.get(t)
     if (rec === undefined) {
       rec = { any: false, reply: false, first: false, seenText: false, acting: false,
-        declSeq: undefined, firstActCarrier: undefined, carriers: [] }
+        declSeq: undefined, firstActCarrier: undefined, carriers: [],
+        // 轮次资格（user-opened）用：轮起点 seq 与该轮首个 assistant/message 的 seq。
+        originSeq: undefined, firstAsstSeq: undefined }
       result.intentTurns.set(t, rec)
     }
     return rec
@@ -284,11 +394,13 @@ function analyze(raw) {
     }
     if (typeof turn === 'number') {
       const rec = recFor(turn)
+      if (rec.originSeq === undefined && typeof event.seq === 'number') rec.originSeq = event.seq
       if (INTENT_MARKERS.some((m) => line.includes(m))) rec.any = true
       if (event.type === 'assistant/message') {
         const text = messageText(event)
         msgSeq += 1
         lastMsgSeq = msgSeq
+        if (rec.firstAsstSeq === undefined && typeof event.seq === 'number') rec.firstAsstSeq = event.seq
         if (INTENT_MARKERS.some((m) => text.includes(m))) rec.reply = true
         if (text.trim() !== '') {
           if (!rec.seenText) {
@@ -298,7 +410,28 @@ function analyze(raw) {
           // ① / ② 的共用输入：认**第一次**出现的门行（某条消息的首行），之后不再改判。
           if (rec.declSeq === undefined && hasFirstLineMarker(text)) rec.declSeq = msgSeq
         }
+        // token 折叠（pitfalls #22②）：同一 (turn, step) 是**替换** ⇒ Map 后写覆盖先写（取最后一条）。
+        const u = usageOf(event)
+        if (u !== undefined) {
+          result.usage.samples += 1
+          result.usage.bySlot.set(turn + ':' + event.data.step, bucketsOf(u))
+        }
+      } else if (event.type === 'assistant/attempt') {
+        // attempt 的 usage **单独报告**，不进四桶：替换槽由 `llm/retry-started` 关闭（#22②），
+        // 要不要把重试那一次加上是框架投影的语义，读者不替它做，只在打印里说清。
+        const u = usageOf(event)
+        if (u !== undefined) result.usage.attempts.push({ turn, step: event.data.step, buckets: bucketsOf(u) })
       }
+    }
+    if (event.type === 'assistant/attempt') result.usage.attemptsSeen += 1
+    else if (event.type === 'llm/retry-started') result.usage.retries += 1
+    else if (event.type === 'user/message') {
+      // `user/message` **没有 turn 字段**（pitfalls #24② 那类提取器错误的现场）：这里只把每条按
+      // `seq` 收进 `userMsgs`，**归轮**在 intentGateStats/qualifyTurn 里按 seq 切（用 turn 归属会全空）。
+      const src = userMessageSource(event)
+      result.userMsgs.push({ seq: typeof event.seq === 'number' ? event.seq : undefined, kind: src.kind })
+      result.userKindCounts.set(String(src.kind), (result.userKindCounts.get(String(src.kind)) || 0) + 1)
+      result.userSourcePaths[src.path] += 1
     }
     if (event.type === 'session') result.header = event
     else if (event.type === 'request/header') {
@@ -367,8 +500,75 @@ function declaredBefore(rec) {
     && rec.firstActCarrier !== undefined && rec.declSeq < rec.firstActCarrier
 }
 
-/** 「整场静默」判据（① 口径）—— 打印与自测**共用同一份**，两处漂移会让 C 项变成空转。 */
+/** 「整场静默」判据（① 口径，**每轮制对照**）—— 打印与自测**共用同一份**，两处漂移会让 C 项变成空转。 */
 function gateSilent(s) { return s.eligible > 0 && s.eligibleDeclared === 0 }
+
+/** 同一条观察的 **user-opened 口径**版（新分母）：有该欠行的轮次却整场 0 命中。 */
+function gateSilentUserOpened(s) { return s.userOpenedEligible > 0 && s.userOpenedDeclared === 0 }
+
+/**
+ * 一轮的**资格**（轮次资格 = user-opened turns，2026-09-20 起是合规率的分母）。
+ *
+ * 唯一判据：该轮起点被 claim 的那批 `user/message` 里**最近于轮起点的那一条**（按 `seq`）的
+ * `source.kind === 'user'` ⇒ `origin === 'user'`（user-opened）；**其余 kind 一律算机器开轮**；
+ * 无法按 seq 归轮（旧日志 / 合成夹具没有 seq）⇒ `origin === 'unknown'`，也算机器开轮但**单独计数**。
+ *
+ * 为什么不按 `turn` 字段：`user/message` 事件**不带 turn**（pitfalls #24② 那类提取器错误的现场）
+ * —— 用 turn 归属会一条都取不到，必须按 `seq`/时序反推。
+ *
+ * 两个观察项（都**不进分子分母**）：
+ *   · `batchUserNotFirst`：批内**含** user 但最近那条不是它。插件判据是
+ *     `messages.some(m => m.source.kind === 'user')`（intent-gate-watchdog.mjs:349），本判据是
+ *     「最近那一条」；实测 161/161 个含 user 的开轮批次里 user 都是首条 ⇒ 两者等价。一旦不等价，
+ *     这个计数会把它打印出来 —— 口径分歧必须可见（那是 pitfalls #12 那类漂移的入口）。
+ *   · `midTurnUserOnly`：机器开轮的**轮内**（开轮批次之后）才出现真用户消息 —— 那是「重新授权」，
+ *     但**不改变开轮归属**（本口径按「开轮」计，照实打印以免被读成真用户开轮）。
+ */
+function qualifyTurn(r, t, nextOriginSeq) {
+  const rec = r.intentTurns.get(t)
+  const originSeq = rec === undefined ? undefined : rec.originSeq
+  const none = { origin: 'unknown', batch: [], batchUserNotFirst: false, midTurnUserOnly: false }
+  if (typeof originSeq !== 'number') return none
+  const hi = rec !== undefined && typeof rec.firstAsstSeq === 'number'
+    ? rec.firstAsstSeq
+    : (typeof nextOriginSeq === 'number' ? nextOriginSeq : Infinity)
+  const batch = r.userMsgs.filter((m) => typeof m.seq === 'number' && m.seq > originSeq && m.seq < hi)
+  const near = batch.length > 0 ? batch[0] : undefined
+  if (near === undefined) return { ...none, batch }
+  const origin = near.kind === USER_KIND ? 'user' : 'machine'
+  return {
+    origin,
+    batch,
+    batchUserNotFirst: origin !== 'user' && batch.some((m) => m.kind === USER_KIND),
+    midTurnUserOnly: origin !== 'user' && r.userMsgs.some((m) => m.kind === USER_KIND
+      && typeof m.seq === 'number' && m.seq >= hi
+      && m.seq < (typeof nextOriginSeq === 'number' ? nextOriginSeq : Infinity)),
+  }
+}
+
+/**
+ * 逐轮资格 + 计数（**唯一实现**，供门合规率与每会话常备读数两处共用）：
+ * 返回 `{ rows, userOpened, machineOpened, unknownOrigin, machineOpenedActing }`。
+ * 两处各算一遍 = pitfalls #12 那类副本病，所以只有这一个函数做分类。
+ */
+function turnQualification(r) {
+  const turns = [...r.intentTurns.keys()].sort((a, b) => a - b)
+  const out = { rows: [], userOpened: 0, machineOpened: 0, unknownOrigin: 0, machineOpenedActing: 0 }
+  for (let i = 0; i < turns.length; i += 1) {
+    const t = turns[i]
+    const nextOrigin = i + 1 < turns.length ? r.intentTurns.get(turns[i + 1]).originSeq : undefined
+    const q = { turn: t, ...qualifyTurn(r, t, nextOrigin) }
+    out.rows.push(q)
+    if (q.origin === 'user') out.userOpened += 1
+    else {
+      out.machineOpened += 1
+      if (q.origin === 'unknown') out.unknownOrigin += 1
+      const rec = r.intentTurns.get(t)
+      if (rec !== undefined && rec.acting === true) out.machineOpenedActing += 1
+    }
+  }
+  return out
+}
 
 /** 开轮首发是 shell 侦察 —— 「门行 + 侦察同消息」在 ② 下必然不算前置（pitfalls #17）。 */
 const SHELL_TOOLS = new Set(['bash', 'pwsh'])
@@ -402,27 +602,45 @@ function verdictLabel(rec) {
 }
 
 /**
- * 逐轮统计：① 存在口径（**合规分子**）+ 行为动作覆盖率 + ② 前置口径与两个文本口径（对照）
- * + 「门行与首动作同消息」的拆读数。
+ * 逐轮统计：① 存在口径（**每轮制对照读数**）+ 行为动作覆盖率 + ② 前置口径与两个文本口径（对照）
+ * + 「门行与首动作同消息」的拆读数 + **轮次资格（user-opened turns）**。
  *
  * ① 与 ② 都由**同一批记录**、同一组判据函数（declared / declaredBefore）算出 —— 不复制分类器，
  * 否则两个读数会各自漂移（pitfalls #19 记的正是「同一个词有四个数」）。
  */
 function intentGateStats(r) {
   const turns = [...r.intentTurns.keys()].sort((a, b) => a - b)
+  // 轮次资格走**唯一实现**（turnQualification ⇒ qualifyTurn）：门合规率与常备读数不会各自漂移。
+  const qual = turnQualification(r)
   const s = {
     turns, first: 0, reply: 0, anywhere: 0,
     eligible: 0, eligibleFirst: 0, eligibleDeclared: 0,
     contrastEligible: 0, sameMsg: 0, sameMsgShell: 0, sameMsgNonShell: 0,
     acts: 0, actsCovered: 0,
+    // ── 轮次资格（2026-09-20）：分母换成 user-opened turns，其余只作观察 ──────
+    userOpened: qual.userOpened, machineOpened: qual.machineOpened, unknownOrigin: qual.unknownOrigin,
+    userOpenedEligible: 0, userOpenedDeclared: 0,
+    machineOpenedActing: qual.machineOpenedActing,
+    batchUserNotFirst: 0, midTurnUserOnly: 0,
+    /** 逐轮资格（t → 'user' | 'machine' | 'unknown'）—— 逐轮打印与它同源，避免第二份判据。 */
+    originByTurn: new Map(),
   }
-  for (const t of turns) {
+  for (const row of qual.rows) {
+    const t = row.turn
     const rec = r.intentTurns.get(t)
+    s.originByTurn.set(t, row.origin)
+    if (row.batchUserNotFirst) s.batchUserNotFirst += 1
+    if (row.midTurnUserOnly) s.midTurnUserOnly += 1
     if (rec.first) s.first += 1
     if (rec.reply) s.reply += 1
     if (rec.any) s.anywhere += 1
     if (rec.acting) {
       s.eligible += 1
+      if (row.origin === 'user') {
+        // 新分母：user-opened **且会改变行为**的轮次；新分子：其中 ① 存在口径达标者。
+        s.userOpenedEligible += 1
+        if (declared(rec)) s.userOpenedDeclared += 1
+      }
       if (rec.first) s.eligibleFirst += 1
       if (declared(rec)) s.eligibleDeclared += 1
       if (declaredBefore(rec)) s.contrastEligible += 1
@@ -449,18 +667,66 @@ function intentGateStats(r) {
 }
 
 /**
- * 三行聚合读数（会话级与合计级**共用**同一份渲染，避免两处格式字面量各自漂移）。
- * 每行都必须带全三个数：① 合规分子/分母、② 对照分子、拆读数（同消息 / shell 首发 / 非 shell）。
+ * 逐轮资格 + 三行聚合读数（会话级与合计级**共用**同一份渲染，避免两处格式字面量各自漂移）。
+ * 第 1 行是**现役口径**（分母 = user-opened turns，分子 = ① 存在）；第 2 行是**每轮制旧读数**
+ * （全部保留，标明对照）；第 3 行是资格构成与两个观察项；第 4 行是原有的同消息拆读数。
  */
 function gateLines(s, labelPrefix, indent) {
   const lines = []
-  lines.push(indent + labelPrefix + '意图门合规率（① 存在口径）: '
-    + s.eligibleDeclared + '/' + s.eligible + ' (' + rate(s.eligibleDeclared, s.eligible) + ')'
+  // 会话级 `s.turns` 是轮次数组、合计级是轮次数 —— 这里归一，免得合计行印出 `undefined`。
+  const turnCount = Array.isArray(s.turns) ? s.turns.length : s.turns
+  lines.push(indent + labelPrefix + '意图门合规率（' + USER_OPENED_SCOPE + ' 口径，① 存在分子）: '
+    + s.userOpenedDeclared + '/' + s.userOpenedEligible + ' (' + rate(s.userOpenedDeclared, s.userOpenedEligible) + ')'
     + ' | 行为动作覆盖 ' + s.actsCovered + '/' + s.acts + ' (' + rate(s.actsCovered, s.acts) + ')')
-  lines.push(indent + '对照口径：② 前置 ' + s.contrastEligible + '/' + s.eligible
+  lines.push(indent + '对照口径（每轮制，旧读数）: ① 存在 ' + s.eligibleDeclared + '/' + s.eligible
+    + ' (' + rate(s.eligibleDeclared, s.eligible) + ') | ② 前置 ' + s.contrastEligible + '/' + s.eligible
     + ' | 可见回复 ' + s.reply + ' | 任意文本 ' + s.anywhere)
+  lines.push(indent + '轮次资格（按 seq 反推）: 总 ' + turnCount + ' 轮 = user-opened ' + s.userOpened
+    + ' + 机器开轮 ' + s.machineOpened + '；其中机器开轮里**动了手** ' + s.machineOpenedActing
+    + ' 轮（观察项，不进分子分母）；无法按 seq 归轮 ' + s.unknownOrigin + ' 轮；'
+    + '批内 user 非首条 ' + s.batchUserNotFirst + ' / 轮内才出现真用户消息 ' + s.midTurnUserOnly)
   lines.push(indent + '其中「同消息」达标 ' + s.sameMsg + ' 轮：首发是 shell 侦察 ' + s.sameMsgShell + ' 轮 / 非 shell '
     + s.sameMsgNonShell + ' 轮（pitfalls #17：门行与侦察同处一条消息，在 ② 下必然不算前置）')
+  return lines
+}
+
+/**
+ * **每会话常备读数**（2026-09-20 新增，与门合规率无关、任何会话都打印）：
+ *   ① `user/message` 通道构成 —— 总条数 / 真用户 / 机器，外加**实际见到的 kind 取值表**
+ *      与解析走的 source 路径计数（判据字面位置 vs 落盘形状，漏兜底会让「全判机器开轮」静默发生）；
+ *   ② token **四桶** —— 折叠语义照抄 pitfalls #22②（计入 `assistant/message`，同一 `(turn, step)`
+ *      **替换**取最后一条）；`assistant/attempt` 带 usage 时**单独报告**、不并入四桶，并打印
+ *      `llm/retry-started` 次数说明重试口径。
+ *   ⚠️ 只报 token 桶，**不报成本**（框架无价目表，pitfalls #22）；也**不跨会话汇总**
+ *   （seeded 会话是父事件的深拷贝，相加会把父的用量算第二遍，#22③）。
+ */
+function channelLines(r, indent) {
+  const lines = []
+  const total = r.userMsgs.length
+  const real = r.userKindCounts.get(String(USER_KIND)) || 0
+  const table = [...r.userKindCounts.entries()]
+    .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+    .map(([k, n]) => k + ' ' + n).join(' / ')
+  lines.push(indent + 'user/message 通道构成: 总 ' + total + ' 条 = 真用户(kind=user) ' + real
+    + ' + 机器 ' + (total - real) + (total === 0 ? '' : '（机器占 ' + rate(total - real, total) + '）'))
+  // 轮次那一半（与门合规率**同一份**资格实现 turnQualification，不是第二份判据）。
+  const q = turnQualification(r)
+  lines.push(indent + '  开轮归属（按 seq 反推，共 ' + q.rows.length + ' 轮）: user-opened ' + q.userOpened
+    + ' 轮 / 机器开轮 ' + q.machineOpened + ' 轮（其中动手 ' + q.machineOpenedActing + ' 轮）/ 无法归轮 ' + q.unknownOrigin + ' 轮')
+  lines.push(indent + '  kind 取值表（实际见到的全部取值）: ' + (table || '（无）'))
+  lines.push(indent + '  source 路径: data.message.source ' + r.userSourcePaths.message
+    + ' / data.source ' + r.userSourcePaths.data + ' / 无 ' + r.userSourcePaths.none)
+  const { totals, attempts } = usageTotals(r)
+  const billableIn = totals.uncachedInput + totals.cacheRead + totals.cacheWrite
+  lines.push(indent + 'token 四桶（assistant/message，同 (turn,step) 替换取最后一条）: uncachedInput ' + num(totals.uncachedInput)
+    + ' / output ' + num(totals.output) + ' / cacheRead ' + num(totals.cacheRead) + ' / cacheWrite ' + num(totals.cacheWrite)
+    + '（计费输入 = 前三桶之和 ' + num(billableIn) + '；' + r.usage.samples + ' 条带 usage 的 step / ' + r.usage.bySlot.size + ' 个 (turn,step) 槽）')
+  lines.push(indent + '  assistant/attempt: ' + r.usage.attemptsSeen + ' 条，其中带 usage ' + r.usage.attempts.length
+    + ' 条' + (r.usage.attempts.length > 0
+      ? '（四桶 ' + num(attempts.uncachedInput) + '/' + num(attempts.output) + '/' + num(attempts.cacheRead) + '/' + num(attempts.cacheWrite) + '）'
+      : '') + ' —— **单独报告、未并入四桶**；llm/retry-started ' + r.usage.retries
+    + ' 次（框架口径：retry 关闭替换槽 ⇒ 重试的那一次要**加**，#22②；本脚本只折叠 assistant/message，'
+    + '不替框架做那次加法）。只报 token 桶，不报成本（框架无价目表）')
   return lines
 }
 
@@ -484,6 +750,118 @@ function attributionSelfTest() {
     const got = analyze(raw).unattributable.size
     return { name: c.name, ok: got === c.expectUnattributable, detail: '期望 ' + c.expectUnattributable + '，实得 ' + got }
   })
+}
+
+// ── 轮次资格 / token 折叠的自测（2026-09-20） ────────────────────────────────
+//
+// 两条新读数都有「合成日志才能证明」的分支：user-opened 的判据按 seq 反推（真机健康会话里
+// `batchUserNotFirst` 恒为 0），token 折叠的替换语义（同 (turn,step) 取最后一条）在真机上
+// 实测无重复槽 ⇒ 也证不了。所以两条都落成 fixture、断言进 PASS/FAIL（同 attributionSelfTest 的取舍）。
+
+const USER_OPENED_FIXTURE = path.join(__dirname, 'fixtures', 'user-opened-cases.json')
+const TOKEN_FIXTURE = path.join(__dirname, 'fixtures', 'token-cases.json')
+
+/** 每条 case 的 `expect` 键集必须**恰好**等于这个列表 —— 漏写一个维度 = 这条 case 静默不测它。 */
+const USER_OPENED_EXPECT_KEYS = ['userOpened', 'machineOpened', 'unknownOrigin', 'userOpenedEligible',
+  'userOpenedDeclared', 'machineOpenedActing', 'batchUserNotFirst', 'midTurnUserOnly',
+  'eligible', 'eligibleDeclared']
+const TOKEN_EXPECT_KEYS = ['uncachedInput', 'output', 'cacheRead', 'cacheWrite', 'attemptUncachedInput',
+  'attemptOutput', 'attemptCacheRead', 'attemptCacheWrite', 'samples', 'slots', 'attemptsSeen',
+  'attemptsWithUsage', 'retries']
+
+/** fixture 的通用跑法：解析 → 逐 case 取「实得」→ 与 `expect` 逐键比对（键集不齐即 FAIL）。 */
+function runFixtureCases(file, keys, gotOf) {
+  let spec
+  try { spec = JSON.parse(fs.readFileSync(file, 'utf8')) } catch (e) {
+    return [{ name: 'fixture ' + path.basename(file) + ' 可读', ok: false, detail: '读/解析失败：' + (e && e.message) }]
+  }
+  const cases = Array.isArray(spec.cases) ? spec.cases : []
+  if (cases.length === 0) return [{ name: 'fixture ' + path.basename(file) + ' 至少含一条 case', ok: false, detail: 'cases 为空' }]
+  return cases.map((c) => {
+    const raw = (c.events || []).map((e) => JSON.stringify(e)).join('\n')
+    const got = gotOf(analyze(raw))
+    const want = c.expect || {}
+    const wantKeys = Object.keys(want).sort().join(',')
+    if (wantKeys !== [...keys].sort().join(',')) {
+      return { name: c.name, ok: false, detail: '断言维度不齐：应为 ' + [...keys].sort().join(',') + '，实得 ' + (wantKeys || '（空）') }
+    }
+    const bad = keys.filter((k) => got[k] !== want[k])
+    return {
+      name: c.name,
+      ok: bad.length === 0,
+      detail: bad.length === 0 ? '' : bad.map((k) => k + ' 期望 ' + JSON.stringify(want[k]) + ' 实得 ' + JSON.stringify(got[k])).join('；'),
+    }
+  })
+}
+
+/** 轮次资格（user-opened turns）的 fixture 自测 —— 新分母/新分子的阳性与阴性路径。 */
+function userOpenedSelfTest() {
+  return runFixtureCases(USER_OPENED_FIXTURE, USER_OPENED_EXPECT_KEYS, (r) => {
+    const s = intentGateStats(r)
+    return {
+      userOpened: s.userOpened, machineOpened: s.machineOpened, unknownOrigin: s.unknownOrigin,
+      userOpenedEligible: s.userOpenedEligible, userOpenedDeclared: s.userOpenedDeclared,
+      machineOpenedActing: s.machineOpenedActing,
+      batchUserNotFirst: s.batchUserNotFirst, midTurnUserOnly: s.midTurnUserOnly,
+      eligible: s.eligible, eligibleDeclared: s.eligibleDeclared,
+    }
+  })
+}
+
+/** token 四桶折叠的 fixture 自测 —— 同 `(turn,step)` 替换、attempt 单列、缺桶按 0。 */
+function tokenFoldingSelfTest() {
+  return runFixtureCases(TOKEN_FIXTURE, TOKEN_EXPECT_KEYS, (r) => {
+    const { totals, attempts } = usageTotals(r)
+    return {
+      ...totals,
+      attemptUncachedInput: attempts.uncachedInput, attemptOutput: attempts.output,
+      attemptCacheRead: attempts.cacheRead, attemptCacheWrite: attempts.cacheWrite,
+      samples: r.usage.samples, slots: r.usage.bySlot.size,
+      attemptsSeen: r.usage.attemptsSeen, attemptsWithUsage: r.usage.attempts.length,
+      retries: r.usage.retries,
+    }
+  })
+}
+
+/**
+ * 轮次资格**口径**的跨文件守卫（同 behaviorToolsSelfTest 的形状）：persona 把义务写死成
+ * `user-opened turns`，本脚本用同一串字面量给分母命名。两处漂移不会报错、只会让读数变形
+ * （pitfalls #19：「同一个词有四个数」）⇒ 逐字比对，并用内存变异证明它有牙。
+ * 对照自身也必须能失败：变异没生效 ⇒ 这条对照自己 FAIL（pitfalls #21 第二条）。
+ */
+function userOpenedScopeSelfTest() {
+  let text
+  try { text = fs.readFileSync(PERSONA_FILE, 'utf8') } catch (e) {
+    return [{ name: '读 persona（' + PERSONA_FILE + '）', ok: false, detail: String((e && e.message) || e) }]
+  }
+  /** 找出「persona 文本里有没有 expected 这个口径字面量」；解析不出来 = 响亮失败，不当成通过。 */
+  const finding = (personaText, expected) => {
+    if (typeof personaText !== 'string' || personaText === '') return 'persona 文本为空/读不到'
+    if (!personaText.includes(expected)) {
+      return 'persona 里找不到字面量 ' + JSON.stringify(expected) + ' —— 口径改名了？persona 与本脚本必须同口径'
+    }
+    return ''
+  }
+  const out = []
+  const bad = finding(text, USER_OPENED_SCOPE)
+  out.push({
+    name: 'persona 写死字面量 ' + JSON.stringify(USER_OPENED_SCOPE) + '，本脚本用同一串给分母命名',
+    ok: bad === '',
+    detail: bad,
+  })
+  const control = (label, personaText, expected) => {
+    const detail = finding(personaText, expected)
+    out.push({ name: label, ok: detail !== '', detail: detail === '' ? '没报差异 —— 断言空转' : detail })
+  }
+  const renamed = text.split(USER_OPENED_SCOPE).join('per-turn scope')
+  if (renamed === text) out.push({ name: '对照①：persona 给口径改名 ⇒ 报告漂移', ok: false, detail: '对照组本身失效：变异目标文本不存在' })
+  else control('对照①：persona 给口径改名 ⇒ 报告漂移', renamed, USER_OPENED_SCOPE)
+  const removed = text.split(USER_OPENED_SCOPE).join('')
+  if (removed === text) out.push({ name: '对照②：persona 里口径字面量整块消失 ⇒ 报告漂移', ok: false, detail: '对照组本身失效：变异目标文本不存在' })
+  else control('对照②：persona 里口径字面量整块消失 ⇒ 报告漂移', removed, USER_OPENED_SCOPE)
+  // 对照③ 走**本脚本那一侧**：把期望字面量改成另一个词（等价于脚本常量漂移）⇒ 同一份 persona 立刻对不上。
+  control('对照③：本脚本的口径常量换成另一个词 ⇒ 报告漂移', text, 'per-turn turns')
+  return out
 }
 
 // ── 角色事实静态检查（ADR 0002 的 E 项） ─────────────────────────────────────
@@ -770,9 +1148,12 @@ function main() {
   /** 失败**名字**清单 —— `--control-sessions` 的判据是它与 REQUIRED_FIXTURE_FAILURES 集合相等。 */
   const failedNames = []
   const failLine = (name, text) => { failedNames.push(name); fail += 1; console.log(text) }
-  let silentSessions = 0     // 单场「门行整场静默」的会话数（观察项，不接退出码 —— pitfalls #19）
+  let silentSessions = 0     // 单场「门行整场静默」的会话数（每轮制对照；观察项，不接退出码 —— pitfalls #19）
+  let silentUserOpenedSessions = 0  // 同上，**user-opened 口径**（现役分母）
   const gate = { turns: 0, first: 0, reply: 0, anywhere: 0, eligible: 0, eligibleFirst: 0, eligibleDeclared: 0,
-    contrastEligible: 0, sameMsg: 0, sameMsgShell: 0, sameMsgNonShell: 0, acts: 0, actsCovered: 0, sessions: 0 }
+    contrastEligible: 0, sameMsg: 0, sameMsgShell: 0, sameMsgNonShell: 0, acts: 0, actsCovered: 0, sessions: 0,
+    userOpened: 0, machineOpened: 0, unknownOrigin: 0, userOpenedEligible: 0, userOpenedDeclared: 0,
+    machineOpenedActing: 0, batchUserNotFirst: 0, midTurnUserOnly: 0 }
   /** 进了上面的合计的那些轮次记录 —— 下方成因分类 / 拆读数必须只看这一批，否则与合计行对不上。 */
   const gatedRecs = []
 
@@ -791,6 +1172,14 @@ function main() {
     else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
   }
 
+  // 同一形状的守卫，守的是**轮次资格口径**：persona 的义务字面量 ↔ 本脚本的分母命名
+  // （`user-opened turns`）。口径漂移不会报错、只会让读数变形，所以必须逐字比对（pitfalls #19）。
+  console.log('\n轮次资格口径一致性（persona personas/orchestrator.md ↔ 本脚本，字面量 ' + JSON.stringify(USER_OPENED_SCOPE) + '）:')
+  for (const t of userOpenedScopeSelfTest()) {
+    if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
+    else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
+  }
+
   // 两支 fixture 自测与「本机有没有会话」无关 ⇒ 提到任何 return **之前**（2026-09-17 评审 M2/F-3：
   // 原先它们排在会话扫描之后，于是没有会话的机器会整段跳过它们，而脚本仍退 0 报「符合预期」）。
   console.log('\n归因计数器自测（合成日志 fixture scripts/fixtures/attribution-cases.json —— R-02 的阳性路径）:')
@@ -800,6 +1189,16 @@ function main() {
   }
   console.log('\n意图门统计自测（合成日志 fixture scripts/fixtures/intent-gate-cases.json —— C 项的阳性路径）:')
   for (const t of gateSelfTest()) {
+    if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
+    else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
+  }
+  console.log('\n轮次资格自测（合成日志 fixture scripts/fixtures/user-opened-cases.json —— 新分母的阳性/阴性路径）:')
+  for (const t of userOpenedSelfTest()) {
+    if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
+    else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
+  }
+  console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-cases.json —— 同一 (turn,step) 的替换语义）:')
+  for (const t of tokenFoldingSelfTest()) {
     if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
     else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
   }
@@ -877,6 +1276,10 @@ function main() {
           : ' ← docs/pitfalls.md C 节：子代理的 approval policy 是 never，必被确定性拒绝且不会弹给用户；'
             + '只有在角色子代理上**持续出现**才值得做 sandbox-strip'))
     }
+    // 每会话常备读数（与门合规率无关、任何非跳过会话都打印）：user 通道构成 + token 四桶。
+    // 角色子代理也打印 —— 那正是 ADR 0002 B 项（每角色用量归因）读盘的那一格。
+    // ⚠️ 只报 token 桶，不报成本；且不跨会话汇总（seeded 会重复计父，pitfalls #22③）。
+    for (const line of channelLines(r, '   ')) console.log(line)
 
     if (depth === 0) {
       // 主 agent 丢掉 PTC 与 :670 的「子代理仍是 PTC」是同一枚硬币的两面 —— 都是底座
@@ -907,19 +1310,31 @@ function main() {
           gate.eligibleDeclared += g.eligibleDeclared; gate.acts += g.acts; gate.actsCovered += g.actsCovered
           gate.contrastEligible += g.contrastEligible
           gate.sameMsg += g.sameMsg; gate.sameMsgShell += g.sameMsgShell; gate.sameMsgNonShell += g.sameMsgNonShell
+          gate.userOpened += g.userOpened; gate.machineOpened += g.machineOpened
+          gate.unknownOrigin += g.unknownOrigin; gate.userOpenedEligible += g.userOpenedEligible
+          gate.userOpenedDeclared += g.userOpenedDeclared
+          gate.machineOpenedActing += g.machineOpenedActing
+          gate.batchUserNotFirst += g.batchUserNotFirst; gate.midTurnUserOnly += g.midTurnUserOnly
           for (const t of g.turns) {
             const rec = r.intentTurns.get(t)
             if (rec !== undefined && rec.acting === true) gatedRecs.push(rec)
           }
           for (const line of gateLines(g, '', '   ')) console.log(line)
-          console.log('   逐轮（① 存在口径）: ' + g.turns.map((t) => 'T' + t + verdictLabel(r.intentTurns.get(t))).join(' ')
+          console.log('   逐轮（资格 + ① 存在口径）: ' + g.turns.map((t) => 'T' + t
+            + (g.originByTurn.get(t) === 'user' ? '[user]' : g.originByTurn.get(t) === 'unknown' ? '[?]' : '[机器]')
+            + verdictLabel(r.intentTurns.get(t))).join(' ')
             + ' | 会改变行为: ' + (g.turns.filter((t) => r.intentTurns.get(t).acting).map((t) => 'T' + t).join(' ') || '无'))
           // C（ADR 0002）：总量里的一个「0%」会被平均掉，所以要**按会话**点名「整场静默」——
           // 那是「旗舰机制静默死」唯一的可见形态。它是**观察项**：模型行为不该让套件随机变红（pitfalls #19）。
+          // 两口径都点名：每轮制（旧对照）与 user-opened（现役分母）。
           if (gateSilent(g)) {
             silentSessions += 1
-            console.log('   ! 本场门行**整场静默**：会改变行为 ' + g.eligible + ' 轮、① 存在口径命中 0 —— 见 ADR 0002「旗舰行为机制可以整场静默失效」')
+            console.log('   ! 本场门行**整场静默（每轮制对照）**：会改变行为 ' + g.eligible + ' 轮、① 存在口径命中 0 —— 见 ADR 0002「旗舰行为机制可以整场静默失效」')
             console.log('     （观察项，不接退出码；要判定是「模型没写」还是「口径把只读轮算进去了」，看上面的逐轮与会改变行为两行）')
+          }
+          if (gateSilentUserOpened(g)) {
+            silentUserOpenedSessions += 1
+            console.log('   ! 本场门行**整场静默（' + USER_OPENED_SCOPE + ' 口径，现役分母）**：该欠行的轮次 ' + g.userOpenedEligible + '、① 存在口径命中 0')
           }
         }
       }
@@ -961,13 +1376,17 @@ function main() {
         + ' —— 在 ② 口径下必然不算前置，属口径产物而非模型漏行（pitfalls #17 的载体耦合）；'
         + '本窗口首发为 shell 的轮次共 ' + shellFirst + ' 轮')
     }
-    console.log('  整场静默的会话: ' + silentSessions + '/' + gate.sessions
+    console.log('  整场静默的会话（每轮制对照）: ' + silentSessions + '/' + gate.sessions
+      + ' | ' + USER_OPENED_SCOPE + ' 口径: ' + silentUserOpenedSessions + '/' + gate.sessions
       + '（观察项，不进 ✓/✗/! 的账 —— 模型行为不该让套件随机变红，见 pitfalls #19）')
-    console.log('  口径: ① 合规 = 门行所在消息的序号 ≤ 承载首个行为动作的载体消息序号（同一条消息算数，pitfalls #19/#20）；'
-      + '② 前置（declSeq < firstActCarrier）只作对照读数，不接合规分子。分子与分母都只算**会改变行为**的轮次'
-      + '（要委派 / 要拒绝 / 要提问 / 要改文件），行为判据 = tool/call 或 tool/ptc-dispatch 的 name 命中 BEHAVIOR_TOOLS'
-      + '（与 intent-gate-watchdog.mjs 同口径）；marker = ' + JSON.stringify(INTENT_MARKERS) + '（与插件的 DEFAULT_MARKERS 同口径）；'
-      + '「可见回复 / 任意文本」只作对照 ——「任意文本」含工具结果与工具参数 ⇒ 读过插件源码的轮次也会命中，那不是合规。')
+    console.log('  口径: **分母 = ' + USER_OPENED_SCOPE + '**（该轮起点被 claim 的那批 `user/message` 里最近于轮起点的那一条、'
+      + '按 seq 反推，其 source.kind === \'user\' ⇒ user-opened；其余 kind 一律算机器开轮），分子 = ① 存在'
+      + '（门行所在消息的序号 ≤ 承载首个行为动作的载体消息序号，同一条消息算数，pitfalls #19/#20），'
+      + '分子分母都只算**会改变行为**的轮次（要委派 / 要拒绝 / 要提问 / 要改文件），行为判据 = tool/call 或 '
+      + 'tool/ptc-dispatch 的 name 命中 BEHAVIOR_TOOLS（与 intent-gate-watchdog.mjs 同口径）；'
+      + 'marker = ' + JSON.stringify(INTENT_MARKERS) + '（与插件的 DEFAULT_MARKERS 同口径）。')
+    console.log('  对照读数（全部保留，不接分子分母）: 每轮制的 ① 存在 / ② 前置（declSeq < firstActCarrier）/ 可见回复 / 任意文本；'
+      + '机器开轮的数量与其中动手的轮数只作观察项。「任意文本」含工具结果与工具参数 ⇒ 读过插件源码的轮次也会命中，那不是合规。')
   }
   const unattributableAll = [...rows].reduce((n, r) => n + (r.unattributable ? r.unattributable.size : 0), 0)
   if (unattributableAll > 0) {

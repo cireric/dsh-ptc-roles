@@ -1,0 +1,74 @@
+{
+  "what": "token 四桶折叠的合成日志夹具：同一 (turn, step) **替换**（取最后一条 assistant/message）、attempt 单列、缺桶按 0。",
+  "why": "口径照抄 docs/pitfalls.md #22 ②（`token-meter/src/usage-projection.ts` 的 addReplacing）。真机上实测 `(turn, step)` 重复 0 条 ⇒ 「直加」与「替换」等价，那条替换分支在真机数据上**永远不被证明**；而自造一个 sum() 会算错（#22 的标题就是这个）。`assistant/attempt` 的处理同样只有合成日志能钉：本机实测 11 条 attempt 全部**没有** usage，所以「有 usage 时单独报告」这条路径必须用夹具证明。",
+  "cases": [
+    {
+      "name": "同一 (turn, step) 两条带 usage 的 assistant/message ⇒ 替换取最后一条，**不是累加**",
+      "expect": {
+        "uncachedInput": 200,
+        "output": 20,
+        "cacheRead": 7,
+        "cacheWrite": 1,
+        "attemptUncachedInput": 0,
+        "attemptOutput": 0,
+        "attemptCacheRead": 0,
+        "attemptCacheWrite": 0,
+        "samples": 2,
+        "slots": 1,
+        "attemptsSeen": 0,
+        "attemptsWithUsage": 0,
+        "retries": 0
+      },
+      "events": [
+        { "type": "assistant/message", "seq": 1, "data": { "turn": 1, "step": 1, "usage": { "inputTokens": 100, "outputTokens": 10, "cacheReadTokens": 5, "cacheWriteTokens": 3 }, "message": { "role": "assistant", "content": [{ "type": "text", "text": "先到这。" }] } } },
+        { "type": "assistant/message", "seq": 2, "data": { "turn": 1, "step": 1, "usage": { "inputTokens": 200, "outputTokens": 20, "cacheReadTokens": 7, "cacheWriteTokens": 1 }, "message": { "role": "assistant", "content": [{ "type": "text", "text": "重来一次。" }] } } }
+      ]
+    },
+    {
+      "name": "不同 (turn, step) 相加；缺 cacheWriteTokens 的按 0 计（不自造桶、不猜）",
+      "expect": {
+        "uncachedInput": 151,
+        "output": 16,
+        "cacheRead": 7,
+        "cacheWrite": 4,
+        "attemptUncachedInput": 0,
+        "attemptOutput": 0,
+        "attemptCacheRead": 0,
+        "attemptCacheWrite": 0,
+        "samples": 3,
+        "slots": 3,
+        "attemptsSeen": 0,
+        "attemptsWithUsage": 0,
+        "retries": 0
+      },
+      "events": [
+        { "type": "assistant/message", "seq": 1, "data": { "turn": 1, "step": 1, "usage": { "inputTokens": 100, "outputTokens": 10, "cacheReadTokens": 5 }, "message": { "role": "assistant", "content": [{ "type": "text", "text": "a" }] } } },
+        { "type": "assistant/message", "seq": 2, "data": { "turn": 1, "step": 2, "usage": { "inputTokens": 50, "outputTokens": 5, "cacheReadTokens": 2, "cacheWriteTokens": 4 }, "message": { "role": "assistant", "content": [{ "type": "text", "text": "b" }] } } },
+        { "type": "assistant/message", "seq": 3, "data": { "turn": 2, "step": 1, "usage": { "inputTokens": 1, "outputTokens": 1 }, "message": { "role": "assistant", "content": [{ "type": "text", "text": "c" }] } } }
+      ]
+    },
+    {
+      "name": "assistant/attempt 带 usage ⇒ **不进四桶**、单独报告；llm/retry-started 计数（框架用它关闭替换槽）",
+      "expect": {
+        "uncachedInput": 100,
+        "output": 10,
+        "cacheRead": 5,
+        "cacheWrite": 3,
+        "attemptUncachedInput": 999,
+        "attemptOutput": 99,
+        "attemptCacheRead": 99,
+        "attemptCacheWrite": 9,
+        "samples": 1,
+        "slots": 1,
+        "attemptsSeen": 1,
+        "attemptsWithUsage": 1,
+        "retries": 1
+      },
+      "events": [
+        { "type": "assistant/message", "seq": 1, "data": { "turn": 1, "step": 1, "usage": { "inputTokens": 100, "outputTokens": 10, "cacheReadTokens": 5, "cacheWriteTokens": 3 }, "message": { "role": "assistant", "content": [{ "type": "text", "text": "第一次。" }] } } },
+        { "type": "llm/retry-started", "seq": 2, "data": { "retryId": "r1", "turn": 1, "step": 1, "retry": 1 } },
+        { "type": "assistant/attempt", "seq": 3, "data": { "turn": 1, "step": 1, "usage": { "inputTokens": 999, "outputTokens": 99, "cacheReadTokens": 99, "cacheWriteTokens": 9 } } }
+      ]
+    }
+  ]
+}

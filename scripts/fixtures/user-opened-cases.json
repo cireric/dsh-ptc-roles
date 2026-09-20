@@ -1,0 +1,524 @@
+{
+  "what": "轮次资格（user-opened turns）的合成日志夹具：合规率**新分母**的阳性与阴性路径。",
+  "why": "分母的判据（该轮起点被 claim 的那批 user/message 里、按 seq 最近于轮起点的那一条的 source.kind）只有合成长度可控的日志能穷举：真机健康会话里 `batchUserNotFirst` 恒为 0、`midTurnUserOnly` 也罕见，光跑真机会让这两条分支永远不被证明。每条 case 的 expect 必须写全 10 个维度（键集不齐由 runFixtureCases 判 FAIL），漏一个维度 = 这条 case 静默不测它。事件形状照抄真机：`turn/start` 带 `data.turn` 与顶层 `seq`；`user/message` **不带 turn**、只有 `data.source.kind` 与顶层 `seq`（这正是只能按 seq 反推的原因）。",
+  "cases": [
+    {
+      "name": "开轮消息 kind=user ⇒ 进 user-opened 分母；门行在承载首个行为动作的消息首行 ⇒ ① 合规",
+      "expect": {
+        "userOpened": 1,
+        "machineOpened": 0,
+        "unknownOrigin": 0,
+        "userOpenedEligible": 1,
+        "userOpenedDeclared": 1,
+        "machineOpenedActing": 0,
+        "batchUserNotFirst": 0,
+        "midTurnUserOnly": 0,
+        "eligible": 1,
+        "eligibleDeclared": 1
+      },
+      "events": [
+        {
+          "type": "turn/start",
+          "seq": 1,
+          "data": {
+            "turn": 1
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 2,
+          "data": {
+            "id": "u1",
+            "role": "user",
+            "source": {
+              "kind": "user"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "把这件事做了。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "seq": 3,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: implementation — 写文件\n第二行不算门行。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 4,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "write",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "机器开轮（subagent-settled）：动手也不进分母 —— 旧「每轮制」会把它算成 1 轮",
+      "expect": {
+        "userOpened": 0,
+        "machineOpened": 1,
+        "unknownOrigin": 0,
+        "userOpenedEligible": 0,
+        "userOpenedDeclared": 0,
+        "machineOpenedActing": 1,
+        "batchUserNotFirst": 0,
+        "midTurnUserOnly": 0,
+        "eligible": 1,
+        "eligibleDeclared": 0
+      },
+      "events": [
+        {
+          "type": "turn/start",
+          "seq": 1,
+          "data": {
+            "turn": 1
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 2,
+          "data": {
+            "id": "u1",
+            "role": "user",
+            "source": {
+              "kind": "subagent-settled"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Background subagent finished."
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "seq": 3,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "直接动手，没有分类行。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 4,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "write",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "轮内（开轮批次之后）才出现真用户消息 ⇒ **不改变开轮归属**，只进 midTurnUserOnly 观察项",
+      "expect": {
+        "userOpened": 0,
+        "machineOpened": 1,
+        "unknownOrigin": 0,
+        "userOpenedEligible": 0,
+        "userOpenedDeclared": 0,
+        "machineOpenedActing": 1,
+        "batchUserNotFirst": 0,
+        "midTurnUserOnly": 1,
+        "eligible": 1,
+        "eligibleDeclared": 0
+      },
+      "events": [
+        {
+          "type": "turn/start",
+          "seq": 1,
+          "data": {
+            "turn": 1
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 2,
+          "data": {
+            "id": "u1",
+            "role": "user",
+            "source": {
+              "kind": "plugin"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "[intent-gate-watchdog] 提醒。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "seq": 3,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "先写一版。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 4,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "write",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 5,
+          "data": {
+            "id": "u2",
+            "role": "user",
+            "source": {
+              "kind": "user"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "顺便把日志也加上。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "seq": 6,
+          "data": {
+            "turn": 1,
+            "step": 2,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "好，继续改。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 7,
+          "data": {
+            "turn": 1,
+            "step": 2,
+            "callId": "c2",
+            "name": "edit",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "两轮同一批数据两个分母：T1 user-opened 合规 / T2 机器开轮动手 ⇒ 新 1/1，旧每轮制 1/2",
+      "expect": {
+        "userOpened": 1,
+        "machineOpened": 1,
+        "unknownOrigin": 0,
+        "userOpenedEligible": 1,
+        "userOpenedDeclared": 1,
+        "machineOpenedActing": 1,
+        "batchUserNotFirst": 0,
+        "midTurnUserOnly": 0,
+        "eligible": 2,
+        "eligibleDeclared": 1
+      },
+      "events": [
+        {
+          "type": "turn/start",
+          "seq": 1,
+          "data": {
+            "turn": 1
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 2,
+          "data": {
+            "id": "u1",
+            "role": "user",
+            "source": {
+              "kind": "user"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "开工。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "seq": 3,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: implementation — 写文件"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 4,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "write",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "turn/start",
+          "seq": 5,
+          "data": {
+            "turn": 2
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 6,
+          "data": {
+            "id": "u2",
+            "role": "user",
+            "source": {
+              "kind": "subagent-settled"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Background subagent finished."
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "seq": 7,
+          "data": {
+            "turn": 2,
+            "step": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "收到，继续动手。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 8,
+          "data": {
+            "turn": 2,
+            "step": 1,
+            "callId": "c2",
+            "name": "write",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "开轮批里 user **不是**首条 ⇒ 判机器开轮，且把与插件 .some 的口径分歧计数 +1（口径漂移必须可见）",
+      "expect": {
+        "userOpened": 0,
+        "machineOpened": 1,
+        "unknownOrigin": 0,
+        "userOpenedEligible": 0,
+        "userOpenedDeclared": 0,
+        "machineOpenedActing": 1,
+        "batchUserNotFirst": 1,
+        "midTurnUserOnly": 0,
+        "eligible": 1,
+        "eligibleDeclared": 1
+      },
+      "events": [
+        {
+          "type": "turn/start",
+          "seq": 1,
+          "data": {
+            "turn": 1
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 2,
+          "data": {
+            "id": "u1",
+            "role": "user",
+            "source": {
+              "kind": "plugin"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "[MNEMON] 快照。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 3,
+          "data": {
+            "id": "u2",
+            "role": "user",
+            "source": {
+              "kind": "user"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "真用户的话被机器消息挤到第二条。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "seq": 4,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: implementation — 写文件"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 5,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "write",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "没有 seq（旧日志 / 无 turn/start）⇒ origin=unknown：仍算机器开轮，但单独计数（不许静默当成机器开轮）",
+      "expect": {
+        "userOpened": 0,
+        "machineOpened": 1,
+        "unknownOrigin": 1,
+        "userOpenedEligible": 0,
+        "userOpenedDeclared": 0,
+        "machineOpenedActing": 1,
+        "batchUserNotFirst": 0,
+        "midTurnUserOnly": 0,
+        "eligible": 1,
+        "eligibleDeclared": 1
+      },
+      "events": [
+        {
+          "type": "user/message",
+          "data": {
+            "id": "u1",
+            "role": "user",
+            "source": {
+              "kind": "user"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "没有 seq 的老日志。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: implementation — 写文件"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1",
+            "name": "write",
+            "arguments": "{}"
+          }
+        }
+      ]
+    }
+  ]
+}
