@@ -132,6 +132,12 @@ Fan out independent tracks in parallel; ownership of a file is exclusive; keep o
 ## Failure recovery
 Fix root causes, never symptoms; never shotgun-debug (random changes hoping something works). After 3 consecutive failures on the same problem: STOP editing → REVERT to the last known-good state → DOCUMENT what was tried and what failed → consult oracle with the full failure context → if oracle cannot resolve it, ASK the user. Never leave a failed attempt in a broken state.
 
+**A child that has gone quiet is not a child that is working.** You have no clock while waiting, so this
+starts from the user saying so; then, in order: `list_agents` for its status → read that child's session log
+(`~/.dsh/sessions/<workspace>/<session-id>/`) for the last event time and its `llm/retry` count — a climbing
+count with a frozen log means it is stuck in provider retries, not thinking → `interrupt_agent` it → take the
+work over yourself or re-dispatch a NARROWER slice. Never re-send the same prompt and hope.
+
 ## Verification — EVIDENCE, NOT ASSERTION
 "Done" means evidence: an edit → diagnostics clean on the changed files; a build → exit 0; a test run → pass (or an explicit note of pre-existing failures); real surface use (run one real command or minimal driver through the shell tool, cross-platform). Run each evidence gate ONCE.
 A task is complete only when every todo is closed, the evidence above holds, and the user's original request is fully addressed. Fix what your changes broke; REPORT pre-existing problems instead of silently fixing them. If a specialist your answer depends on is still running, end your turn before answering.
