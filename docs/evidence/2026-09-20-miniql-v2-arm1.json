@@ -1,0 +1,160 @@
+{
+  "probe": "2026-09-20-miniql-v2-arm1",
+  "task": "miniql（CSV 上跑 SQL 子集，裁判 = 真 SQLite 3.43.2）—— 冻结契约 v2，第一臂 ptc-roles",
+  "question": "任务规模变大后，多角色的开销会不会收敛？（用户假设：v1 的 6.4× 源于任务简单 + 多角色天然更贵）",
+  "arm": "ptc-roles",
+  "session": "session-514dfe95-9317-4b4d-8dd7-c5093c714d20",
+  "workspace": "/Users/eric/Project/tests/miniql",
+  "judge": "python3 3.9.6 + 内建 SQLite 3.43.2（/usr/bin/sqlite3 同为 3.43.2）· node v24.19.0",
+  "mechanism": {
+    "turns": 6,
+    "userOpenedTurns": 1,
+    "mainSteps": 36,
+    "attempts": 0,
+    "retries": 0,
+    "gateDenies": 1,
+    "roleDispatches": [
+      "implementer ×7（七个所有权行各一个）"
+    ],
+    "dispatchNames": {
+      "bash": 19,
+      "implementer": 7,
+      "read": 6,
+      "write": 6,
+      "edit": 1,
+      "present": 1,
+      "validate_dsh_ui": 1
+    },
+    "mainRaw": 4039106,
+    "childRaw": 3676626,
+    "totalRaw": 7715732,
+    "childShareOfRawTokens": "48%",
+    "children": [
+      {
+        "row": "src/expr/**",
+        "steps": 18,
+        "retries": 5,
+        "raw": 802245,
+        "selfReport": "45/45 测试绿 + 61 条手搓表达式与真 SQLite 逐条对拍 0 处不同"
+      },
+      {
+        "row": "src/rel/**",
+        "steps": 16,
+        "retries": 5,
+        "raw": 652727,
+        "selfReport": "18/18 绿 + 自建 SQLite 对照脚本，§6 的 15 条成功查询逐字匹配"
+      },
+      {
+        "row": "src/cli/**+bin/**",
+        "steps": 19,
+        "retries": 0,
+        "raw": 604529,
+        "selfReport": "12 passed；三种格式、参数顺序、退出码、同步写防截断"
+      },
+      {
+        "row": "tools/**",
+        "steps": 17,
+        "retries": 0,
+        "raw": 594691,
+        "selfReport": "differential 端到端通过"
+      },
+      {
+        "row": "src/parser/**",
+        "steps": 15,
+        "retries": 0,
+        "raw": 524012,
+        "selfReport": "18/18 绿；15 条解析成功、2 条失败"
+      },
+      {
+        "row": "src/lexer/**",
+        "steps": 12,
+        "retries": 0,
+        "raw": 283927,
+        "selfReport": "13/13 绿；未碰其它所有权路径、未运行 git"
+      },
+      {
+        "row": "src/csv/**",
+        "steps": 9,
+        "retries": 0,
+        "raw": 214495,
+        "selfReport": "10/10 绿；只创建本行拥有的两个路径"
+      }
+    ],
+    "compliance": "**0/1 (0%)——本项目第一次出现不合规的 user-opened 轮**；覆盖 15/17（88%）｜每轮制对照 15/33；逐轮 T1[user]✗[动后补]",
+    "gate": "1 次拒绝：T1 第 1 步先发了 bash 侦察（无门行）⇒ 被拒 ⇒ 第 2 步补写门行后重发成功。这正是 #19 读法注记的实例：闸门修了行为，① 仍记 ✗"
+  },
+  "deliverable": {
+    "files": [
+      "bin/miniql.mjs",
+      "src/{csv,lexer,parser,expr,rel,cli}/index.js",
+      "tools/differential.mjs (335 行)",
+      "src/parser/AST.md (93 行)",
+      "tests/*.test.mjs"
+    ],
+    "totalLines": 1871,
+    "tests": 116,
+    "commits": [
+      "ba45984 feat(parser): freeze AST shape in src/parser/AST.md (CONTRACT §4)",
+      "13fc4bf feat: csv + lexer + parser rows (10/10, 13/13, 18/18 green)",
+      "2a1cfa0 feat: expr + rel rows; all 17 frozen queries match real SQLite end-to-end",
+      "48ce8c9 feat: cli + bin + sqlite differential gate; CONTRACT §0.1 acceptance green"
+    ],
+    "interfaceFrozenFirst": "AST 形状在第 1 个 commit 就落进 src/parser/AST.md（契约 §4 的要求）✓",
+    "committedAtEnd": "工作树干净（contract §0.1 第三条）✓ —— v1 的教训生效"
+  },
+  "acceptanceMine": {
+    "differential": "node tools/differential.mjs → 17/17，rc=0（我复跑）",
+    "unitTests": "node --test → tests 116 / pass 116 / fail 0（我复跑）",
+    "workingTree": "git status --porcelain 为空（我核对）",
+    "outOfListProbe": {
+      "note": "我另写 18 条冻结清单之外的查询（NULL 三值逻辑、count(col) 跳过 NULL、空集聚合、LEFT JOIN 补 NULL、LIKE 大小写、BETWEEN/IN、字符串连接遇 NULL、LIMIT/OFFSET、以及 1 条必须失败）",
+      "loader": "**数据装载用 Python 的 csv 模块独立完成**（不复用它自己的 src/csv），并按列推导 INTEGER/REAL/TEXT",
+      "result": "**18 一致 / 0 不一致**"
+    },
+    "harnessGamingGuard": "它的 differential 断言查询数必须恰好为 17，否则直接抛错 ⇒ 无法通过删/跳某条查询过关 ✓"
+  },
+  "costConvergence": {
+    "v1_ignorecheck": "总 raw 17,075,471 · 1212 行 · 子占比 85% · 22 分钟 ⇒ ≈1.41 万 token/行",
+    "v2_miniql": "总 raw 7,715,732 · 1871 行 · 子占比 48% · 约 14 分钟（22:32 起，收尾提交 22:46）⇒ ≈0.41 万 token/行",
+    "reading": "**任务更大反而更省**：每行 token 降到 **1/3.4**。原因很可能在 v1 的那个离群子代理（89 步、1055 万 raw，占 v1 总量 61%）—— 说明 v1 的「6.4×」主要由一次返修风暴驱动，而不是角色架构本身的固定开销。用户「任务简单 ⇒ 相对更贵」的假设**在这一对上成立**。",
+    "caveat": "v2 尚无对照臂（官方 ptc 未在 miniql 上跑过）⇒ 「角色 vs 无角色」在 v2 上的倍数仍未测"
+  },
+  "designFlawFound": "它的 differential 把夹具**用它自己的 src/csv 装载**后喂给 SQLite ⇒ oracle 侧继承被测实现的解析错误（自指）。本次我用独立装载补上了这一层；**v3 契约应写明：oracle 侧的数据装载必须独立于被测实现**。",
+  "observations": [
+    "七个所有权行 → 七个 implementer 子会话，每个子代理的收尾都自陈「只碰本行路径」⇒ 所有权表就是派发脚本",
+    "契约 §4 的「parser 必须先冻 AST」被执行：AST.md 是第 1 个 commit",
+    "收尾提交（v1 教训）与「比对退出码类别」（v1 教训）都被真正实现"
+  ],
+  "unproven": [
+    "价值面三格待用户填写",
+    "v2 的对照臂未跑（官方 ptc 在 miniql 上）",
+    "本次只探了 18 条自选查询，非穷举"
+  ],
+  "reproduction": [
+    "node scripts/verify-ptc-roles.cjs --cwd /Users/eric/Project/tests/miniql",
+    "cd /Users/eric/Project/tests/miniql && node tools/differential.mjs && node --test && git status --porcelain",
+    "python3 /tmp/_probe2.py   # 我的 18 条越界探查（独立装载）"
+  ],
+  "userVerdict": {
+    "result": "中性",
+    "reason": "只用实现 subagent？还 7 个",
+    "taskName": "miniql 冻结契约 v2 实现（臂一）",
+    "recordedAt": "2026-09-20"
+  },
+  "userCritiqueVerified": {
+    "fact": "**用户说得对**：主 agent 只派了 7 个子会话，**全部是 `implementer`**（csv / lexer / parser / expr / rel / cli / tools 各一）；explorer / librarian / oracle / designer **零派发**。（第 8 个子会话 `74084d8a` 不是 preset 的角色 —— 它的调用是 `mnemon_document_search / document_create / subagent_result`，是 Mnemon 记忆系统自己的回写代理。）",
+    "cause1Mine": "**直接原因在我**：v2 契约**漏了 Review 格** —— 我自己 persona 的 Phase 0.5 模板明确要求契约带 `## Review oracle: ① contract conformance ② cross-module interfaces ③ …`，而 `.tmp/miniql-CONTRACT-v2.md` 里 `review` 出现 0 次 ⇒ 编排器没有任何评审职责可派 ⇒ 它当然不派 oracle。**这不是 preset 的缺陷，是我的产物的缺陷。**",
+    "cause2Structural": "**所有权表会变成派发脚本**：7 行 → 7 个子代理（一行一个）。角色的选择跟着契约的结构走，而不是跟着需求分析走。想要角色多样性，契约里就得点名职责（例如 §5 该配一个 librarian 职责、§4 该配一个 oracle 评审职责）。",
+    "librarianAbsenceJustified": "`librarian` 缺席**其实是设计后果而非失误**：我的 §5 把基准指向**本机可执行的 SQLite**（不是文档），而它们真的用了这条路 —— 主 agent 有 6 个 `run_code` 载荷含 `sqlite3`，子代理合计 9 次含 `sqlite3` 的 bash 调用（expr/rel/tools 三个子代理最多）。**一个可执行的 oracle 会取消文档角色的工作**，这是选裁判方式带来的副作用。",
+    "improvement": "v3 契约必须：① 带 **Review 格**（oracle 评审跨模块接口，这正是本次唯一没人做的一层）；② 写死 **oracle 侧数据装载必须独立于被测实现**（本次它用自己的 `src/csv` 装载喂给 SQLite，是自指）；③ 若 §5 指向文档则配 librarian 职责，若指向本机可执行基准就明说「不需要文档角色」。"
+  },
+  "measurementCorrections": [
+    "我先前用**原始子串计数**得到「主 agent web_fetch 14 次 / read_page 6 次」「子代理里 oracle 出现 102 次」——**全是假象**：命中来自工具清单与正文（`oracle` 是本次裁判的称呼）。按「调用名」计数才是真的：主 agent 的调用全在 `run_code` 内（30 个），没有任何 web/read_page 调用。",
+    "我第一次的会话普查报「7 个子会话」，第二次报 8 —— 差的那个是 Mnemon 记忆系统的回写代理，不是 preset 角色。"
+  ],
+  "contractAmendment": {
+    "what": "臂一的编排器在运行中把契约扩成 **v2.1** 并**单独提交**（`9729a55 spec: CONTRACT v2.1 — freeze value model, CSV typing, row/ctx, CLI and differential protocols`）",
+    "why": "它自陈的修订动机：v2 冻结了模块接口，**但没冻结值模型 / CSV 类型推断 / 行与上下文 / CLI 输出协议 / 差异验收协议** —— 而这些是跨行的共同约定，缺了它们 7 个所有权行不可能收敛",
+    "judgment": "**我契约的欠规范，被它发现并补齐**；且它照 v2 契约新增的『修订要单独落一条 commit』执行了 ✓。这也是本次唯一由编排器产生的**额外产物**。"
+  }
+}

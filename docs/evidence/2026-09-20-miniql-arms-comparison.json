@@ -1,0 +1,81 @@
+{
+  "probe": "2026-09-20-miniql-arms-comparison",
+  "task": "miniql v2：同一冻结契约、同一开场句（「按 CONTRACT.md 实现」），唯一变量 = preset",
+  "arms": {
+    "arm1-ptc-roles": {
+      "session": "session-514dfe95-9317-4b4d-8dd7-c5093c714d20",
+      "preset": "ptc-roles",
+      "turns": 6,
+      "mainSteps": 36,
+      "children": 7,
+      "childRoles": "全部 implementer",
+      "childShare": "48%",
+      "totalRaw": 7715732,
+      "wallClock": "约 14 分钟（22:32→22:46 收尾提交）",
+      "lines": 1871,
+      "tests": 116,
+      "differential": "17/17",
+      "outOfListProbe": "18/18",
+      "extraArtifact": "契约 v2.1 修订（值模型/CSV 类型推断/行与上下文/CLI 输出协议/差异验收协议），单独 commit",
+      "commits": 7,
+      "gateDenies": 1,
+      "compliance": "0/1（T1 动后补 — 开场先 bash 侦察）"
+    },
+    "arm2-ptc": {
+      "session": "session-1b93f1a8-7c5f-4d8c-a117-e51f94dcc01a",
+      "preset": "ptc（官方内置）",
+      "turns": 2,
+      "mainSteps": 32,
+      "children": 0,
+      "childRoles": "—（工具面只有 run_code，未实例化角色）",
+      "childShare": "0%",
+      "totalRaw": 3171274,
+      "wallClock": "约 7 分钟（23:10→23:16 收尾提交）",
+      "lines": 1371,
+      "tests": 54,
+      "differential": "17/17",
+      "outOfListProbe": "18/18",
+      "extraArtifact": "无",
+      "commits": 2,
+      "gateDenies": 0,
+      "compliance": "不适用（官方 ptc 无此纪律）"
+    }
+  },
+  "verdict": {
+    "outcome": "**再次等价**：两臂 differential 都是 17/17，我的 18 条越界探查**都是 18/18**（含 NULL 三值逻辑、空集聚合、LEFT JOIN、LIKE 大小写、字符串连接遇 NULL、LIMIT/OFFSET 与 1 条必须失败）",
+    "cost": "臂一 **2.4×** token（771.6 万 vs 317.1 万）、**2×** 墙钟、7 个子会话",
+    "scaleTrend": "**倍数在收敛**：v1（小任务）6.4× → v2（大任务）2.4×；按行算 v1 14.1k/行 → v2 4.1k/行（臂二 2.3k/行，差距从 4.0× 收窄到 1.8×）⇒ 用户『任务简单所以相对更贵』的假设成立",
+    "roleArmExtra": "多写了 1.36× 代码与 2.1× 测试，并且**多产出一份 v2.1 契约修订** —— 而那份修订之所以必需，恰恰因为工作被切成了 7 行：**单 agent 不需要跨行约定**"
+  },
+  "confounds": [
+    "n=1/臂：单次抽样",
+    "工具面本质不同：官方 ptc **没有角色工具**（无从选择）⇒ 比的是「有角色工具 vs 没有」",
+    "信息量不同：臂一自己生成了 v2.1 修订（对己有利），臂二用的是原始 v2 文本（它本可以自己补，但单 agent 不需要）",
+    "两臂的仓库都是新建的（臂二 2 个 commit、无臂一代码泄漏 ✓），但臂一的契约文本 ≠ 臂二的（v2.1）",
+    "规模 1371 vs 1871 行 —— 同一契约下的实现自由度不小"
+  ],
+  "unproven": [
+    "价值面三格（臂二）待填",
+    "质量面：臂一写了 116 测试、臂二 54 测试，我的探查不区分两者未覆盖的差异 ⇒ 『更多测试是否更可靠』未测",
+    "更大赛度是否继续收敛（v1 6.4× → v2 2.4× 只有一个间隔）",
+    "两个实现都未做长期维护性评估"
+  ],
+  "reproduction": [
+    "python3 /tmp/_probe_both.py    # 两臂各 18 条越界探查（独立用 python csv 装载）",
+    "cd /Users/eric/Project/tests/miniql && node tools/differential.mjs && node --test",
+    "cd /Users/eric/Project/tests/miniql-ptc && node tools/differential.mjs && node --test",
+    "diff /Users/eric/Project/tests/miniql/CONTRACT.md /Users/eric/Project/tests/miniql-ptc/CONTRACT.md"
+  ],
+  "userVerdictArm2": {
+    "result": "好用",
+    "reason": "完成速度快，效果一样",
+    "taskName": "miniql 官方 ptc 对照臂",
+    "recordedAt": "2026-09-20"
+  },
+  "userVerdictPair": {
+    "arm1": "中性 —— 「只用实现 subagent？还 7 个」（过程面：派发机械、只用了 implementer、零评审）",
+    "arm2": "好用 —— 「完成速度快，效果一样」（结果与成本面）",
+    "reading": "**这是第一次用户判定偏向「没有角色」的那一臂**：同效果、2.4× 便宜（v1 时是 6.4×）。与我在结果面测到的『两次配对各在产出上等价』完全一致 —— 两次独立方法（用户的判定 / 我的越界探查）指向同一个结论。",
+    "caveat": "理由本身承认「效果一样」，所以这是**成本偏好**，不是质量判断；臂一多出的 2.1× 测试与契约 v2.1 修订是否带来更可靠的长期结果，仍未测。"
+  }
+}
