@@ -383,7 +383,10 @@ function analyze(raw) {
       // 载体 = 产生这次调用的那条消息（tool/call 事件紧随它的 assistant/message）。
       if (typeof callId === 'string') callTurns.set(callId, { turn, carrier: lastMsgSeq })
       if (BEHAVIOR_TOOLS.has(toolName)) noteAction(turn, lastMsgSeq, toolName)
-    } else if ((event.type === 'tool/ptc-dispatch' || event.type === 'tool/ptc-dispatch-start') && BEHAVIOR_TOOLS.has(toolName)) {
+    } else if (event.type === 'tool/ptc-dispatch' && BEHAVIOR_TOOLS.has(toolName)) {
+      // 只计**完成**事件：同一派发会同时出 `-start` 与完成两个事件，而两者的 `owner.carrier` 完全相同
+      // （载体来自外层 `tool/call` 的映射）⇒ 计两次只会让 `carriers` 翻倍，即覆盖率的分母凭空翻倍
+      // （2026-09-20 修：实测一场 30 次派发被印成 60）。
       const rootCallId = event.data && event.data.rootCallId
       const owner = callTurns.get(rootCallId)
       if (owner !== undefined) noteAction(owner.turn, owner.carrier, toolName)
@@ -616,7 +619,7 @@ function intentGateStats(r) {
     turns, first: 0, reply: 0, anywhere: 0,
     eligible: 0, eligibleFirst: 0, eligibleDeclared: 0,
     contrastEligible: 0, sameMsg: 0, sameMsgShell: 0, sameMsgNonShell: 0,
-    acts: 0, actsCovered: 0,
+    acts: 0, actsCovered: 0, actsUserOpened: 0, actsCoveredUserOpened: 0,
     // ── 轮次资格（2026-09-20）：分母换成 user-opened turns，其余只作观察 ──────
     userOpened: qual.userOpened, machineOpened: qual.machineOpened, unknownOrigin: qual.unknownOrigin,
     userOpenedEligible: 0, userOpenedDeclared: 0,
@@ -660,6 +663,12 @@ function intentGateStats(r) {
       for (const carrier of rec.carriers) {
         s.acts += 1
         if (coverFrom !== undefined && carrier >= coverFrom) s.actsCovered += 1
+        // 与轮次资格同源：机器开轮的轮次不要求门行（pitfalls #19 v4），它们的动作也就不该进
+        // 现役覆盖率的分母；全轮次的口径仍保留为对照读数。
+        if (row.origin === 'user') {
+          s.actsUserOpened += 1
+          if (coverFrom !== undefined && carrier >= coverFrom) s.actsCoveredUserOpened += 1
+        }
       }
     }
   }
@@ -677,7 +686,8 @@ function gateLines(s, labelPrefix, indent) {
   const turnCount = Array.isArray(s.turns) ? s.turns.length : s.turns
   lines.push(indent + labelPrefix + '意图门合规率（' + USER_OPENED_SCOPE + ' 口径，① 存在分子）: '
     + s.userOpenedDeclared + '/' + s.userOpenedEligible + ' (' + rate(s.userOpenedDeclared, s.userOpenedEligible) + ')'
-    + ' | 行为动作覆盖 ' + s.actsCovered + '/' + s.acts + ' (' + rate(s.actsCovered, s.acts) + ')')
+    + ' | 行为动作覆盖（user-opened 轮）: ' + s.actsCoveredUserOpened + '/' + s.actsUserOpened
+    + ' (' + rate(s.actsCoveredUserOpened, s.actsUserOpened) + ') ｜ 每轮制对照 ' + s.actsCovered + '/' + s.acts)
   lines.push(indent + '对照口径（每轮制，旧读数）: ① 存在 ' + s.eligibleDeclared + '/' + s.eligible
     + ' (' + rate(s.eligibleDeclared, s.eligible) + ') | ② 前置 ' + s.contrastEligible + '/' + s.eligible
     + ' | 可见回复 ' + s.reply + ' | 任意文本 ' + s.anywhere)
@@ -1113,9 +1123,13 @@ function gateSelfTest() {
     const ok = s.eligible === want.eligible && s.eligibleDeclared === want.eligibleDeclared
       && s.contrastEligible === want.contrastEligible
       && s.acts === want.acts && s.actsCovered === want.actsCovered && silent === want.silent
+      // 新的一对只在夹具显式给出时期望（其余 case 不因它变红）。
+      && (want.actsUserOpened === undefined
+        || (s.actsUserOpened === want.actsUserOpened && s.actsCoveredUserOpened === want.actsCoveredUserOpened))
     return { name: c.name, ok, detail: '期望 ' + JSON.stringify(want) + '，实得 eligible=' + s.eligible
       + ' eligibleDeclared=' + s.eligibleDeclared + ' contrastEligible=' + s.contrastEligible
-      + ' acts=' + s.acts + ' actsCovered=' + s.actsCovered + ' silent=' + silent }
+      + ' acts=' + s.acts + ' actsCovered=' + s.actsCovered + ' actsUserOpened=' + s.actsUserOpened
+      + ' actsCoveredUserOpened=' + s.actsCoveredUserOpened + ' silent=' + silent }
   })
 }
 
@@ -1151,7 +1165,8 @@ function main() {
   let silentSessions = 0     // 单场「门行整场静默」的会话数（每轮制对照；观察项，不接退出码 —— pitfalls #19）
   let silentUserOpenedSessions = 0  // 同上，**user-opened 口径**（现役分母）
   const gate = { turns: 0, first: 0, reply: 0, anywhere: 0, eligible: 0, eligibleFirst: 0, eligibleDeclared: 0,
-    contrastEligible: 0, sameMsg: 0, sameMsgShell: 0, sameMsgNonShell: 0, acts: 0, actsCovered: 0, sessions: 0,
+    contrastEligible: 0, sameMsg: 0, sameMsgShell: 0, sameMsgNonShell: 0, acts: 0, actsCovered: 0,
+  actsUserOpened: 0, actsCoveredUserOpened: 0, sessions: 0,
     userOpened: 0, machineOpened: 0, unknownOrigin: 0, userOpenedEligible: 0, userOpenedDeclared: 0,
     machineOpenedActing: 0, batchUserNotFirst: 0, midTurnUserOnly: 0 }
   /** 进了上面的合计的那些轮次记录 —— 下方成因分类 / 拆读数必须只看这一批，否则与合计行对不上。 */
@@ -1308,6 +1323,7 @@ function main() {
           gate.turns += g.turns.length; gate.first += g.first; gate.reply += g.reply; gate.anywhere += g.anywhere
           gate.eligible += g.eligible; gate.eligibleFirst += g.eligibleFirst
           gate.eligibleDeclared += g.eligibleDeclared; gate.acts += g.acts; gate.actsCovered += g.actsCovered
+      gate.actsUserOpened += g.actsUserOpened; gate.actsCoveredUserOpened += g.actsCoveredUserOpened
           gate.contrastEligible += g.contrastEligible
           gate.sameMsg += g.sameMsg; gate.sameMsgShell += g.sameMsgShell; gate.sameMsgNonShell += g.sameMsgNonShell
           gate.userOpened += g.userOpened; gate.machineOpened += g.machineOpened
