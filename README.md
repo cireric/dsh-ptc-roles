@@ -73,7 +73,7 @@ make control   # 两个阴性对照：断言有没有空转
 `docs/pitfalls.md` #19（唯一登记处）。
 
 > 改了 `preset/ptc-roles/*.mjs` 之后必须 `dev_reload_preset preset=ptc-roles`（输出要含 `x.mjs -> ?v=N`）
-> 改了 `preset/ptc-roles/*.mjs` 之后必须 `dev_reload_preset preset=ptc-roles`（输出要含 `x.mjs -> ?v=N`）**并确保一次新的挂载**（新会话，或重开 / resume —— 判据见 `docs/pitfalls.md` A 节）；仍在运行的会话保持旧代。
+> 改了 `preset/ptc-roles/*.mjs` 之后必须 `dev_reload_preset preset=ptc-roles`（输出要含 `x.mjs -> ?v=N`）**并确保一次真正的重新挂载**（**宿主重启 / preset 重新装配**才算；同一进程里新开会话不算 —— 判据见 `docs/pitfalls.md` A 节）；仍在运行的会话保持旧代。
 
 ## 文档地图（每份文档只干一件事）
 
