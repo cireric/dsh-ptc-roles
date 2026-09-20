@@ -26,3 +26,8 @@ DSH agent preset：orchestrator 主 agent（PTC）+ `explorer`/`librarian`/`orac
    （判据是集合相等，不是包含）。部署与对账走 `make deploy` / `make check`（漂移退 2）。
    改了 `.mjs` 还要 `dev_reload_preset`（输出须含 `x.mjs -> ?v=N`）并开新会话。
 8. **改 preset、或排障之前，先读 `docs/pitfalls.md`** —— 机制与坑的唯一知识源。
+9. **会话数据的结论必须由唯一 reader 复核**：任何关于会话 / 轮次 / 角色 / 合规 / 用量的数字，只能出自
+   `scripts/verify-ptc-roles.cjs`（读别的工作区加 `--cwd <path>`）。临时的 `grep` / 一次性脚本**只准提假设**，
+   不得直接进结论或文档 —— 理由与四次翻车记录见 `docs/pitfalls.md` #24。
+   **例外（探针级）**：reader 暂不覆盖的读数可以作一次性探针，但必须落 `.tmp/`、写清口径与 n、标注「未复核」，
+   且**不得**进 `docs/` 或任何结论 —— 判据是它没有被 reader 复核过。
