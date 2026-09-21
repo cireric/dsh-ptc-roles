@@ -320,7 +320,7 @@ async function deployPreset(plan, opts, home) {
 
   console.log('  ✓ 已部署 ' + plan.entries.length + ' 项 → ' + plan.targetDir)
   console.log('  ⇒ 生效：开新会话（persona 与 agent.cordis.yml 每次新会话重读）；')
-  console.log('     改过 .mjs 还要 dev_reload_preset preset=ptc-roles（输出须含 x.mjs -> ?v=N）再开新会话。')
+  console.log('     改过 .mjs 还要 dev_reload_preset preset=' + plan.id + '（输出须含 x.mjs -> ?v=N）再开新会话。')
   return true
 }
 

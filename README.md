@@ -45,8 +45,9 @@ preset 源码在本仓库；DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读取，
 （把整个目录做软链会被发现逻辑**静默跳过**）：
 
 ```bash
-make deploy   # 建真目录 + 内部软链；目标已存在时会先列出差异并问 y/N
-make check    # 对账：当前部署 vs 仓库（缺项 / 断链 / 指错 / 多余），漂移退 2
+make deploy            # 部署全部 preset；建真目录 + 内部软链，目标已存在时会先列出差异并问 y/N
+make deploy ptc-gate   # 只部署指定 preset（ptc-roles / ptc-gate；等价 make deploy PRESET=ptc-gate）
+make check             # 对账：当前部署 vs 仓库（缺项 / 断链 / 指错 / 多余），漂移退 2
 ```
 
 部署清单由 `scripts/deploy-preset.cjs` **自动发现** `preset/<id>/` 的全部顶层条目（跳过点文件）——
