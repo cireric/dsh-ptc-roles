@@ -1,12 +1,30 @@
 # ptc-roles
 
-一个 DSH **agent preset**：orchestrator 主 agent + 五个有职责边界的角色子代理。
+本仓库提供**两个** DSH **agent preset**：
+
+- **`ptc-gate`（默认先选它）** —— PTC 主 agent + 意图门纪律，**不预置**角色子代理，委派按需发生。
+- **`ptc-roles`** —— 在 `ptc-gate` 的基础上再加五个有职责边界的角色子代理
+  （explorer / librarian / oracle / implementer / designer），白名单即硬能力边界。
 
 - 主 agent 保持 **PTC**（省 token），委托出去的子代理切 **native** —— 这样 `toolFilter.allow` 才是
   **真正的能力边界**，而不是提示性配置（**已知例外**：宿主注入的 `subagent` / `list_subagent_models`
   掩不掉，脚本按 `⊘ 已知自身层泄漏` 容忍并标注 —— 机制见 `docs/pitfalls.md` #7）。
   为什么必须这样切、否决过哪些方案：见
   [docs/decisions/0001](docs/decisions/0001-role-preset-over-orchestration-bundle.md)。
+
+## 两个 preset 怎么选
+
+**默认用 `ptc-gate`。** 只有当任务**同时**满足下面 ≥3 条时，才改用 `ptc-roles`：
+
+| 条件 | 判据 |
+|---|---|
+| ① 每块说明能**小而自足** | 子代理只需父级上下文的一小部分（主-子**不共享前缀缓存**，喂全文契约给每个子块是最坏形态） |
+| ② 接口能**派发前冻结一次** | 子块之间不需要来回协商 |
+| ③ 每块**显著大于协调开销** | 并行能省下真实墙钟，且父级几乎没有串行尾巴 |
+| ④ 本地**没有可执行裁判** | 有测试/脚本能判对错时，单 agent 直接对着裁判迭代更快更省 |
+
+依据（三对配对、四层探针、机制读数与完整判据）：`docs/decisions/0002-continue-evolving.md` 的窗口读数；
+原始记录：`docs/evidence/2026-09-2*-*arms-comparison.json`。**别在这里复述数字**（会漂）。
 
 ## 角色
 
@@ -42,13 +60,15 @@ make check    # 对账：当前部署 vs 仓库（缺项 / 断链 / 指错 / 多
 
 ## 使用
 
-新会话在 preset 选择器里选 `ptc-roles`，然后正常说话即可 ——
-主 agent 会按 orchestrator persona 的意图门判断，并把独立轨道派给对应角色工具。
+新会话在 preset 选择器里选 **`ptc-gate`**（或按上一节的判据选 `ptc-roles`），然后正常说话即可 ——
+主 agent 会按 orchestrator persona 的意图门判断；需要派活时它会用通用的 `subagent` 工具按需委派。
+
+> 宿主默认 preset（`~/.dsh/settings.yaml` 的 `agent-presets.default`）**不由本仓库改** —— 它现在是 `standard`；换默认值属于宿主的决定。
 
 ## 验证
 
 ```bash
-make verify    # 四个脚本：行为 / 插件单元 / 看门狗 / 框架契约
+make verify    # 四个脚本（行为 / 插件单元 / 看门狗 / 框架契约）+ 组成契约
 make control   # 两个阴性对照：断言有没有空转
 ```
 
@@ -59,8 +79,10 @@ make control   # 两个阴性对照：断言有没有空转
 | `verify-intent-gate-watchdog.cjs` | 看门狗的单元校验 + 契约一致性（插件 token / 六桶 / **存在要求**（门行在承载首个行为动作的那条消息里、且为首行，①）与闸门的四条不变量 ↔ persona 模板） |
 | `verify-harness-contract.cjs` | **框架契约门禁** —— 升级 dsh 本体**前后各跑一次**：变红的那条直接指出 preset 侧要改哪一处（`--harness <checkout>`，默认 `~/.dsh/dsh-harness`） |
 
+| `deploy-preset.cjs --compose` | **组成契约**（只读、只查仓库）：每个 preset 该有哪些 agent 行（`ptc-gate` **不得**有角色行、`ptc-roles` 必须有五个）+ **门插件副本一致性**（preset 目录须自包含 ⇒ 副本漂移必须可见） |
+
 **判据是各脚本自己打印的判定行** —— 不是退出码，也不是写进任何文档的断言条数（条数随改动变，抄进文档必漂）。
-四个脚本统一「0 = 本次运行符合预期」，`--control` 在预期失败数上同样退 0；断言集合由脚本内的
+四支脚本 + 组成契约统一「0 = 本次运行符合预期」，`--control` 在预期失败数上同样退 0；断言集合由脚本内的
 `REQUIRED_CONTROL_FAILURES` / 断言表定义，**多一条也是异常**（判据是集合相等）。契约门禁另有退出码 `2`：
 目标 checkout 或契约载体读不到（**响亮失败**，绝不静默跳过）。
 

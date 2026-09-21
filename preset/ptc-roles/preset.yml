@@ -1,4 +1,4 @@
 name: PTC 角色模式
 description: >-
-  基于官方 PTC 模式派生：主 agent 保持 PTC，另加五个命名角色子代理
-  （explorer / librarian / oracle / implementer / designer），白名单即硬能力边界。
+  PTC 主 agent + 五个命名角色子代理（explorer / librarian / oracle / implementer /
+  designer），白名单即硬能力边界；适合上下文装不下、需要独立评审或需要墙钟并行的任务。

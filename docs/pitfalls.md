@@ -311,7 +311,7 @@ DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里必须是**真目录 + �
     | ① | **别自造桶**：桶 = `{uncachedInput, output, cacheRead, cacheWrite}`；`inputTokens` **只是未缓存输入**，计费输入 = 三桶相加；`totalTokens` 可选、不当分母 | `packages/llm/llm/src/types.ts:144-146`（"Counts are DISJOINT"）+ `token-meter/src/usage-projection.ts:21` |
     | ② | **折叠语义照抄 `tokenUsage` 投影**：计入 `assistant/message` **与** `assistant/attempt`；同一 `(turn, step)` 是**替换**不是累加（`addReplacing`）；`llm/retry-started` 关闭替换槽 ⇒ 重试的那次要**加** | `usage-projection.ts:114-145`（[读源码]，未跑对照实验） |
     | ③ | **seeded（fork）会话按 `parentSession` 归并成「一场」**，父只在根文件计一次 —— 子文件里是父事件的**深拷贝**，逐文件求和会把父的用量算第二遍 | [实测] 2026-09-18：`6d4dbcbc-…`（`isSeeded:true`、`parentSession=session-54bad2dc-…`）与父读数**完全相同**（102 步 / 15,389,114） |
-    | ④ | **arm 取 `agent-preset/selected` 事件**（会话头 `agentPreset` 是创建时快照、已知滞后不可信）；且**人口要单列规则** —— `verify-ptc-roles.cjs:863` 的 `depth===0 && !isPresetRoot → continue` 会把同工作区的 ptc / standard 主会话整批挡掉，照抄就**看不见对照臂** | `verify-ptc-roles.cjs:830-832,863`；事件由 `agent-presets/src/index.ts:748` 写入 |
+    | ④ | **arm 取 `agent-preset/selected` 事件**（会话头 `agentPreset` **记的是宿主默认值**（`~/.dsh/settings.yaml` 的 `agent-presets.default`；2026-09-21 定位：它现在是 `standard`，而同一场会话的 `agent-preset/selected` 可以是 `ptc` / `ptc-roles` / `ptc-gate`）—— 不是那一场的实际选择，也不是「滞后快照」）；且**人口要单列规则** —— `verify-ptc-roles.cjs:863` 的 `depth===0 && !isPresetRoot → continue` 会把同工作区的 ptc / standard 主会话整批挡掉，照抄就**看不见对照臂** | `verify-ptc-roles.cjs:830-832,863`；事件由 `agent-presets/src/index.ts:748` 写入 |
 
     - **会话头字段在 event 顶层、不在 `data` 里**（`id` / `createdAt` / `cwd` / `parentSession` / `isSeeded` /
       `origin` / `delegationDepth` / `agentPreset` / `version`）—— 读 `event.data.*` 会全取到 `undefined`。
@@ -398,6 +398,19 @@ DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里必须是**真目录 + �
       与 `llm/retry` 计数 → `interrupt_agent` 停掉 → 自己接手或重派一个更窄的任务。
     - **不在本轮**：`--stale <分钟>` 读数（等第一个真实僵死出现时再做，它让「停在半路」事后可查）。
 
+26. **PTC 的 `run_code` 有一道 10 分钟硬墙钟（`maxWallMs`）—— 长时委派必须走后台，别在程序里阻塞等。**
+    【C】2026-09-21 读源码 + 一次真实撞墙：
+    - **机制**：`packages/code-runtime/code-runtime-worker-thread` 的 `maxWallMs` **默认 600_000 ms**，
+      超时即以 `{ kind: 'timeout', message: 'wall-clock ceiling reached (…)' }` 收尾（`src/index.ts:241,544-545`）。
+      它与 `computeMs`（忙时预算）**是两套预算**：README 自陈「wall-clock ceiling；**never pauses for anything** ——
+      专治忙时看不见的等待」。上限受 Node 定时器钳制（`> MAX_TIMER_DELAY_MS` 直接报错）。
+    - **撞墙现场**：第三臂 `session-c9f06a94`（`ptc-gate`）把一次**前台阻塞**委派（`run_in_background: false`）
+      叠进 `run_code` ⇒ 等待超过 10 分钟 ⇒ 那个 run_code 程序被判 timeout 杀掉（该场日志里 `maxWallMs` 178 次、`killed` 10 次）。
+    - **规则（该场实测得出，且**不用改任何配置**）**：① 委派保持**后台**（`run_in_background` 默认即 `true`）；
+      ② **永远不要把阻塞式前台委派作为 `run_code` 程序里等待的那一步** —— 等待要跨过程序边界（结束这次 run_code，等子代理的完成通知）。
+    - **不止委派**：任何**长时工作**（长构建、长测试、大批量脚本）叠在 `run_code` 里同样会被这道墙钟杀掉 —— 正确形态是交给**后台 job**（`tool-jobs`），等它的通知，而不是把等待塞进程序。
+    - **为什么不能靠调大上限兜底**：`maxWallMs` 是**卡死保护**，调大等于把「程序卡住」的检测阈值推远；
+      而阻塞等待在机制上属于「忙时不可见」，本来就该交给后台机制而不是墙钟。
 ## C. 排障表（症状 → 原因 → 修法）
 
 | 症状 | 原因 | 修法 |
