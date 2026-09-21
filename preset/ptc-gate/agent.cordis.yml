@@ -1,0 +1,367 @@
+# The `ptc` agent preset: the standard coding agent, presented as PTC mode.
+#
+# Most of `standard` is here unchanged. The deliberate exception is the
+# general-purpose `workflow` tool: PTC mode uses `run_code` as its model-authored
+# composition surface. The `tool-presentation` row turns the remaining registry
+# into a generated SDK, so a sequence that would be five round trips becomes one.
+#
+# The registry itself stays on the host plane — the agent loop's scheduler and
+# the API proxy's presenters are its consumers — so what this preset owns is
+# the PRESENTATION of that registry for this agent alone. Native sessions run
+# beside this one in the same process, each seeing its own catalog.
+#
+# This file is an AGENT-PLANE composition. It is mounted under one agent's
+# scope context, so every tool and prompt section it registers belongs to that
+# session alone. The host composition (`base.cordis.yml` + `web.cordis.yml`)
+# keeps everything a preset must not own: the registries themselves, the
+# sandbox and approval stack, persistence, and the model route.
+#
+# A service row here MUST sit inside a group carrying an `isolate` realm.
+# Without one it publishes into the root realm, where it is process-global
+# rather than per-session and the second session mounting this preset collides
+# with the first; `dsh-agent-presets` rejects that at mount. `true` means an
+# entry-local realm — one private instance per mounted session, which is the
+# default this deployment wants. A shared label would instead pool one instance
+# across every session naming it.
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# The preset's own persona, shadowing the deployment default for this agent.
+# `{{model}}` and `{{cwd}}` resolve from the agent's own route and workspace.
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    suffix: Your working directory is {{cwd}}.
+    # ptc-roles: the orchestrator persona replaces the stock one-liner.
+    # `!!js` reads it relative to THIS composition directory: the loader rewrites
+    # `baseUrl` to the composition's own directory before evaluating the row.
+    prefix: !!js "process.getBuiltinModule('node:fs').readFileSync(new URL('personas/orchestrator.md', baseUrl), 'utf8')"
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+# `shell-env` stays in the HOST composition: `apps/cli/src/web.ts` injects it to
+# publish `DSH_WEB_URL`/`DSH_WEB_MODE`, and a host row that injects a service is
+# the criterion for host-plane ownership — injection resolves before any session
+# exists, so there is no agent to key by. Behind a preset realm those variables
+# never reached the model's shell at all. Both shell tools consume the host
+# registry from here; their executors (`bash-sandbox`/`pwsh-sandbox`) are
+# host-plane too.
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# Consequence for the role allow-lists below: a role may NOT hard-code `bash`.
+# On win32 that name is not registered, and an unknown allow-list name fails the
+# child start LOUDLY (deliberate — fail visible). Each shell-bearing role row
+# therefore picks its shell with a platform expression. Keep that expression
+# QUOTED: an unquoted `? … : …` ternary is valid YAML but parses as a complex
+# MAPPING KEY, silently yielding a non-string allow entry (measured 2026-09-13).
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+# Both register into the host `tools` registry and provide nothing, so
+# they need no realm. The `fs` service and its policy stay in the host.
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── background jobs ────────────────────────────────────────────────────────
+
+# Only the model-facing controls. The task REGISTRY stays on the host plane:
+# its producers sit outside any realm this file could put it in — `tool-bash`
+# above resolves it with `ctx.get`, and an entry-local realm here is invisible
+# to every sibling row, so `run_in_background` would answer "background jobs
+# unavailable" while these controls sat in the catalog. The registry is keyed by
+# owning agent anyway, so one host instance serves every session. What a preset
+# chooses is whether its agent can collect and stop background work at all.
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+# The skill REGISTRY lives in the host composition and is layered per scope:
+# these rows register into THIS preset's layer of it, so they need no realm.
+# `skill-filesystem` contributes local-root discovery for agents on this preset, and
+# `tool-skill` gives them the catalog and loader; the merged catalog also
+# carries whatever the deployment registered globally (repository plugins).
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── goals ───────────────────────────────────────────────────────────────────
+
+# The goal service and session driver stay on the host plane, where the Gateway
+# can resolve them. The human command and model-facing tool register into this
+# preset's scoped layers.
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+
+# ── plan mode ───────────────────────────────────────────────────────────────
+
+# Plan state is per-agent by nature, so an entry-local realm is not a
+# workaround here — it is the correct lifetime.
+- id: planning
+  name: cordis:group
+  group: true
+  isolate:
+    planMode: true
+  config:
+    - id: plan-mode
+      name: '@deepseek-ai/dsh-plan-mode'
+      config:
+        section: |
+              You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+              Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+              The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+              Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+              Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+              When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+
+# ── compaction ──────────────────────────────────────────────────────────────
+
+# `compaction-basic` reads `toolResultPrune` through `ctx.get`, so the pruner must
+# share this realm rather than sit outside it.
+#
+# `tokenMeter` is deliberately NOT in this realm: the meter stays on the HOST
+# plane, and the rows here resolve that one instance. It takes no configuration,
+# keys every fold by Session, and owns the context-meter projection units the
+# browser reads for every session — behind a realm those units would come and go
+# with whichever presets happen to be mounted. What a preset chooses is whether
+# its agent compacts at all, which is `compaction-basic` below.
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
+
+# ── delegation and workflows ────────────────────────────────────────────────
+
+# The `subagents` registry and its spawn/fork backends live in the HOST
+# composition: the registry is a process singleton whose cross-session queries
+# the api-proxy serves to the browser, and a provider name may only be
+# registered once. This preset contributes the delegation TOOLS, which resolve
+# that host registry.
+#
+# `workflows` is different — nothing outside an agent reads it — so every row
+# that reaches it shares one entry-local realm here, and a consumer left
+# outside would resolve a host registry this preset does not populate.
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    # ptc-roles PATCH — the only divergence from the verbatim base preset.
+    # A child scope re-mounts this row into its OWN layer, so the leaked
+    # `subagent` tool is visible to every delegated child (restrict() cannot
+    # mask own-layer registrations). Without a bound, a depth-1 role spawns an
+    # unrestricted depth-2 grandchild: measured 3 such sessions, each with 162
+    # tools and the orchestrator persona. `maxDepth: 1` keeps generic
+    # delegation for the orchestrator (depth 0 -> child 1 <= 1) while a
+    # depth-1 child's attempt computes 2 > 1 and throws SubagentDepthError.
+    - id: tool-subagent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent
+        maxDepth: 1
+        modelSelectionSettings: true
+        backgroundMode: continuable
+
+    # Fork omits model selection so provider/model stay equal to the parent and
+    # the inherited history remains eligible for KV Cache reuse. This preset
+    # keeps fork continuable; parent and child inherit the same messaging tool,
+    # while the parent id and return guidance follow the inherited history.
+    - id: tool-subagent-fork
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: fork
+        toolName: subagent_fork
+        backgroundMode: continuable
+
+    # Production dsh does not install these optional providers. Install the
+    # matching Bundle in this Profile and restart the Host, then copy this
+    # preset and remove `disabled` from the matching tool row. Host availability
+    # alone grants no tool.
+    - id: tool-subagent-codex
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: codex
+        toolName: subagent_codex
+        backgroundMode: one-shot
+        maxDepth: provider-managed
+
+    - id: tool-subagent-claude-code
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: claude-code
+        toolName: subagent_claude_code
+        backgroundMode: one-shot
+        maxDepth: provider-managed
+
+    - id: workflow-worker-thread
+      name: '@deepseek-ai/dsh-workflow-worker-thread'
+      config:
+        provider: spawn
+
+    - id: tool-workflow
+      name: '@deepseek-ai/dsh-tool-workflow'
+      # Keep the engine above for `ralph`, but do not publish a second
+      # model-authored orchestration surface beside `run_code` in PTC mode.
+      disabled: true
+
+    - id: tool-ralph
+      name: '@deepseek-ai/dsh-tool-ralph'
+      config:
+        subagentProvider: spawn
+        maxRounds: 64
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+# The `web` service and its search provider stay in the host composition; only
+# the model-facing tool is per-session.
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: true
+    searchTimeoutMs: 60000
+
+# ── presentation ────────────────────────────────────────────────────────────
+
+# PTC mode for this agent alone. The row waits for the host's `codeRuntime`
+# rather than assuming it: a deployment that composes no TypeScript runtime
+# fails this preset at mount, naming this id, instead of at the first request.
+- id: tool-presentation
+  name: '@deepseek-ai/dsh-agent-tool-presentation'
+  config:
+    mode: ptc
+
+- id: present
+  name: '@deepseek-ai/dsh-tool-present'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ptc-gate additions over the shipped `ptc` preset
+#
+# Everything ABOVE is the shipped `ptc` preset copied verbatim, with the same
+# single patch: `tool-subagent` gained `maxDepth: 1` (rationale at that row).
+# Diff against packages/preset/agent-presets/presets/ptc/agent.cordis.yml to see
+# exactly what this preset changes. What it adds:
+#
+#   • persona.prefix (patched above) — orchestrator persona: Phase-0 intent gate,
+#     on-demand delegation criteria, evidence gate, hand-off line, failure recovery.
+#   • intent-gate-watchdog.mjs       — the per-turn gate (remind + deny) and its flip.
+#
+# What it deliberately does NOT add (removed 2026-09-21 after measurement):
+#   • no named role tools and no role allow-lists — three paired runs on the same
+#     frozen task gave identical results at 2.4–6.4× the tokens (see
+#     docs/decisions/0002-continue-evolving.md; that file also carries the four
+#     criteria for when to switch to the `ptc-roles` preset instead).
+#   • role-presentation.mjs is therefore absent: there are no role children to flip.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Everything ABOVE is the shipped `ptc` preset copied verbatim, with ONE
+# patched row: `tool-subagent` gained `maxDepth: 1` (rationale at that row).
+# Diff against packages/preset/agent-presets/presets/ptc/agent.cordis.yml to see
+# exactly what this preset changes. What it adds, and why:
+#
+#   • persona.prefix (patched above)      — orchestrator persona: Phase-0 intent
+#     gate, delegation table, delegation discipline, evidence gate.
+#   • five named role tools               — explorer / librarian / oracle /
+#     implementer / designer. Named tools are what let `toolFilter.allow` express
+#     the JOB BOUNDARY: oracle's allow-list names explorer+librarian, so
+#     implementer (and designer) are invisible to it.
+#   • role-presentation.mjs          — flips every delegated child to
+#     `native` so `run_code` disappears and the allow-list becomes a real
+#     capability boundary. The main agent keeps the base's PTC presentation.
+#
+# maxDepth semantics (packages/subagent/subagent/src/child-agent.ts:49-56):
+#   childDepth = delegationDepth(parent) + 1, and childDepth > maxDepth throws.
+#   The orchestrator is depth 0, so `maxDepth: 0` would reject EVERY delegation;
+#   `1` is the tightest value that still lets the orchestrator delegate. Leaf-ness
+#   cannot be expressed by maxDepth alone (one tool instance serves every caller
+#   depth), so each leaf role's allow-list also omits every role tool name.
+#     explorer / librarian : maxDepth 2  -> the orchestrator (depth 0) AND oracle
+#                            (depth 1) may call them; a depth-2 explorer cannot.
+#     oracle /
+#     implementer / designer : maxDepth 1 -> only the orchestrator may call them.
+#
+# Tool names below were checked against the live agent-scoped registry (157
+# tools / 81 mcp__*). An unknown name fails the child start LOUDLY — that is
+# deliberate (fail visible), so re-check this list after any MCP server change.
+# NOT included on purpose: `skill` (roles get no skills in v1), `run_code`
+# (reserved, unmaskable — see the presentation plugin), and role tool names for
+# the four leaf roles (explorer / librarian / implementer / designer).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 意图门看门狗：per-turn 的 Phase 0 纪律在「漏了」时没有任何代价，于是静默衰减
+#（本项目**取证当时**实测：26 轮里只有 2 轮的可见回复输出过 —— 这是取证当时的窗口，
+# 不是今天的读数：口径 / 窗口 / 日期见 docs/pitfalls.md #19，别把 8% 和 85% 混着读）。
+# 判据（2026-09-17 起）= ① 存在档：上一轮属于会改变行为的轮次，而门行没有落在**承载第一次动手的
+# 那条消息**里（它必须是该消息的首行）⇒ 提醒一次；只读轮次与纯回答不提醒（persona 的 Phase 0 也只
+# 对这类轮次要求门行）。**同一条消息里的门行算数**；②「门行早于动手」只作对照读数（见 #19）。
+# 见插件头部注释与 scripts/verify-intent-gate-watchdog.cjs。
+- id: intent-gate-watchdog
+  name: ./intent-gate-watchdog.mjs?v=10
+  # 闸门（tools/pre-execute）随本行配置：`observe` 只记账 + 注入竞态诊断行，`enforce` 才真的拒绝
+  # （每轮最多一次）。配置缺失/写错都退回记账（fail-safe），不会因为一处笔误开始拦人。
+  # **2026-09-18 开闸（enforce）**：前置 = 观察期里没有出现过**真注入**的 RACE_REPORT。读法必须用
+  # **注入前缀**（`[intent-gate-watchdog] observe` 落在 agent/inbox/spliced / user/message），不能用子串扫
+  # `RACE_REPORT` —— 引用插件源码 / pitfalls 正文 / 模型复述都会命中（实测 6/39 假阳性，见 pitfalls #23）。
+  # 冻结读数（0 次真注入 + 阳性对照 + 两个真机测试实例）：
+  # docs/evidence/2026-09-18-gate-flip-prerequisite.json
+  config:
+    gate: enforce
+
