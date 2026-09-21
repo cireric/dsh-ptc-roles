@@ -14,13 +14,14 @@ deploy: ## 部署 preset 到 ~/.dsh/.agent-presets/（同名已存在会先问 y
 check: ## 对账：当前部署 vs 仓库（漂移退 2，不写盘）
 	node scripts/deploy-preset.cjs --check
 
-verify: ## 自验四支脚本（判据是各脚本打印的判定行；**全部跑完**再汇总，任一非 0 则 make 非 0）
+verify: ## 自验四支脚本 + 组成契约（判据是各脚本打印的判定行；**全部跑完**再汇总，任一非 0 则 make 非 0）
 	@rc=0; \
 	node scripts/verify-ptc-roles.cjs || rc=1; \
 	node scripts/verify-role-presentation.cjs || rc=1; \
 	node scripts/verify-intent-gate-watchdog.cjs || rc=1; \
 	node scripts/verify-harness-contract.cjs --harness $(HARNESS) || rc=1; \
-	echo "⇒ make verify：四支已全部跑完（rc=$${rc} —— 判据仍以各脚本打印的判定行为准）"; \
+	node scripts/deploy-preset.cjs --compose || rc=1; \
+	echo "⇒ make verify：四支脚本 + 组成契约已全部跑完（rc=$${rc} —— 判据仍以各脚本打印的判定行为准）"; \
 	exit $$rc
 
 control: ## 阴性对照：断言有没有空转（判据 = 集合相等；符合预期即退 0）

@@ -34,7 +34,8 @@ const USAGE = [
   '',
   '  （无选项）        部署 preset/<id>/ → $DSH_HOME/.agent-presets/<id>/；',
   '                   目标已存在时先列出差异并询问 y/N，确认后才重建',
-  '  --check           只读对账：当前部署 vs 仓库（缺项 / 断链 / 指错 / 多余），漂移退 2',
+  '  --check           只读对账：当前部署 vs 仓库（缺项 / 断链 / 指错 / 多余）+ 组成契约，漂移退 2',
+  '  --compose         只读、只查仓库：每个 preset 的组成契约（该有哪些 agent 行 / 门插件副本是否一致），违规退 1',
   '  --dry-run         只打印计划，不写盘、不询问',
   '  --yes, -y         非交互：跳过询问（非交互终端且无此旗标时脚本拒绝执行，绝不挂起）',
   '  --preset <id>     只处理指定 preset（默认：preset/ 下全部）',
@@ -63,10 +64,11 @@ function resolveDshHome(override) {
 }
 
 function parseArgs(argv) {
-  const opts = { check: false, dryRun: false, yes: false, preset: null, home: null, help: false }
+  const opts = { check: false, compose: false, dryRun: false, yes: false, preset: null, home: null, help: false }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     if (arg === '--check') opts.check = true
+    else if (arg === '--compose') opts.compose = true
     else if (arg === '--dry-run') opts.dryRun = true
     else if (arg === '--yes' || arg === '-y') opts.yes = true
     else if (arg === '--help' || arg === '-h') opts.help = true
@@ -75,6 +77,7 @@ function parseArgs(argv) {
     else refuse('未知参数：' + arg + '（--help 看用法）')
   }
   if (opts.check && opts.dryRun) refuse('--check 与 --dry-run 互斥（--check 本身就是只读对账）')
+  if (opts.compose && (opts.check || opts.dryRun)) refuse('--compose 只读且只查仓库，不与 --check / --dry-run 并用')
   if (opts.preset !== null && !PRESET_ID.test(opts.preset)) {
     refuse('--preset 只接受 ^[a-z0-9][a-z0-9-]*$，收到：' + JSON.stringify(opts.preset))
   }
@@ -207,6 +210,49 @@ function removeTarget(targetDir, st) {
   fs.rmSync(targetDir, { recursive: true, force: true })
 }
 
+/**
+ * 组成契约：每个 preset **必须 / 不得**有哪些顶层 agent 行。
+ * 单一源 = 本表（本脚本是唯一遍历 preset 根目录的地方）；唯一 reader 只比对「已存在的角色行」与 EXPECTED，
+ * 不重复登记这里的事实（ADR 0002 待决 #6 的 Q12 决定）。新增 preset 不登记 ⇒ **响亮失败**。
+ */
+const EXPECTED_COMPOSITION = {
+  'ptc-roles': { roles: ['role-explorer', 'role-librarian', 'role-oracle', 'role-implementer', 'role-designer'], plugins: ['role-presentation', 'intent-gate-watchdog'] },
+  'ptc-gate': { roles: [], plugins: ['intent-gate-watchdog'] },
+}
+const GATE_PLUGIN = 'intent-gate-watchdog.mjs'
+
+function topLevelIds(sourceDir) {
+  const text = fs.readFileSync(path.join(sourceDir, COMPOSITION), 'utf8')
+  return text.split('\n').filter((line) => /^- id: /.test(line)).map((line) => line.slice('- id: '.length).trim())
+}
+
+function compositionFindings(id, sourceDir) {
+  const spec = EXPECTED_COMPOSITION[id]
+  if (spec === undefined) return ['未登记的 preset（往 EXPECTED_COMPOSITION 加一行再部署）：' + id]
+  const ids = topLevelIds(sourceDir)
+  const findings = []
+  const roles = ids.filter((x) => x.startsWith('role-') && x !== 'role-presentation')
+  const missing = spec.roles.filter((r) => !roles.includes(r))
+  const extra = roles.filter((r) => !spec.roles.includes(r))
+  if (missing.length > 0) findings.push('缺角色行：' + missing.join(', '))
+  if (extra.length > 0) findings.push('多出角色行：' + extra.join(', ') + '（该 preset 不该预置角色）')
+  for (const plugin of spec.plugins) if (!ids.includes(plugin)) findings.push('缺插件行：' + plugin)
+  if (!ids.includes('intent-gate-watchdog')) findings.push('每个 preset 都必须带意图门行（- id: intent-gate-watchdog）')
+  return findings
+}
+
+/** 门插件在多个 preset 里是副本（preset 目录须自包含）⇒ 副本漂移必须可见。 */
+function gateCopyFindings(ids) {
+  const crypto = require('node:crypto')
+  const digests = new Map()
+  for (const id of ids) {
+    const p = path.join(SOURCE_ROOT, id, GATE_PLUGIN)
+    if (fs.existsSync(p)) digests.set(id, crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex').slice(0, 12))
+  }
+  if (new Set(digests.values()).size <= 1) return []
+  return ['门插件副本不一致（' + [...digests].map(([k, v]) => k + '=' + v).join(' / ') + '）⇒ 以 ptc-roles 为准重新 cp']
+}
+
 function checkPreset(plan, home) {
   console.log('· ' + plan.id + '  ' + plan.targetDir)
   const findings = []
@@ -290,6 +336,18 @@ async function main() {
   }
   const ids = opts.preset === null ? available : [opts.preset]
 
+  if (opts.compose) {
+    let bad = 0
+    for (const id of ids) {
+      const findings = compositionFindings(id, path.join(SOURCE_ROOT, id))
+      console.log('· ' + id + (findings.length === 0 ? '  ✓ 组成符合期望' : ''))
+      for (const finding of findings) { console.log('  ✗ ' + finding); bad += 1 }
+    }
+    for (const finding of gateCopyFindings(ids)) { console.log('· 门插件副本 · ✗ ' + finding); bad += 1 }
+    if (bad === 0) { console.log('✓ 组成契约通过：' + ids.length + ' 个 preset（含门插件副本一致性）'); return EXIT_OK }
+    console.log('✗ 组成契约发现 ' + bad + ' 处问题'); return EXIT_REFUSED
+  }
+
   console.log('DSH home：' + home)
   console.log('preset 根：' + path.join(home, PRESET_ROOT_DIR))
 
@@ -319,7 +377,10 @@ async function main() {
       }
     }
 
-    if (opts.check) drift += checkPreset(plan, home)
+    if (opts.check) {
+      drift += checkPreset(plan, home)
+      for (const finding of compositionFindings(id, plan.sourceDir)) { console.log('  ✗ 组成：' + finding); drift += 1 }
+    }
     else await deployPreset(plan, opts, home)
   }
 

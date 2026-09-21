@@ -476,6 +476,10 @@ function analyze(raw) {
   result.role = m ? m[1] : undefined
   // 本 preset 的编排器 persona 独有标记；子代理的 role persona 会遮蔽它，所以只用于识别主 agent
   result.isPresetRoot = result.systemText.includes('Phase 0 — Intent Gate')
+  // 两个 preset 共用同一个 Phase 0 标记 ⇒ 再用各自的独有标记区分人口（**别把两种 preset 的合规率混算**，#19 的「跨代次不可汇总」）。
+  result.presetKind = result.systemText.includes('Specialists')
+    ? 'ptc-roles'
+    : (result.systemText.includes('no predefined roles') ? 'ptc-gate' : (result.isPresetRoot ? 'unknown' : 'other'))
   return result
 }
 
@@ -1270,15 +1274,15 @@ function main() {
         ? ' — depth≥2 且无角色 persona：留意是否为 §7.7 孙代升级复发'
         : ''
       escOther += (r.escalations || []).length
-      console.log('─ 跳过 ' + String(r.header.id).slice(0, 20) + '（非 ptc-roles 子代理：depth=' + depth + ' tools=' + (r.tools || []).length
+      console.log('─ 跳过 ' + String(r.header.id).slice(0, 20) + '' + '（非 ' + (r.arm || '本 preset') + ' 的子代理：depth=' + depth + ' tools=' + (r.tools || []).length
         + ' esc=' + (r.escalations || []).length + (r.header.isSeeded === true ? ' (seeded — 计数含继承的父日志)' : '') + note + '）')
       continue
     }
-    if (depth === 0 && !r.isPresetRoot) { console.log('─ 跳过 ' + String(r.header.id).slice(0, 20) + '（非 ptc-roles 主会话）'); continue }
+    if (depth === 0 && !r.isPresetRoot) { console.log('─ 跳过 ' + String(r.header.id).slice(0, 20) + '' + '（非 ' + (r.arm || '本 preset') + ' 主会话）'); continue }
     const kind = depth === 0 ? '主 agent' : '子代理 d' + depth
     const role = r.role || (depth === 0 ? 'orchestrator(未识别)' : '(未识别)')
     const tools = r.tools || []
-    console.log('─ ' + kind + '  ' + String(r.header.id).slice(0, 20) + '  role=' + role + '  model=' + (r.model || '?') + '  ptc=' + (r.ptc ? 'YES' : 'no') + '  tools=' + tools.length)
+    console.log('─ ' + kind + '  ' + String(r.header.id).slice(0, 20) + '  role=' + role + '  preset=' + (r.presetKind || '?') + '  model=' + (r.model || '?') + '  ptc=' + (r.ptc ? 'YES' : 'no') + '  tools=' + tools.length)
 
     const esc = r.escalations || []
     if (depth === 0) escRoot += esc.length
@@ -1301,12 +1305,13 @@ function main() {
       // tool-presentation 行坏掉的信号，因此同样进 fail、接退出码（2026-09-17 评审 M7：原先
       // 只打 `!`，而下面的注释把 `!` 明确限定为**合法**的已知现象，它不在那个清单里）。
       // 这里只对 isPresetRoot 的主会话生效（非 ptc-roles 主会话在上面就 continue 了）。
+      if (r.presetKind === 'unknown') { console.log('   ✗ FAIL 认不出这是哪个 preset 的主会话（persona 独有标记都缺席）⇒ 读者的人口口径需要更新'); fail += 1 }
       if (r.ptc) { console.log('   ✓ 主 agent 保持 PTC（预期）'); pass += 1 }
       else { failLine('主 agent 不是 PTC', '   ✗ FAIL 主 agent 不是 PTC —— 检查底座 tool-presentation 行') }
       // round-5 persona 断言：persona 不生效是**静默**的（没有日志通道，见 docs/pitfalls.md #9），
       // 所以这条数据面信号就是「纪律补全是否真的加载」的唯一可查证途径。
       if ((r.header.createdAt || 0) >= PERSONA_V2_SINCE) {
-        if (r.systemText.includes(PERSONA_V2_MARK)) {
+        if (r.systemText.includes(r.presetKind === 'ptc-gate' ? 'no predefined roles' : PERSONA_V2_MARK)) {
           console.log('   ✓ 主 agent 载入 round-5 纪律 persona（含 "' + PERSONA_V2_MARK + '"）')
           pass += 1
         } else {
@@ -1319,21 +1324,27 @@ function main() {
       if (r.isPresetRoot && (r.header.createdAt || 0) >= PERSONA_V2_SINCE) {
         const g = intentGateStats(r)
         if (g.turns.length > 0) {
-          gate.sessions += 1
-          gate.turns += g.turns.length; gate.first += g.first; gate.reply += g.reply; gate.anywhere += g.anywhere
-          gate.eligible += g.eligible; gate.eligibleFirst += g.eligibleFirst
-          gate.eligibleDeclared += g.eligibleDeclared; gate.acts += g.acts; gate.actsCovered += g.actsCovered
-      gate.actsUserOpened += g.actsUserOpened; gate.actsCoveredUserOpened += g.actsCoveredUserOpened
-          gate.contrastEligible += g.contrastEligible
-          gate.sameMsg += g.sameMsg; gate.sameMsgShell += g.sameMsgShell; gate.sameMsgNonShell += g.sameMsgNonShell
-          gate.userOpened += g.userOpened; gate.machineOpened += g.machineOpened
-          gate.unknownOrigin += g.unknownOrigin; gate.userOpenedEligible += g.userOpenedEligible
-          gate.userOpenedDeclared += g.userOpenedDeclared
-          gate.machineOpenedActing += g.machineOpenedActing
-          gate.batchUserNotFirst += g.batchUserNotFirst; gate.midTurnUserOnly += g.midTurnUserOnly
-          for (const t of g.turns) {
-            const rec = r.intentTurns.get(t)
-            if (rec !== undefined && rec.acting === true) gatedRecs.push(rec)
+          // 人口分家（2026-09-21 复盘）：ptc-gate 是**另一个 preset**，它的读数逐场照打，但不并入 ptc-roles 合计
+          //（pitfalls #19 的「跨代次不可汇总」）。
+          if (r.presetKind === 'ptc-roles') {
+            gate.sessions += 1
+            gate.turns += g.turns.length; gate.first += g.first; gate.reply += g.reply; gate.anywhere += g.anywhere
+            gate.eligible += g.eligible; gate.eligibleFirst += g.eligibleFirst
+            gate.eligibleDeclared += g.eligibleDeclared; gate.acts += g.acts; gate.actsCovered += g.actsCovered
+            gate.actsUserOpened += g.actsUserOpened; gate.actsCoveredUserOpened += g.actsCoveredUserOpened
+            gate.contrastEligible += g.contrastEligible
+            gate.sameMsg += g.sameMsg; gate.sameMsgShell += g.sameMsgShell; gate.sameMsgNonShell += g.sameMsgNonShell
+            gate.userOpened += g.userOpened; gate.machineOpened += g.machineOpened
+            gate.unknownOrigin += g.unknownOrigin; gate.userOpenedEligible += g.userOpenedEligible
+            gate.userOpenedDeclared += g.userOpenedDeclared
+            gate.machineOpenedActing += g.machineOpenedActing
+            gate.batchUserNotFirst += g.batchUserNotFirst; gate.midTurnUserOnly += g.midTurnUserOnly
+            for (const t of g.turns) {
+              const rec = r.intentTurns.get(t)
+              if (rec !== undefined && rec.acting === true) gatedRecs.push(rec)
+            }
+          } else {
+            console.log('   ⊘ 本会话是 ' + r.presetKind + '：逐场读数照打，**不并入 ptc-roles 合计**（跨代次不可汇总，pitfalls #19）')
           }
           for (const line of gateLines(g, '', '   ')) console.log(line)
           console.log('   逐轮（资格 + ① 存在口径）: ' + g.turns.map((t) => 'T' + t

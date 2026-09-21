@@ -158,6 +158,11 @@ const lastText = (decision) => {
 // `--control` 下**不跑**这一段：对照 fixture 是**行为**阴性对照，它的文案故意不是现行契约，
 // 拿它做文本一致性检查只会凭空多出无意义的失败。这一段自己的阴性对照是下面四条内存变异。
 const PERSONA_PATH = path.join(__dirname, '..', 'preset', 'ptc-roles', 'personas', 'orchestrator.md')
+/** 薄版本 persona 与完整版是**两份文件**：门是薄版本的核心 ⇒ 两份都要接契约一致性断言（2026-09-21 复盘）。 */
+const PERSONA_PATHS = [
+  PERSONA_PATH,
+  path.join(__dirname, '..', 'preset', 'ptc-gate', 'personas', 'orchestrator.md'),
+]
 
 // 判据 ①（存在档，2026-09-17 改）的锚点字面量，两处各写一遍、漂移即 FAIL：
 //   persona  → 「the message that carries the first behavior-changing call」（该消息的**首行**）
