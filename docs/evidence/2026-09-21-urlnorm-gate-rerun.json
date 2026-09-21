@@ -1,0 +1,92 @@
+{
+  "probe": "2026-09-21-urlnorm-gate-rerun",
+  "task": "urlnorm v3 冻结任务的第四场：同一 preset（ptc-gate）重跑（第二样本）",
+  "session": "session-6d1da13f-5a40-4bb3-9f50-2d967c89340e",
+  "workspace": "/Users/eric/Project/tests/urlnorm-gate",
+  "preset": "ptc-gate（已核实 agent-preset/selected）",
+  "freezeCommit": "c03a495（我铺的起始状态：CONTRACT.md + legacy/** + tests/fixtures/urls.txt，单提交、工作树干净）",
+  "mechanism": {
+    "turns": 4,
+    "userOpenedTurns": 3,
+    "mainSteps": 74,
+    "retries": 4,
+    "gateDenies": 1,
+    "mainRaw": 11681008,
+    "children": [
+      {
+        "id": "4fd91f18",
+        "steps": 29,
+        "raw": 1697118
+      }
+    ],
+    "totalRaw": 13378126,
+    "mainOnlyRaw": 11681008,
+    "wallClock": "42.6 分钟（**含 3 轮用户开轮 ⇒ 墙钟仍不可比**）",
+    "dispatchNames": {
+      "read": 12,
+      "bash": 52,
+      "write": 46,
+      "edit": 19,
+      "grep": 5,
+      "subagent": 2,
+      "list_subagent_models": 3,
+      "list_agents": 1,
+      "validate_dsh_ui": 3,
+      "session_health": 1
+    }
+  },
+  "costStability": {
+    "note": "**n=2 的成本高度一致**",
+    "arm3": "11,992,570（1.69× 官方）",
+    "arm4": "11,681,008（1.65× 官方）",
+    "reading": "同一 preset、同一冻任务、两次独立运行 ⇒ 成本比值稳定在 1.65–1.69× ⇒ 上一轮的『1.69×』不是抽样噪声。"
+  },
+  "acceptanceMine": {
+    "conformance": "OK — 39 entries match Node URL（我复跑）",
+    "tests": "61/61（我复跑）",
+    "workingTree": "clean（我核对）",
+    "commits": [
+      "69ba78e Implement WHATWG URL splitter with conformance gate, tests and migration report",
+      "580a637 Reject file: credentials and illegal host code points; add Node parity gate; record the differences",
+      "25400d6 Document host/port field semantics as a first-class difference (D3)"
+    ],
+    "migration": "473 行 / **25 条**（历次最多：臂一 20 · 臂二 20 · gate 首轮 22）",
+    "integrity": "legacy/** 与 urls.txt **逐字未改** ✓（正确路径复核；git 历史显示仅冻结提交 c03a495 碰过 legacy）"
+  },
+  "probeResults": {
+    "my26": "26/26 ✓",
+    "random400": "**372/400 ✗（28 处不一致）** —— 全部是 `^`（脱字符）在路径里的百分号编码缺失",
+    "adversarial2000": "1999/2000（失败条目与其它三臂完全相同：`fIle://localhost/a:b/./../a:b`）",
+    "pinnedBug": "同一个 URL `http://192.168.1.1:443/../a/^x?a=1#a?b` 逐臂对照：Node=`/a/%5Ex` · 臂一=`/a/%5Ex` ✓ · 臂二=`/a/%5Ex` ✓ · **本场=`/a/^x` ✗**"
+  },
+  "methodologyLesson": {
+    "headline": "**n=1 的质量结论不安全**：同一 preset、同一冻结任务、同一开场句，两次运行一个 400/400、一个 372/400 ⇒ 质量存在真实抽样方差。",
+    "implication": "冻结 39 条清单与我的 26 条手写探查**都看不见这个 bug**（它们的语料里没有 `^`）⇒ **固定种子的随机语料才是那个敏感仪器**，应当作为后续臂的标准验收（我这次的 400 条正是它抓到的）。",
+    "costVsQuality": "对比之下，**成本是更稳定的测量**（1.65 vs 1.69×），**质量不是**。"
+  },
+  "harnessHazardSelfReported": {
+    "grade": "【该臂自述，我未独立复核】",
+    "content": "它报告：有一条 assistant 消息的**模型输出流在半句中断**，harness 把它当成「本轮没有更多动作」正常收尾（那次它自述『那 8 分钟里到底发生了什么』）。⇒ 与「纯文本 assistant 消息结束本轮」同族的一种**静默失败**形态，值得独立复核后进 pitfalls。"
+  },
+  "myCorrections": [
+    "我先报的「legacy/** 被改动」是**假警报**：我的对比脚本把 `legacy/` 前缀剥掉后去比了错误路径 ⇒ 参照在 `$R/legacy/…`。正确路径下二者逐字一致 ✓。",
+    "我 400/2000 两轮的脚本标签仍写着「臂一/臂二」（我 sed 只换了路径）⇒ 输出里的名字与实测对象不符；我用一个具体 URL 逐臂对照才把它钉死（上表 pinnedBug）。"
+  ],
+  "unproven": [
+    "价值面三格（本场待填）",
+    "那条输出流截断（自述，未复核）",
+    "第六臂若跑 observe 归因仍未做"
+  ],
+  "reproduction": [
+    "node .tmp/probe-urlnorm2.mjs /Users/eric/Project/tests/urlnorm-gate",
+    "sed \"s#/Users/eric/Project/tests/urlnorm'#'/Users/eric/Project/tests/urlnorm-gate'#\" .tmp/quality-probe.mjs > /tmp/q.mjs && node /tmp/q.mjs",
+    "cd /Users/eric/Project/tests/urlnorm-gate && node tools/conformance.mjs && node --test && git status --porcelain"
+  ],
+  "reviewOutcome": {
+    "dispatched": "**确实派了一次「完成后独立复核」**（brief 原文：`Independently review the committed deliverable in … against CONTRACT.md §8. You are the reviewer; the implementer's claims are not evidence. This is a READ-ONLY…`；同一 brief 发了两次：`run_in_background=false`（撞 10 分钟墙钟）与 `true`）",
+    "driver": "驱动它的是**契约 §8 的 Review 格**（我写的），**不是**薄版本 persona 的规则（薄 persona 里没有「必须派独立复核」这一条）；且官方 `ptc` 的 `agent.cordis.yml` **本来就含同一组 delegation 工具** ⇒ 「多了复核能力」不成立，差别在文本与门",
+    "return": "**回报为 0**：复核子代理的最后一句话是 `All 14 pass for href/origin self-consistency. Now let me run the most valuable axis — AXIS 4: finding undocumented behavioral differences:` ⇒ **它正准备开工就中断了**，从未交回结论 ⇒ 那 1,697,118 raw token 是纯成本",
+    "blindSpotByDesign": "**就算它跑完也抓不到那个 `^` bug**：契约 §8 的三条靶场是「契约符合性 / 跨模块接口 / 验收诚实性」，**不含「与规范逐条对齐」** ⇒ 28 处规范偏差全在它视野之外（我的评审格设计问题）",
+    "hazardUpgrade": "同一次截断现象**在子会话日志里被观测到**（不是仅主 agent 自述）⇒ 之前记为【自述】的那条可升级为**事件级（子会话侧）**"
+  }
+}

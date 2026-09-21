@@ -1,0 +1,95 @@
+{
+  "probe": "2026-09-21-urlnorm-arms-comparison",
+  "task": "urlnorm v3：同一冻结契约（含 39 条清单 + 只读 legacy）、同一开场句，唯一变量 = preset",
+  "arms": {
+    "arm1-ptc-roles": {
+      "session": "session-147cbc66-405d-489a-83a5-89a77b3772e2",
+      "preset": "ptc-roles",
+      "turns": 6,
+      "steps": 76,
+      "children": 7,
+      "childRoles": "implementer ×5 + oracle ×1（+ Mnemon 回写代理）",
+      "totalRaw": 25307429,
+      "childShare": "50%",
+      "retries": 0,
+      "gateDenies": 1,
+      "wallClock": "约 46 分钟（23:36 → 00:22:45）",
+      "sourceLines": 1925,
+      "tests": 131,
+      "conformance": "39/39",
+      "outOfListProbe": "26/26",
+      "migration": {
+        "entries": 20,
+        "fileLineRefs": 22,
+        "specRefs": 24
+      },
+      "extraArtifact": "oracle 评审（阻断项：交付物未提交；另揪出一处规范 bug：userinfo 码点类漏判）"
+    },
+    "arm2-ptc": {
+      "session": "session-d21a803f-bba9-4916-8733-1a8b944b66f4",
+      "preset": "ptc（官方内置）",
+      "turns": 2,
+      "steps": 50,
+      "children": 0,
+      "childRoles": "—（官方 ptc 无角色工具）",
+      "totalRaw": 7093366,
+      "childShare": "0%",
+      "retries": 4,
+      "gateDenies": 0,
+      "wallClock": "约 10 分钟（20:01 → 20:11:32）",
+      "sourceLines": 1133,
+      "tests": 40,
+      "conformance": "ok（39 条）",
+      "outOfListProbe": "26/26",
+      "migration": {
+        "entries": 20,
+        "fileLineRefs": 20,
+        "specRefs": 42
+      },
+      "extraArtifact": "无"
+    }
+  },
+  "verdict": {
+    "outcome": "第三次等价：两臂的冻结验收都过，且我的 26 条越界探查都是 26/26（含八进制/十六进制 IPv4、file://localhost 归一、空 ? 与 #、端口越界、主机内空格）。迁移报告的深度也相同（20 条 vs 20 条）—— 我原本以为评审/取证角色会让报告更深，实测不成立。",
+    "cost": "臂一 3.6× token（2530 万 vs 709 万）· 4.6× 墙钟（46 分钟 vs 10 分钟）",
+    "multipleTrend": "三对配对：6.4×（小）→ 2.4×（中）→ 3.6×（大）⇒ 没有收敛（在 ~4× 附近波动）。任务越大、角色相对越便宜的假设不成立。",
+    "perUnit": "臂一每行 13.1k token、臂二 6.3k ⇒ 贵 2.1×；而臂一又多写 1.7× 代码（131 vs 40 测试）⇒ 总量差 3.6×"
+  },
+  "confounds": [
+    "n=1/臂：三个规模各一次抽样",
+    "工具面本质不同：官方 ptc 没有角色工具（无从选择）⇒ 比的是有角色工具 vs 没有",
+    "臂一多写了 1.7× 源码与 3.3× 测试（这部分是更厚而不是更慢）",
+    "臂二有 4 次重试（网络波动），臂一 0 次",
+    "两臂的 conformance 脚本各自实现（同规则不同代码），我的 26 条探查是独立第三方"
+  ],
+  "adrImplication": "ADR 0002 的决策规则表第二行写着：无明显改善 ⇒ 退役到薄版本（只保留按角色模型档 + 意图门，砍掉角色工具与白名单）。三对配对的产出全部等价、成本倍数在 2.4–6.4× 之间波动 ⇒ 证据已强烈指向第二行；唯一未测的是臂一更厚的测试是否意味着更可靠（131 vs 40）。",
+  "unproven": [
+    "价值面三格（臂二）待填",
+    "质量面：131 vs 40 测试的长期可靠性差异未测",
+    "只有三个规模点，且每点 n=1",
+    "我的 26 条探查非穷举"
+  ],
+  "reproduction": [
+    "node /Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/.tmp/probe-urlnorm2.mjs /Users/eric/Project/tests/urlnorm",
+    "node /Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/.tmp/probe-urlnorm2.mjs /Users/eric/Project/tests/urlnorm-ptc",
+    "cd /Users/eric/Project/tests/urlnorm-ptc && node tools/conformance.mjs && node --test && git status --porcelain"
+  ],
+  "qualityProbe": {
+    "purpose": "回答最后一个未测问题：臂一多写 3.3× 测试（131 vs 40）是否意味着更可靠",
+    "round1": {
+      "seed": 20260921,
+      "n": 400,
+      "generator": "声明范围内的随机 URL，12% 为畸形/非法形态",
+      "result": "两臂都 400/400 —— 无差别"
+    },
+    "round2": {
+      "seed": 20260922,
+      "n": 2000,
+      "generator": "对抗性：15% 非法 + 10% 多斜杠/反斜杠/空端口/缺斜杠 + 10% 注入制表符或换行 + %2e 点段/字面 % 等构造；边界构造（内部制表符换行、%2e 等价）单独计数",
+      "result": "臂一 1999/2000、臂二 1999/2000，且**两臂失败的是同一条**：`fIle://localhost/a:b/./../a:b`（href 与 pathname 不符）",
+      "sharedBug": "两者都漏了 WHATWG 对 **file URL 的 Windows drive letter 规则**（首段含 `:` 时 `..` 的缩短语义不同）—— 这是冻结 39 条清单从不触发的角落",
+      "interpretation": "两轮探针合计 2400 条，**没有出现任何一处「一臂对、另一臂错」**⇒「测试更多 ⇒ 更可靠」在本次探针上得不到支持"
+    },
+    "bonusFinding": "我的探针比两臂各自的测试套件都更有判别力：它找到了一个**两臂共有**的真实规范 bug —— 这既说明探针有效，也说明**冻结清单本身有盲区**（v4 契约应把 file-URL drive letter 这一类加进清单）"
+  }
+}

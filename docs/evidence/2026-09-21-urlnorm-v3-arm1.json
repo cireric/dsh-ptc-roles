@@ -1,0 +1,123 @@
+{
+  "probe": "2026-09-21-urlnorm-v3-arm1",
+  "task": "urlnorm v3：手写 URL 拆分器（冻结 legacy + 39 条冻结清单）→ WHATWG 一致 + 迁移报告",
+  "question": "任务里嵌入四类活（本地取证 / 外部规范 / 实现 / 评审）之后，角色会不会各自上场？成本如何？",
+  "arm": "ptc-roles",
+  "session": "session-147cbc66-405d-489a-83a5-89a77b3772e2",
+  "workspace": "/Users/eric/Project/tests/urlnorm",
+  "judge": "Node v24 的 `URL`（本运行时的真实现）+ 我自己独立写的 26 条越界探查",
+  "mechanism": {
+    "turns": 6,
+    "userOpenedTurns": 1,
+    "mainSteps": 76,
+    "attempts": 0,
+    "retries": 0,
+    "gateDenies": 1,
+    "compliance": "0/1 (0%) —— T1[user]✗[动后补]（开场先 bash 侦察无门行 ⇒ 被拒一次）; 覆盖 25/27 (93%)",
+    "roleDispatches": [
+      "implementer ×5",
+      "oracle ×1",
+      "send_message ×3",
+      "list_agents ×4"
+    ],
+    "notDispatched": [
+      "explorer（主 agent 自己 read ×28 读 legacy）",
+      "librarian（主 agent 自己 web_fetch ×1 抓 WHATWG 规范）"
+    ],
+    "mainRaw": 12763010,
+    "childRaw": 12544419,
+    "totalRaw": 25307429,
+    "childShareOfRawTokens": "50%",
+    "children": [
+      {
+        "role": "implementer",
+        "steps": 55,
+        "raw": 4458313
+      },
+      {
+        "role": "oracle",
+        "steps": 26,
+        "retries": 1,
+        "raw": 3870435
+      },
+      {
+        "role": "implementer",
+        "steps": 32,
+        "raw": 1952560
+      },
+      {
+        "role": "implementer",
+        "steps": 26,
+        "raw": 1082084
+      },
+      {
+        "role": "implementer",
+        "steps": 19,
+        "raw": 589994
+      },
+      {
+        "role": "implementer",
+        "steps": 17,
+        "raw": 509748
+      },
+      {
+        "role": "（非 preset 角色：Mnemon 记忆回写代理）",
+        "steps": 3,
+        "raw": 81285
+      }
+    ],
+    "wallClock": "约 46 分钟（23:36 起 → 收尾提交 00:22:45）",
+    "commits": [
+      "3c46873/ f2f8db5 用户冻结",
+      "35ae385 spec: CONTRACT v3 update（用户，把权威契约对齐到最终版）",
+      "ad2c2d5 feat: WHATWG-conformant urlnorm + migration report"
+    ]
+  },
+  "acceptanceMine": {
+    "conformance": "node tools/conformance.mjs → 39/39 passed, rc=0（我复跑）",
+    "unitTests": "node --test → tests 131 / pass 131 / fail 0（我复跑）",
+    "workingTree": "git status --porcelain 空（我核对）",
+    "fixtureIntegrity": "legacy/** 与 urls.txt 与冻结版**逐字一致**（未被改动 ✓）；CONTRACT.md 与我的最终版一致 ✓",
+    "outOfListProbe": {
+      "note": "我独立写的 26 条（冻结清单 39 条之外），直接 import 它的 src/url 与 Node `URL` 逐分量比对",
+      "cases": "大小写/点段组合 · 端口前导零与 65535/65536/abc · 主机内空格 · 空 `?` 与 `#` · 重复参数 · 含百分号编码的 userinfo · `%2F` · `<>` · 已编码 UTF-8 · `#` 后的 `?` · 全要素大串联 · `file:///c:/` · `file://localhost/tmp/x`（主机归一）· `https://…/a/..` · `192.168.1.1:80` · **八进制 `0177.0.0.1`** · **十六进制 `0x7f.1`** · 路径内空格",
+      "result": "**26 一致 / 0 不一致** —— 本项目至今最强的一次泛化"
+    }
+  },
+  "deliverable": {
+    "lines": 2743,
+    "tests": 131,
+    "migrationEntries": 20,
+    "migrationQuality": "每条 (a) 可复现输入 + 两种结果、(b) legacy `file:line`（全文 22 处）、(c) **WHATWG 条款 URL**（全文 43 处，如 #scheme-state / #path-percent-encode-set）、(d) 迁移影响与建议；并发现了我清单没有的差异（D2 必须写 `://` · D11 空 `?`/`#` 与 href 的不对称 · D13 多个 `@` · D19 host 的百分号编码）",
+    "files": [
+      "bin/urlnorm.mjs",
+      "src/{authority,path,query,url,cli}/index.js",
+      "tools/conformance.mjs",
+      "tools/diff-legacy.mjs",
+      "tests/*.test.mjs（6 个）",
+      "MIGRATION.md（232 行）",
+      "README.md（139 行）"
+    ]
+  },
+  "oracleTeeth": {
+    "dispatched": "oracle ×1（26 步 / 387 万 raw）—— v2 我漏了 Review 格导致零评审；v3 写进契约后**真的派了**",
+    "blockingFinding": "orchestrator 收尾自陈：oracle 判「不通过」的唯一阻断项是**交付物未提交** ⇒ 已修（并落了 commit ad2c2d5）",
+    "realSpecBug": "oracle 复审发现并促修了一处规范 bug（userinfo 码点类漏判 `isUserinfoCodePoint` 的某个 U+ 码点）"
+  },
+  "observations": [
+    "**四类活只变成两类角色**：实现（implementer ×5）与评审（oracle ×1）上场；**本地取证与外部规范仍由主 agent 自己做**（read ×28 / web_fetch ×1）⇒ 「主 agent 包揽取证」是与任务设计无关的稳定模式（v2、v3 一致）",
+    "7 个所有权行 → 5 个 implementer（不是 1:1）⇒ 契约的行数并不自动等于派发数，v3 里编排器合并了行",
+    "按行成本：v1 14.1k → v2 4.1k → **v3 9.2k** token/行 ⇒ 每行成本随任务难度波动 ⇒ **只有同任务两臂对照才有意义**（v3 的对照臂尚未跑）",
+    "契约的三条新规矩都生效：Review 格（oracle 上场）· 收尾必须提交（被 oracle 当作阻断项）· 修订落 commit"
+  ],
+  "unproven": [
+    "价值面三格待用户填写",
+    "**v3 的对照臂未跑**（官方 ptc 在同一冻结仓库上）⇒ 本轮的倍数与收敛趋势无法计算",
+    "我的越界探查是 26 条自选案例，非穷举；真实 URL 空间远大于此"
+  ],
+  "reproduction": [
+    "node /Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles/.tmp/probe-urlnorm.mjs   # 我的 26 条越界探查",
+    "cd /Users/eric/Project/tests/urlnorm && node tools/conformance.mjs && node --test && git status --porcelain",
+    "node scripts/verify-ptc-roles.cjs --cwd /Users/eric/Project/tests/urlnorm"
+  ]
+}
