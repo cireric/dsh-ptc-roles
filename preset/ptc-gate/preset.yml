@@ -1,3 +1,4 @@
-name: PTC 门控模式
+name: PTC Gate Mode
 description: >-
-  PTC 主 agent + 意图门纪律；不预置角色子代理，委派按需发生。
+  PTC main agent + intent-gate discipline; no predefined role subagents —
+  delegation happens on demand.
