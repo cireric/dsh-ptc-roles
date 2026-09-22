@@ -258,7 +258,11 @@ function checkPreset(plan, home) {
   const findings = []
   const st = lstatOrNull(plan.targetDir)
   if (st === null) {
-    findings.push('未部署：' + plan.targetDir + ' 不存在')
+    // 「未部署」**不是漂移**（2026-09-21 用户裁定：本机只装 ptc-gate 是有意的）：对账的职责是
+    // 「**已部署**的那一份与仓库是否一致」，而「该不该装」是人的意图，检查器猜不到 —— 把它记成
+    // 漂移只会让 make check 为一件有意为之的事永久退 2，进而训练人忽略真正的漂移告警。
+    console.log('  ⓘ 未部署（本次不参与对账；要装跑 make deploy ' + plan.id + '）')
+    return 0
   } else if (st.isSymbolicLink()) {
     findings.push('目标目录本身是软链（DSH 会静默跳过）：' + plan.targetDir + ' → ' + (realpathOrNull(plan.targetDir) || '（断链）'))
   } else {
