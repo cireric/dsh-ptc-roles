@@ -424,6 +424,23 @@ grep -n 'mjs?v=' preset/ptc-roles/agent.cordis.yml   # intent-gate-watchdog.mjs 
 - 窗口在改动当天从 41 漂到 42 个 eligible 轮次 —— 差额来自**本会话自身在增长**（它也是被统计的 5 个主会话之一）。引用一律带窗口 + 日期。
 - 闸门**尚未在宿主内跑过**：`config.gate` 的传递有官方先例但本行未实测；开闸前置条件见 `nextStep`。
 
+## 17. `2026-09-21-gate-deny-readings-and-mode-marker.json`
+
+**问题**：enforce 之后，门的纪律成本能不能从数据面读出来？「被拒 → 恢复」在日志里长什么样？preset 身份能不能不靠 persona 散文？
+
+**结论**：三条都成立 —— ① 拒绝可从**既有事件**成对判读出（PTC 落 `tool/ptc-dispatch`+`isError`、native 落 `tool/result`；
+**不看参数**，否则会把我自己那条 `grep '[intent-gate]'` 的 bash 算成一次拒绝）；② preset 身份改读
+`agent-preset/selected` **事件**（实测形状 `{"type":"agent-preset/selected","seq":4,"data":{"agentPreset":"ptc-gate"}}`）；
+③ enforce 的模式与竞态取证都进了数据面（插件 inject `mode=` 与 `FALSE_DENY`，reader 独立复算同一判据）。
+
+**当场读数**（口径 = `docs/pitfalls.md` #19 的 2026-09-21 段；窗口 = 本仓库工作区；2026-09-21）：
+`session-5d9dcf8f`（ptc-gate）3 个 user-opened 轮 ⇒ ① 存在 2/3、拒绝 **1**、恢复 **1**、无门行继续 **0**、
+假拒候选 **0**、模式标记**缺席**（该会话挂载早于标记引入 —— 预期）。`make verify` rc=0（四支 + 组成契约全绿）、
+`make control` rc=0（三支阴性对照判集合相等）、`make check` rc=0（未部署记 ⓘ）。
+
+**另一个当场事实**：两臂配对实验的会话**已全部滚出**会话库（证据文件里 11 个 id 0 命中、五个任务工作区目录皆空）
+⇒ 成本归因在存量数据上不可复现；这也是 ADR 0002「读数必须当场落证据文件」那条纪律的又一次兑现。
+
 ## 附 · 轮次与结清状态（从 HANDOFF 搬迁至此：逐轮验证记录）
 
 > HANDOFF 只留**当前要做什么**；逐轮历史归这里，因为它本来就是「验证账本」。

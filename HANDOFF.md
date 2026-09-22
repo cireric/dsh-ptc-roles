@@ -1,108 +1,68 @@
-# HANDOFF — ptc-roles（交接）
-
-## 两个 preset（2026-09-21 起）
-
-- **`ptc-gate`（薄版本，实验性）**：`ptc` + 意图门 + 过程纪律 persona，**不预置角色**。实测三次配对（同一冻结任务）：
-  **产出等价**、成本 **1.69× / 1.89×**（两次独立运行，稳定）、我的随机语料上**有一次更差**（372/400）。
-  ⇒ 默认仍建议用官方 `ptc`；需要「可审计的过程账」时才用它。
-- **`ptc-roles`（完整版）**：薄版本 + 五个角色白名单。实测 **2.4–6.4×、倍数不收敛**。
-  何时该用它 = ADR 0002 的四条判据（小而自足的切片 / 派发前冻结接口 / 每块够长 / 无本地裁判）。
-- 选择判据与脚本清单在 `README.md`；决定过程与全部读数在 `docs/decisions/0002-continue-evolving.md` 与 `docs/evidence/2026-09-2*-*.json`。
-- 组成契约：`node scripts/deploy-preset.cjs --compose`（每个 preset 该有哪些 agent 行 + 门插件副本一致性），已并入 `make verify`。
-
+# HANDOFF — ptc-gate / ptc-roles（交接）
 
 > 本文件只回答两件事：**现在什么状态**、**你接手后要做什么**。
 > 长期内容不在这里（一文档一职责，见 `README.md` 的文档地图）；**也没有任何文档引用本文件** ——
 > 所以它可以随时整份重写或删掉重建。
 > 项目目录：`/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles`
-> 本次重写：**2026-09-16**（上一版停在 09-15）；同日二次更新：部署脚本与 Makefile 落地（§1）。
-> **2026-09-17 更新**：门行判据换成 v3「① 存在档」+ 闸门以 `observe` 落地（§1 / §2 第 3 步）。
+> 本次重写：**2026-09-21**（承接 grill 轮的 Q1(b)/Q2/Q3–Q14；上一版停在 09-17）。
 
 ## 0. 先确认你在哪个 preset 下
 
-**你应该运行在 `ptc-roles` preset 下**（选择器里显示为「PTC 角色模式」）。两个自检：
+**本机只装 `ptc-gate`，这是有意的（2026-09-21 用户裁定）。** 两个自检：
 
-1. 工具面里有 `explorer` / `librarian` / `oracle` / `implementer` / `designer` 五个**命名委派工具**
-   （PTC 模式下它们在 `run_code` 的 SDK 里）。看不到 → 先让人在新会话里选这个 preset。
-2. system prompt 里有 `## Specialists` 的 **6 列表**（含 `Topology`、`Mode`）与 `## Delegation contract` 段，
-   且门行的模板是**英文 + 字面 token `Intent:`**。
+1. 工具面**没有** `explorer` / `librarian` / `oracle` / `implementer` / `designer` 五个命名委派工具
+   （薄版本不预置角色；要角色先 `make deploy ptc-roles` + 一次真正的重新挂载）。
+2. system prompt 里有 `## Phase 0 — Intent Gate`，模板是**英文 + 字面 token `Intent:`**，
+   且 Delegation 段第一句是 `This preset ships **no predefined roles**`（reader 的人口判据之一）。
 
-## 1. 当前状态（2026-09-17）
+## 1. 当前状态（2026-09-21）
 
-- **宿主版本**：本机跑的是 `0.1.5-rc.2`（checkout `/Users/eric/Project/tests/deepseek-harness`，
-  `git describe` = `dsh-v0.1.5-rc.2-139-gc291e7961a`）；本地**没有** 0.1.6 的 tag。
-- **0.1.6 的处理方式（用户已定）**：它还在 alpha，**等 `0.1.6-rc.*` 再统一处理**，本轮不动 preset。
-  版本事实与 rc 后的修复清单（P0–P3）唯一来源：`docs/dsh-v0.1.6-ptc-impact.md`。
-- **运行时**：`~/.dsh/.agent-presets/ptc-roles/` = 真目录 + 内部 5 个软链 → 本仓库。
-  对账走 `make check`（2026-09-16 通过：5 项一致）—— **不再手工逐条核对**。
-- **命令面（2026-09-16 新增）**：`make help | deploy | check | verify | control | clean`。部署脚本
-  `scripts/deploy-preset.cjs` **自动发现** `preset/<id>/` 的全部顶层条目 ⇒ 加插件文件不再需要改文档
-  （原先 README / pitfalls A / HANDOFF 三处各手抄一份 5 条 `ln -s`）。脚本退出码：0 符合预期 / 1 出错或被拒 /
-  2 = `--check` 发现漂移。
-- **门行判据 = v3「① 存在档」（2026-09-17 落地）**：合规分子 = 门行落在**承载首个行为动作的那条
-  消息**里、且为该消息首行；**②「门行更早」降为对照读数**，**③「声明 → 只读侦察 → 再动手」明确放弃**
-  （结构上不可保证，见 #20）。理由与代价：`docs/pitfalls.md` #19。**v3 首份基线：① 22/42（52%）、
-  ② 6/42（14%）**，差额 16 轮**首发全是 shell 侦察（16/16）** ⇒ 旧口径量的主要是载体耦合（#17），
-  不是模型漏行；真正的缺口只剩 19 轮（整轮无门行 6 + 动后补 13）。
-- **闸门（`tools/pre-execute`）随行默认 `observe`（2026-09-17）**：只记账；若「闸门在动作到达时
-  没看到门行」而该轮最终合规，就注入竞态诊断行（`RACE_REPORT`）。`config.gate: enforce` 才拒绝，
-  且**每轮最多一次**、拒绝理由自带补救话术。
-- **看门狗提醒 7 行 → 3 行（2026-09-17）**：提醒经 `agent/pre-step` 注入的消息会**永久落库**
-  （`agent-loop/src/agent.ts:373-377`），旧口径下约 87% 的行为轮次各留一条逐字相同的常驻消息 ——
-  那是重复，不是信息。
-- **规则 7（改完 preset 必须自验）已更新（2026-09-16，用户批准）**：改为 `make verify` / `make control` +「判据是各脚本打印的判定行」，
-  去掉内联断言条数（原写「三个脚本」，且看门狗条数停在 `17/17`，当天实测就已不是它 —— 正是「文档抄数字必漂」
-  的实例；故本文件与 README 一律不再登记条数，判据只看各脚本打印的判定行）。
-- **插件代次**：以 `preset/ptc-roles/agent.cordis.yml` 里的 `?v=` 为准（本文件不登记那个数字 —— 它每次改动都会漂）。
-  改了 `.mjs` 必须 `dev_reload_preset preset=ptc-roles`（输出须含 `x.mjs -> ?v=N`）**再开新会话**。
-  persona 与插件都是**挂载时读取** ⇒ 改完必须**再发生一次挂载**（新会话或重开 / resume）才生效（`docs/pitfalls.md` A 节）。
-- **门行 token 迁移（2026-09-16）**：`意图判定` → **`Intent:`**（persona 模板与插件 `DEFAULT_MARKERS` 同步）；
-  合规率脚本的 `INTENT_MARKERS` **同时**接受两个 token（插件看当轮=严、脚本扫历史=宽）。口径与理由：`docs/pitfalls.md` #19。
-  ⚠️ **会话级代次边界**：迁移前挂载的会话里，看门狗只认旧 token —— 你按新 token 写，它仍会提醒一次，那不是漏行。
-  同日还把看门狗的**判据与合规分子对齐到「首行」**（此前它按任意位置命中 ⇒ 门行写在第二行时指标扣分、它却沉默）。
-- **四支脚本的当前读数**（退出码契约：`0` = 本次运行符合预期；**判据是各脚本打印的判定行**，
-  下表只是 2026-09-16 的快照，条数会随改动变 —— 别把数字抄进长期文档）：
-
-  | 脚本 | 期望（判据 = 它自己打印的判定行，**不登记条数**） |
-  |---|---|
-  | `verify-ptc-roles.cjs` | 四类自测（角色事实静态 / 行为工具名单一致性 / 归因计数 / 意图门统计）全 ✓ 且 `✗0`；没有会话时判定行会**明说**「行为判据本次未验证」，zstd 缺失直接退 `2` |
-  | `verify-role-presentation.cjs` | `汇总: <n>/<n> 通过  ✓ 全绿`；`--control` 判据 = 失败**集合**恰等于 `REQUIRED_CONTROL_FAILURES` |
-  | `verify-intent-gate-watchdog.cjs` | `汇总: <n>/<n> 通过  ✓ 全绿`（含 D 契约一致性）；`--control` 同样判集合相等 |
-  | `verify-harness-contract.cjs` | `✗0`，判定行末尾带**目标 checkout**；读不到 checkout ⇒ 退出码 `2`（响亮失败） |
-
-- **ADR**：0001 已补版本作用域（决定性证据第 1 行只对 0.1.5-rc.2 成立）与状态行；0002 状态已改「**已采纳**」，
-  证据窗口标注「尚未计时」（A 项依赖 0.1.6），其 **C / D / E 三项已先行落地并自验**。
-- **文档语言政策（2026-09-16 用户确认）**：正文中文；文件名 / 标识符 / 契约 token 用英文。
-  **未落纸**（`AGENTS.md` 属规则文件，写入需人工确认）—— 别自作主张把正文翻成英文。
-- **工作区状态**：09-16 的四笔（`feat(watchdog)` → `chore(tooling)` → `docs(preset)` → `docs`）之后，
-  09-17 又落**三笔**，仍按「**代码侧 / 工具侧 / 文档侧**」分笔，不按轮次硬拆 —— 理由与上次同：09-17 评审轮的
-  未提交文本（`pitfalls #21`、`evidence/README §15`、CI 会话夹具、漂移守卫）与本轮 v3 改动在同一份 diff 里
-  交织，非交互拆分必然拆错。每笔的 body 里都写明了它**同时携带**哪些跨批残留。
+- **部署形态**：`~/.dsh/.agent-presets/` 下只有 `ptc-gate`（真目录 + 4 条内部软链 → 本仓库）。
+  `make check` 现在退 **0** —— 「未部署」自 2026-09-21 起记 ⓘ、**不算漂移**（对账只针对**已部署**的那一份：
+  缺项 / 断链 / 指错 / 多余项）。`ptc-roles` 留在仓库里，按需 `make deploy ptc-roles`。
+- **宿主默认**：`settings.yaml` 的 `agent-presets.default` 仍是 `standard`（宿主的事，本仓库不改）。
+- **门插件代次（2026-09-21 三处新行为）**：以 `preset/<id>/agent.cordis.yml` 的 `?v=` 为准（本文件不登记数字，它每改必漂）。
+  1. **模式标记**：每**会话**注入一行 `[intent-gate-watchdog] mode=enforce|observe` —— `config.gate` 写错会
+     fail-safe 静默降级，而本部署没有日志通道（pitfalls #9），这行是数据面上唯一可查的证据；reader 拿它与
+     `preset/<id>/agent.cordis.yml` 的**声明**对照（不一致 ⇒ ✗ FAIL）。
+  2. **拒绝措辞分两子情形**（整轮无门行 / 门行晚于本次动手）。可达的只有前者 —— `declSeq <= carrier`
+     一旦成立就必然成立（carrier 取"最后一条 assistant 消息"），这条**可达性事实**登记在 ADR 0003。
+  3. **enforce 版假拒取证**：`RACE_REPORT` 在开闸后恒不注入（`wouldDeny && !denied` 不可能成立），
+     竞态的可见形态换成它的镜像 **`FALSE_DENY`**（被拒过、而该轮最终仍判 ① 合规）⇒ **回滚条件**见 ADR 0003。
+- **reader（`scripts/verify-ptc-roles.cjs`）新增**：
+  · preset 身份读 `agent-preset/selected` **事件**（实测字段：`{"type":"agent-preset/selected","seq":4,"data":{"agentPreset":"ptc-gate"}}`，
+    就在场次开头）；persona 正文只作 legacy 回退，两者不一致时打印 ⚠（不接退出码）。
+  · **闸门拒绝读数**（成对判：行为工具 + 结果文本含 `[intent-gate]`；PTC 落 `tool/ptc-dispatch`+`isError`、
+    native 落 `tool/result`）：逐场「拒绝 n / 恢复 m / 无门行继续 k ｜ 假拒候选」；口径登记在 pitfalls #19。
+  · `--arms`：按 preset 分组的对照读数（四桶 + 轮/步归一；seeded 子会话一律排除，#22③）。
+- **判据重锚（ADR 0002 新增段）**：成本（1.65–1.69×，两次配对，稳定）从判据里**摘出**，记为已知固定价；
+  新判据落在数据面（拒绝率 + 恢复），预登记弱线：单场拒绝率 >0.5 或**连续两场 0 恢复** ⇒ 复审（不接退出码）。
+- **本仓工作区实测（口径见 pitfalls #19，窗口 = 本仓库工作区，2026-09-21 当场）**：`session-5d9dcf8f`（ptc-gate）
+  3 个 user-opened 轮 ⇒ ① 存在 2/3、拒绝 **1**、恢复 **1**、无门行继续 **0**、假拒候选 **0**；`汇总: ✓41 ✗0 !0`。
+  ⚠️ 该场的**模式标记缺席**是预期的：它挂载于标记引入**之前**（见 §2 第 1 步）。
+- **未结事项**：B（每角色成本归因）/ F（并发上限）/ G（Team 模式）**随 `ptc-roles` 一起挂起**；
+  H（explorer / librarian 无 shell）对 `ptc-gate` **不存在**（没有角色）；`skills` 细粒度分发仍未定义
+  （`v1.1` 在仓内无定义，见 ADR 0001 待办）；**「看门狗 / 验证基建 / 门行契约迁移三处无 ADR」中的门契约那处已结**
+  （ADR 0003），另两处仍未结。
 
 ## 2. 你接手后要做什么（按顺序）
 
-1. **开一个新会话**（persona 与 `.mjs` 都是挂载时读取），跑 §0 的两条自检。
-2. **`make verify` + `make control`**（判据是各脚本打印的判定行，退出码 `0` 不等于零失败），再
-   `make check` 确认部署仍与仓库一致（漂移退 2）。
-3. **闸门开闸前置 —— 已于 2026-09-18 核过并开闸**（`agent.cordis.yml` 的 `gate: enforce`；配置在**挂载时**
-   读取 ⇒ 生效条件是**一次真正的重新挂载**：**宿主重启 / preset 重新装配**才算，**同一进程里新开会话不算**（[实测] 两次对照：09-18 19:34 的 resume（新进程）当场载入 `enforce`；09-20 10:28 的新会话（同进程）仍读到编辑前的 persona），判据见 `docs/pitfalls.md` A 节。
-   **上电也已实测**：同日阳性对照 —— 刻意不带门行的 `bash` 被**拒**（理由原文 `[intent-gate] 这一次调用没有门行垫底 …`），补门行后同一调用放行（exit 0）⇒ `enforce` 确已生效；该轮因此记入一次**控制性漏行**，日后读数需剔除。
-   判据必须用**可判别读法**：注入前缀 `[intent-gate-watchdog] observe` 是否落在
-   **注入通道**（`agent/inbox/spliced` / `user/message`）—— **不是**子串扫 `RACE_REPORT`（那份写法实测
-   6/39 **假阳性**，全是引用：插件源码 / #19 正文 / 模型复述；已登记为 `pitfalls #23`）。
-   冻结读数（0 次真注入 + 阳性对照 + 两个真机测试实例）：`docs/evidence/2026-09-18-gate-flip-prerequisite.json`。
-   **回滚条件**：日后在注入通道里读到该前缀 ⇒ 时序竞态成立，改回 `observe` 并回头改判据。
-4. **等 `0.1.6-rc.*`**：升级**前后各**跑一次 `node scripts/verify-harness-contract.cjs --harness <checkout>`
-   —— 它就是那次升级的差异报告（包改名那条还会给出疑似新名）；然后按 impact 文档的 P0–P3 执行，
-   **P0-1 是 engine 行改名**（`workflow-worker-thread` → `workflow-ptc`，且别照抄官方的 `disabled: true`）。
-5. **开证据窗口**（ADR 0002）：rc 之后计时，并当场记一条**带日期戳**的基线；口径必须带「口径 + 窗口 + 日期」
-   （登记处 `docs/pitfalls.md` #19）。
-6. **未结事项**（都已登记，别重复决策）：B（每角色成本归因 —— 窗口判定里「成本」那一侧能否测出改善全靠它）、
-   F / G / H（条件押注）、`skills` 细粒度分发（`v1.1` 在仓内无定义，见 ADR 0001 的待办）、
-   以及 **看门狗 / 验证基建 / 门行契约迁移三处仍无 ADR** —— 本轮裁定「只纠事实」，不补新决策记录。
+1. **逼一次真正的重新挂载**（宿主重启，或让 preset 重新装配）—— 插件与 persona 都是**挂载时读取**，
+   同一进程里新开会话**不算**（判据与三次实测：`docs/pitfalls.md` A 节）。
+2. **`make verify` + `make control` + `make check`**：判据是**各脚本打印的判定行**，不是退出码，
+   也不是任何文档里的断言条数（条数随改动变，抄进文档必漂）。期望：四支脚本 + 组成契约全绿、
+   `make control` 判「失败集合恰等于 `REQUIRED_CONTROL_FAILURES`」、`make check` 退 0。
+3. **新会话里核对代次真的换了**：reader 的那行应变成 `模式标记 enforce`（仍是「缺席」⇒ 没换）。
+4. **看一眼回滚触发条件**：reader 的 `｜ 假拒候选 n`；**n > 0 ⇒ 把 `preset/ptc-gate/agent.cordis.yml` 的
+   `gate: enforce` 改回 `observe`**（ADR 0003）。
+5. **等 `0.1.6-rc.*`**（不变）：升级**前后各**跑一次 `node scripts/verify-harness-contract.cjs --harness <checkout>`；
+   P0-1 仍是 engine 行改名（`workflow-worker-thread` → `workflow-ptc`，且别照抄官方的 `disabled: true`）。
 
 ## 3. 仍然验不了的
 
 - **win32 平台分支**（本机无该平台）。
 - **persona / 门行 / 看门狗提醒的「效用」**：文本被载入、提醒被注入都可证；「因此模型行为改变」不可由日志证明。
 - **「拒绝」类轮次**：persona 要求门行，但从工具面认不出「只拒绝、不动手」的轮次 —— 已知的数据面边界。
+- **门行的内容质量**：插件只做 marker 匹配（#16）；「这行是不是记账」没有可靠判据。
+- **假拒候选只覆盖一种竞态形状**：它把「门行的 assistant/message 事件比 pre-execute 晚到」变成可证伪，
+  但**验不了**反向（真拒绝被时序掩盖成「看起来合规」）。

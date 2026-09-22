@@ -2,7 +2,9 @@
 
 本仓库提供**两个** DSH **agent preset**：
 
-- **`ptc-gate`（默认先选它）** —— PTC 主 agent + 意图门纪律，**不预置**角色子代理，委派按需发生。
+- **`ptc-gate`（本机选它）** —— PTC 主 agent + 意图门纪律，**不预置**角色子代理，委派按需发生。
+  它是**本机有意只装的那一个**（不是上游默认：宿主 `settings.yaml` 的 `agent-presets.default` 仍是 `standard`），
+  且**未达**原毕业判据（成本判据已按 ADR 0002 重锚，见下）。
 - **`ptc-roles`** —— 在 `ptc-gate` 的基础上再加五个有职责边界的角色子代理
   （explorer / librarian / oracle / implementer / designer），白名单即硬能力边界。
 
@@ -14,7 +16,8 @@
 
 ## 两个 preset 怎么选
 
-**默认用 `ptc-gate`。** 只有当任务**同时**满足下面 ≥3 条时，才改用 `ptc-roles`：
+**本机默认选 `ptc-gate`**（前提：它已 `make deploy`；本机只装它是有意的）。只有当任务**同时**满足
+下面 ≥3 条时，才改用 `ptc-roles` —— 那是**需要安装的**另一个 preset：`make deploy ptc-roles` + 一次真正的重新挂载。
 
 | 条件 | 判据 |
 |---|---|
@@ -47,7 +50,8 @@ preset 源码在本仓库；DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读取，
 ```bash
 make deploy            # 部署全部 preset；建真目录 + 内部软链，目标已存在时会先列出差异并问 y/N
 make deploy ptc-gate   # 只部署指定 preset（ptc-roles / ptc-gate；等价 make deploy PRESET=ptc-gate）
-make check             # 对账：当前部署 vs 仓库（缺项 / 断链 / 指错 / 多余），漂移退 2
+make check             # 对账：**已部署**的那一份 vs 仓库（缺项 / 断链 / 指错 / 多余），漂移退 2；
+                       # **未部署记 ⓘ、不算漂移**（2026-09-21 起：「该不该装」是人的意图，检查器猜不到）
 ```
 
 部署清单由 `scripts/deploy-preset.cjs` **自动发现** `preset/<id>/` 的全部顶层条目（跳过点文件）——
@@ -75,7 +79,7 @@ make control   # 两个阴性对照：断言有没有空转
 
 | 脚本 | 它证明什么 |
 |---|---|
-| `verify-ptc-roles.cjs` | **行为**（零模型成本，只读 `~/.dsh/sessions`）：用 `request/header.header.tools`（**真正发给模型的**工具面）判定每个会话的角色 / 模型 / 工具面 / 是否仍是 PTC；内含四个自测（角色事实静态 / 行为工具名单一致性 / 归因计数 / 意图门统计）。工作区默认 = 本仓库根（`--cwd <path>` 覆盖）；**没有会话时判定行明说「行为判据本次未验证」**，zstd 缺失退 `2` |
+| `verify-ptc-roles.cjs` | **行为**（零模型成本，只读 `~/.dsh/sessions`）：用 `request/header.header.tools`（**真正发给模型的**工具面）判定每个会话的角色 / 模型 / 工具面 / 是否仍是 PTC；内含四个自测（角色事实静态 / 行为工具名单一致性 / 归因计数 / 意图门统计）。工作区默认 = 本仓库根（`--cwd <path>` 覆盖）；**没有会话时判定行明说「行为判据本次未验证」**，zstd 缺失退 `2`。preset 身份读 `agent-preset/selected` **事件**（persona 正文只作 legacy 回退）；逐场打印**闸门拒绝**（成对判：行为工具 + `[intent-gate]` 理由）与**假拒候选**；`--arms` 给按 preset 分组的对照读数 |
 | `verify-role-presentation.cjs` | 翻转插件的单元校验（深度判据四层，`docs/pitfalls.md` #10） |
 | `verify-intent-gate-watchdog.cjs` | 看门狗的单元校验 + 契约一致性（插件 token / 六桶 / **存在要求**（门行在承载首个行为动作的那条消息里、且为首行，①）与闸门的四条不变量 ↔ persona 模板） |
 | `verify-harness-contract.cjs` | **框架契约门禁** —— 升级 dsh 本体**前后各跑一次**：变红的那条直接指出 preset 侧要改哪一处（`--harness <checkout>`，默认 `~/.dsh/dsh-harness`） |
@@ -95,8 +99,7 @@ make control   # 两个阴性对照：断言有没有空转
 （「任意文本」含工具结果，读过插件源码的轮次也会命中，不作合规分子）。口径与历次基线：
 `docs/pitfalls.md` #19（唯一登记处）。
 
-> 改了 `preset/ptc-roles/*.mjs` 之后必须 `dev_reload_preset preset=ptc-roles`（输出要含 `x.mjs -> ?v=N`）
-> 改了 `preset/ptc-roles/*.mjs` 之后必须 `dev_reload_preset preset=ptc-roles`（输出要含 `x.mjs -> ?v=N`）**并确保一次真正的重新挂载**（**宿主重启 / preset 重新装配**才算；同一进程里新开会话不算 —— 判据见 `docs/pitfalls.md` A 节）；仍在运行的会话保持旧代。
+> 改了 `preset/<id>/*.mjs` 之后必须 `dev_reload_preset preset=<id>`（输出要含 `x.mjs -> ?v=N`）**并确保一次真正的重新挂载**（**宿主重启 / preset 重新装配**才算；同一进程里新开会话不算 —— 判据见 `docs/pitfalls.md` A 节）；仍在运行的会话保持旧代。
 
 ## 文档地图（每份文档只干一件事）
 

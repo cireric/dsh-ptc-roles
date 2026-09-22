@@ -1,0 +1,49 @@
+{
+  "probe": "2026-09-21-gate-deny-readings-and-mode-marker",
+  "question": "enforce 之后，门的纪律成本能不能从数据面读出来？「被拒 → 恢复」在日志里长什么样？preset 身份能不能不靠 persona 散文？",
+  "why": "① 开闸后 ① 存在口径由闸门兜底 ⇒ 它不再度量「模型记没记住」；② 旧说法「拒绝落点是 tool/result」只对 native 成立；③ preset 身份此前靠 persona 正文两个字符串（Phase 0 — Intent Gate / no predefined roles），一改就整场「跳过 ⇒ 本次未验证」；④ 两个 preset 的成本/质量配对臂会话正在滚出会话窗口，读数必须当场落档（pitfalls #15）。",
+  "answer": "三条都成立：拒绝可从既有事件**成对判**读出，并被 reader 固化为逐场读数；preset 身份改读 agent-preset/selected **事件**；enforce 的模式与竞态取证都进了数据面（插件侧）与 reader 侧（独立复算同一判据）。",
+  "criterion": "判据 = pitfalls #19 的 2026-09-21 段（成对判：行为工具 + 结果文本含 [intent-gate]，不看参数）；本档只登记读数，不新增口径。",
+  "readings": {
+    "sessionWindow": "本仓库工作区（/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles），2026-09-21 当场实测",
+    "session": "session-5d9dcf8f-0d38-4b24-882d-d0394ab972ea（preset=ptc-gate，身份来自 agent-preset/selected 事件）",
+    "gateReadings": {
+      "userOpenedTurns": 3,
+      "existenceCompliance": "2/3",
+      "denies": 1,
+      "recovered": 1,
+      "resumedWithoutLine": 0,
+      "falseDenyCandidates": 0,
+      "modeMarker": "缺席（该会话挂载早于标记引入，预期）"
+    },
+    "summaryLine": "汇总: ✓41  ✗0  !0",
+    "artifacts": {
+      "presetIdentityEventShape": "{\"type\":\"agent-preset/selected\",\"seq\":4,\"data\":{\"agentPreset\":\"ptc-gate\"}} —— 就在场次开头，无 turn 字段",
+      "denyLandingPtc": "tool/ptc-dispatch，isError=true，name=bash，content[0].text 以 `Error: [intent-gate]` 开头，无 turn 字段（callId/subCallId = <rootCallId>:ptc:2，靠 tool/call 映射归轮）",
+      "falsePositiveInSameSession": "同场另有一条 isError=false 的 bash（我自己跑 grep '[intent-gate]' 的那次），其**参数**含该词 ⇒ 只按文本/整行计数会假阳性（正是 #23 的病）",
+      "armSessionsGone": "证据文件里 11 个 session id 在当前 ~/.dsh/sessions 下 0 命中；urlnorm / urlnorm-gate / ignorecheck / ignorecheck-ptc / ptc-roles 五个任务工作区目录皆空 ⇒ 归因类读数在存量数据上不可复现"
+    },
+    "verificationVerdicts": [
+      "make verify rc=0：汇总 ✓41 ✗0 !0（reader）/ 汇总 11/11 ✓ 全绿（role-presentation）/ 汇总 40/40 ✓ 全绿（watchdog）/ ✓13 ✗0（harness contract，目标 checkout ~/.dsh/dsh-harness）/ ✓ 组成契约通过：2 个 preset（含门插件副本一致性）",
+      "make control rc=0：三支阴性对照判「集合相等 / 一一对应」（role-presentation 5 条、watchdog 18 条、合成会话 1 条）",
+      "make check rc=0：ptc-gate ✓ 与仓库一致（4 项）；ptc-roles ⓘ 未部署（2026-09-21 起不算漂移）",
+      "对照：HEAD 版的 verify-ptc-roles.cjs --control-sessions 同样给出 ✓39 ✗2（合成会话的 preset=unknown 与「主 agent 不是 PTC」两条 FAIL 是既有的）"
+    ]
+  },
+  "reproduction": "node scripts/verify-ptc-roles.cjs（口径与窗口见输出里的三行口径段）；插件与 reader 的改动见 git diff；本档的每一条读数都可由前者复跑（会话本身会随滚动窗口消失，故落档）。",
+  "unproven": [
+    "新插件代次**在宿主内**的行为：模式标记是否真的注入、两种拒绝措辞的可达性、FALSE_DENY 是否会触发 —— 需要一次真正的重新挂载（宿主重启 / preset 重新装配）加新会话，见 HANDOFF §2",
+    "门行的内容质量（#16：只能靠 prompt 侧，无机械判据）",
+    "win32 平台分支（本机无该平台）"
+  ],
+  "changed": [
+    "preset/{ptc-gate,ptc-roles}/intent-gate-watchdog.mjs（?v=11）：模式标记 / 拒绝措辞分两支 / FALSE_DENY / pluginMessage 带 summary",
+    "scripts/verify-intent-gate-watchdog.cjs：+4 条断言（模式标记、可达措辞、假拒取证、真漏不伪装），阴性对照清单一并更新",
+    "scripts/verify-ptc-roles.cjs：preset 身份读事件、拒绝读数（PTC ∪ native）、假拒候选、--arms、模式标记与 yml 声明对照",
+    "scripts/fixtures/intent-gate-cases.json：+3 条 case（拒绝+恢复 / 只提及不算拒绝 + 无门行继续 / 假拒候选）",
+    "scripts/deploy-preset.cjs：「未部署」记 ⓘ、不进漂移",
+    "docs/pitfalls.md：#19 追加拒绝读数口径、#23 更正 PTC 落点、新增 #27（persona 必须自包含）",
+    "docs/decisions/0002：新增「判据重锚与改进项分栏」段；docs/decisions/0003（新）：门的契约与回滚条件",
+    "README.md / HANDOFF.md：默认口径、部署状态、陈旧注释与 persona 跨工作区引用一致性清扫"
+  ]
+}
