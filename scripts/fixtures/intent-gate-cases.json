@@ -577,6 +577,48 @@
           }
         }
       ]
+    },
+    {
+      "name": "PTC 拒绝 + 补门行重发：成对判计 1 次拒绝、恢复计 1；① 仍记 ✗（门行晚于首次动手，#19 的读法注记）",
+      "expect": {"eligible": 1, "eligibleDeclared": 0, "contrastEligible": 0, "acts": 2, "actsCovered": 0, "silent": true,
+        "denied": 1, "deniedTurns": 1, "deniedRecovered": 1, "deniedResumedWithoutLine": 0, "falseDeny": 0},
+      "events": [
+        {"type": "assistant/message", "data": {"turn": 1, "message": {"role": "assistant", "content": [{"type": "text", "text": "直接开干，没有分类行。"}]}}},
+        {"type": "tool/call", "data": {"turn": 1, "step": 1, "callId": "c1", "name": "run_code", "arguments": "{}"}},
+        {"type": "tool/ptc-dispatch", "data": {"rootCallId": "c1", "parentCallId": "c1", "subCallId": "c1:ptc:1", "name": "bash", "isError": true,
+          "content": [{"type": "text", "text": "Error: [intent-gate] 这一次调用没有门行垫底 —— 本轮还没有出现过那个六桶行。"}]}},
+        {"type": "assistant/message", "data": {"turn": 1, "message": {"role": "assistant", "content": [{"type": "text", "text": "Intent: fix — 补上门行再重发。"}]}}},
+        {"type": "tool/call", "data": {"turn": 1, "step": 2, "callId": "c2", "name": "run_code", "arguments": "{}"}},
+        {"type": "tool/ptc-dispatch", "data": {"rootCallId": "c2", "parentCallId": "c2", "subCallId": "c2:ptc:1", "name": "bash", "isError": false,
+          "content": [{"type": "text", "text": "ok"}]}}
+      ]
+    },
+    {
+      "name": "只**提到** [intent-gate] 的调用不算拒绝（isError=false）；被拒后不补门行继续动手 ⇒ 无门行继续计 1",
+      "expect": {"eligible": 1, "eligibleDeclared": 0, "contrastEligible": 0, "acts": 2, "actsCovered": 0, "silent": true,
+        "denied": 1, "deniedTurns": 1, "deniedRecovered": 0, "deniedResumedWithoutLine": 1, "falseDeny": 0},
+      "events": [
+        {"type": "assistant/message", "data": {"turn": 1, "message": {"role": "assistant", "content": [{"type": "text", "text": "直接开干。"}]}}},
+        {"type": "tool/call", "data": {"turn": 1, "step": 1, "callId": "c1", "name": "run_code", "arguments": "{}"}},
+        {"type": "tool/ptc-dispatch", "data": {"rootCallId": "c1", "parentCallId": "c1", "subCallId": "c1:ptc:1", "name": "bash", "isError": true,
+          "content": [{"type": "text", "text": "Error: [intent-gate] 这一次调用没有门行垫底。"}]}},
+        {"type": "assistant/message", "data": {"turn": 1, "message": {"role": "assistant", "content": [{"type": "text", "text": "再试一次（仍没有门行）。"}]}}},
+        {"type": "tool/call", "data": {"turn": 1, "step": 2, "callId": "c2", "name": "run_code", "arguments": "{}"}},
+        {"type": "tool/ptc-dispatch", "data": {"rootCallId": "c2", "parentCallId": "c2", "subCallId": "c2:ptc:1", "name": "bash", "isError": false,
+          "arguments": {"command": "grep -n '[intent-gate]' preset/ptc-gate/intent-gate-watchdog.mjs"},
+          "content": [{"type": "text", "text": "123:// [intent-gate] 这一次调用没有门行垫底"}]}}
+      ]
+    },
+    {
+      "name": "假拒候选（enforce 版竞态签名）：门行就在被拒那条消息里 ⇒ ① 合规 + denied 同时成立",
+      "expect": {"eligible": 1, "eligibleDeclared": 1, "contrastEligible": 0, "acts": 1, "actsCovered": 1, "silent": false,
+        "denied": 1, "deniedTurns": 1, "deniedRecovered": 0, "deniedResumedWithoutLine": 0, "falseDeny": 1},
+      "events": [
+        {"type": "assistant/message", "data": {"turn": 1, "message": {"role": "assistant", "content": [{"type": "text", "text": "Intent: implementation — 动手。\n后面还有一句。"}]}}},
+        {"type": "tool/call", "data": {"turn": 1, "step": 1, "callId": "c1", "name": "run_code", "arguments": "{}"}},
+        {"type": "tool/ptc-dispatch", "data": {"rootCallId": "c1", "parentCallId": "c1", "subCallId": "c1:ptc:1", "name": "write", "isError": true,
+          "content": [{"type": "text", "text": "Error: [intent-gate] 这一次调用没有门行垫底。"}]}}
+      ]
     }
   ]
 }

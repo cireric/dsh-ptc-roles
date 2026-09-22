@@ -211,6 +211,51 @@ const BEHAVIOR_TOOLS = new Set([
 /** 命中率格式化：0 轮时给 '—'，避免出现 NaN%。 */
 function rate(hit, total) { return total === 0 ? '—' : Math.round((hit / total) * 100) + '%' }
 
+/**
+ * 闸门拒绝（`tools/pre-execute` 的 deny）在数据面上的**落点** —— 2026-09-21 实测，更正 pitfalls #23：
+ *   · **PTC**：落点是 `tool/ptc-dispatch` 且 `isError === true`，`name` 就是行为工具名（**没有 turn**，
+ *     要靠 `tool/call` 的 callId → rootCallId 映射归轮）；**native**：落点是 `tool/result`，名字要靠
+ *     callId 回查 `tool/call`。
+ *   · 两条都必须**成对**判：名字命中 BEHAVIOR_TOOLS **且** 结果文本含 GATE_DENY_MARK。只看文本会把
+ *     「谈论」当成「发生」—— 实测同一场日志里就有一条 `isError === false` 的 bash（我跑 grep 找
+ *     `[intent-gate]` 的那次），按子串扫它会被数成一次拒绝。
+ */
+const GATE_DENY_MARK = '[intent-gate]'
+
+/** 一次工具结果的文本：PTC 派发在 `data.content[]`，native 的 `tool/result` 在 `data.message.content[].content[]`。 */
+function resultTextOf(event) {
+  const fromParts = (parts) => Array.isArray(parts)
+    ? parts.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n')
+    : ''
+  const direct = fromParts(event && event.data && event.data.content)
+  if (direct !== '') return direct
+  const content = event && event.data && event.data.message && event.data.message.content
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      const nested = fromParts(block && block.content)
+      if (nested !== '') return nested
+    }
+  }
+  return ''
+}
+
+/** 注入通道的文本（`user/message` / `agent/inbox/spliced`）—— 模式标记只可能出现在这里（#23）。 */
+function injectedTextOf(event) {
+  return resultTextOf(event)
+}
+
+/** 每会话一行的门模式标记（插件注入：`[intent-gate-watchdog] mode=enforce|observe`，2026-09-21 起）。 */
+const GATE_MODE_PREFIX = '[intent-gate-watchdog] mode='
+
+/** 仓库里两个 preset 的 yml **声明**的门模式（数据面标记要与它对照 —— 配置写错会静默落到 observe）。 */
+const DECLARED_GATE_MODES = new Map(['ptc-roles', 'ptc-gate'].map((id) => {
+  try {
+    const text = fs.readFileSync(path.join(__dirname, '..', 'preset', id, 'agent.cordis.yml'), 'utf8')
+    const m = /^\s*gate:\s*(enforce|observe)\s*$/m.exec(text)
+    return [id, m === null ? undefined : m[1]]
+  } catch { return [id, undefined] }
+}))
+
 /** 拼接一条 assistant 消息的文本块（与看门狗插件的 messageText 同口径：块间补换行）。 */
 function messageText(event) {
   const blocks = (event.data && event.data.message && event.data.message.content) || []
@@ -335,6 +380,10 @@ function sameCwd(a, b) {
 
 function analyze(raw) {
   const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', escalations: [], intentTurns: new Map(), unattributable: new Set(),
+    /** `agent-preset/selected` 的取值序列（**权威** preset 身份；persona 正文只作 legacy 回退）。 */
+    presetIds: [],
+    /** 闸门拒绝（成对判，见 GATE_DENY_MARK）与每会话的模式标记；`deniesUnattributed` 见 post-loop。 */
+    denies: [], gateModes: [], deniesUnattributed: 0,
     // ── 每会话常备读数（2026-09-20）─────────────────────────────────────────
     /** 逐条 `user/message`：**没有 turn 字段**，只能按 `seq` 归轮（`{ seq, kind }`，文件顺序即 seq 顺序）。 */
     userMsgs: [],
@@ -346,6 +395,8 @@ function analyze(raw) {
     usage: { bySlot: new Map(), attempts: [], attemptsSeen: 0, retries: 0, samples: 0 } }
   /** callId -> { turn, carrier }：把无 turn 的 `tool/ptc-dispatch` 归回它所属的那一轮，并记下载体消息。 */
   const callTurns = new Map()
+  /** callId -> 工具名：native 的拒绝落在 `tool/result` 上，名字只能靠它回查。 */
+  const callNames = new Map()
   /** 单调递增的 assistant 消息序号（**含纯工具调用消息**）；①/② 判据只比较同一轮内的消息先后。 */
   let msgSeq = 0
   /** 最近一条 assistant 消息的序号 —— 紧随其后的 tool/call 产生自它。 */
@@ -381,7 +432,10 @@ function analyze(raw) {
     if (event.type === 'tool/call' && typeof turn === 'number') {
       const callId = event.data && event.data.callId
       // 载体 = 产生这次调用的那条消息（tool/call 事件紧随它的 assistant/message）。
-      if (typeof callId === 'string') callTurns.set(callId, { turn, carrier: lastMsgSeq })
+      if (typeof callId === 'string') {
+        callTurns.set(callId, { turn, carrier: lastMsgSeq })
+        if (typeof toolName === 'string') callNames.set(callId, toolName)
+      }
       if (BEHAVIOR_TOOLS.has(toolName)) noteAction(turn, lastMsgSeq, toolName)
     } else if (event.type === 'tool/ptc-dispatch' && BEHAVIOR_TOOLS.has(toolName)) {
       // 只计**完成**事件：同一派发会同时出 `-start` 与完成两个事件，而两者的 `owner.carrier` 完全相同
@@ -436,6 +490,31 @@ function analyze(raw) {
       result.userKindCounts.set(String(src.kind), (result.userKindCounts.get(String(src.kind)) || 0) + 1)
       result.userSourcePaths[src.path] += 1
     }
+    // ── preset 身份（权威事件）与闸门拒绝（成对判）与模式标记（注入通道）──────────────
+    if (event.type === 'agent-preset/selected') {
+      const id = event.data && event.data.agentPreset
+      if (typeof id === 'string' && id !== '') result.presetIds.push(id)
+    }
+    if (event.type === 'tool/ptc-dispatch' && event.data && event.data.isError === true
+      && BEHAVIOR_TOOLS.has(toolName) && resultTextOf(event).includes(GATE_DENY_MARK)) {
+      const owner = callTurns.get(event.data.rootCallId)
+      result.denies.push({ stage: 'ptc-dispatch', name: toolName,
+        turn: owner === undefined ? undefined : owner.turn,
+        carrier: owner === undefined ? lastMsgSeq : owner.carrier })
+    } else if (event.type === 'tool/result' && typeof turn === 'number') {
+      const source = event.data && event.data.message && event.data.message.source
+      const name = source && typeof source.callId === 'string' ? callNames.get(source.callId) : undefined
+      if (name !== undefined && BEHAVIOR_TOOLS.has(name) && resultTextOf(event).includes(GATE_DENY_MARK)) {
+        result.denies.push({ stage: 'tool-result', name, turn, carrier: lastMsgSeq })
+      }
+    }
+    if (event.type === 'user/message' || event.type === 'agent/inbox/spliced') {
+      const line = injectedTextOf(event).split('\n').find((l) => l.startsWith(GATE_MODE_PREFIX))
+      if (line !== undefined) {
+        const mode = line.slice(GATE_MODE_PREFIX.length).trim().split(/\s|—/)[0]
+        result.gateModes.push({ mode, where: event.type, seq: typeof event.seq === 'number' ? event.seq : undefined })
+      }
+    }
     if (event.type === 'session') result.header = event
     else if (event.type === 'request/header') {
       const h = event.data && event.data.header
@@ -476,10 +555,49 @@ function analyze(raw) {
   result.role = m ? m[1] : undefined
   // 本 preset 的编排器 persona 独有标记；子代理的 role persona 会遮蔽它，所以只用于识别主 agent
   result.isPresetRoot = result.systemText.includes('Phase 0 — Intent Gate')
-  // 两个 preset 共用同一个 Phase 0 标记 ⇒ 再用各自的独有标记区分人口（**别把两种 preset 的合规率混算**，#19 的「跨代次不可汇总」）。
-  result.presetKind = result.systemText.includes('Specialists')
+  // preset 身份：**事件是权威**（`agent-preset/selected`，2026-09-21 起 —— 它就在场次开头、字段干净），
+  // persona 正文那两个字符串降为 legacy 回退（老代次会话没有该事件）。取**第一条**事件当身份，
+  // 出现多个不同取值时记冲突（resume / 中途重选），但不改判身份 —— 身份问的是「这场是哪个 preset 开的」。
+  result.presetId = result.presetIds.length > 0 ? result.presetIds[0] : undefined
+  result.presetIdConflicts = [...new Set(result.presetIds)].length > 1
+  const markerKind = result.systemText.includes('Specialists')
     ? 'ptc-roles'
     : (result.systemText.includes('no predefined roles') ? 'ptc-gate' : (result.isPresetRoot ? 'unknown' : 'other'))
+  const knownFromEvent = result.presetId === 'ptc-roles' || result.presetId === 'ptc-gate'
+  result.presetKind = knownFromEvent ? result.presetId : markerKind
+  result.presetKindSource = knownFromEvent ? 'event' : 'persona'
+  result.presetMarkerKind = markerKind
+  result.presetKindMismatch = knownFromEvent
+    && (markerKind === 'ptc-roles' || markerKind === 'ptc-gate') && markerKind !== result.presetId
+  result.gateMode = result.gateModes.length > 0 ? result.gateModes[0].mode : undefined
+  // ── 闸门拒绝的读法（口径登记在 pitfalls #19）────────────────────────────────
+  //   n          = 拒绝次数（成对判，见 GATE_DENY_MARK —— 用名字 + 结果文本，不看参数）
+  //   恢复        = 被拒的轮里**之后**又出现了门行（模型按补救话术补的）
+  //   无门行继续   = 被拒之后仍有行为动作落在门行之前（含整轮没补）—— 「每轮只拒一次」的代价面
+  //   假拒候选     = 被拒过的轮**最终仍判 ① 合规** ⇒ enforce 版的竞态签名（与插件 FALSE_DENY 同判据，
+  //                 也是 ADR 0003 的回滚触发条件）
+  const deniedByTurn = new Map()
+  for (const deny of result.denies) {
+    if (typeof deny.turn !== 'number') { result.deniesUnattributed += 1; continue }
+    let rec = deniedByTurn.get(deny.turn)
+    if (rec === undefined) { rec = { turn: deny.turn, denies: 0, carriers: [] }; deniedByTurn.set(deny.turn, rec) }
+    rec.denies += 1
+    rec.carriers.push(deny.carrier)
+  }
+  result.deniedTurns = [...deniedByTurn.values()].map((rec) => {
+    const turnRec = result.intentTurns.get(rec.turn)
+    const declSeq = turnRec === undefined ? undefined : turnRec.declSeq
+    const lastDenyCarrier = Math.max(...rec.carriers)
+    return {
+      turn: rec.turn,
+      denies: rec.denies,
+      // 「恢复」= 门行在**被拒那次调用之后**才出现（假拒候选那类不算恢复，它们进 falseDeny）。
+      recovered: declSeq !== undefined && declSeq > lastDenyCarrier,
+      resumedWithoutLine: turnRec !== undefined
+        && turnRec.carriers.some((c) => c > lastDenyCarrier && (declSeq === undefined || c < declSeq)),
+      falseDeny: declared(turnRec),
+    }
+  }).sort((a, b) => a.turn - b.turn)
   return result
 }
 
@@ -676,6 +794,16 @@ function intentGateStats(r) {
       }
     }
   }
+  // ── 闸门拒绝与模式标记（2026-09-21）—— enforce 之后 ① 合规率不再等于「模型记没记住」，
+  //    拒绝次数与「拒完有没有恢复」才是纪律成本的直接度量（判据见 pitfalls #19）。
+  const denied = Array.isArray(r.deniedTurns) ? r.deniedTurns : []
+  s.denies = denied.reduce((n, d) => n + d.denies, 0)
+  s.deniedTurns = denied.length
+  s.deniedRecovered = denied.filter((d) => d.recovered).length
+  s.deniedResumedWithoutLine = denied.filter((d) => d.resumedWithoutLine).length
+  s.falseDeny = denied.filter((d) => d.falseDeny).length
+  s.deniesUnattributed = r.deniesUnattributed || 0
+  s.gateMode = r.gateMode
   return s
 }
 
@@ -701,6 +829,11 @@ function gateLines(s, labelPrefix, indent) {
     + '批内 user 非首条 ' + s.batchUserNotFirst + ' / 轮内才出现真用户消息 ' + s.midTurnUserOnly)
   lines.push(indent + '其中「同消息」达标 ' + s.sameMsg + ' 轮：首发是 shell 侦察 ' + s.sameMsgShell + ' 轮 / 非 shell '
     + s.sameMsgNonShell + ' 轮（pitfalls #17：门行与侦察同处一条消息，在 ② 下必然不算前置）')
+  lines.push(indent + '闸门拒绝: ' + s.denies + ' 次 / ' + s.deniedTurns + ' 轮（恢复 ' + s.deniedRecovered
+    + ' / 无门行继续 ' + s.deniedResumedWithoutLine + '）｜ 假拒候选 ' + s.falseDeny
+    + '（denied && ① 合规 ⇒ 回滚触发条件，见 docs/decisions/0003）｜ 模式标记 '
+    + (s.gateMode === undefined ? '缺席（本会话挂载早于标记引入，或插件被静默降级 ⇒ 见 pitfalls A 的重挂载判据）' : s.gateMode)
+    + (s.deniesUnattributed > 0 ? ' ｜ ⚠ 无法归轮的拒绝 ' + s.deniesUnattributed + ' 次' : ''))
   return lines
 }
 
@@ -741,6 +874,49 @@ function channelLines(r, indent) {
       : '') + ' —— **单独报告、未并入四桶**；llm/retry-started ' + r.usage.retries
     + ' 次（框架口径：retry 关闭替换槽 ⇒ 重试的那一次要**加**，#22②；本脚本只折叠 assistant/message，'
     + '不替框架做那次加法）。只报 token 桶，不报成本（框架无价目表）')
+  return lines
+}
+
+/**
+ * `--arms`：把**同工作区的主会话**按 preset 分组打印对照读数（Q9b，2026-09-21）。
+ *
+ * 它是「下一次配对实验顺手就有数据」的那一格，不是统计工具：只报**四桶**与轮/步归一，
+ * 不报成本（框架无价目表）、不做显著性声明（n 很小）。seeded 子会话**一律排除** ——
+ * 它是父事件的深拷贝，计进去会把父的用量算第二遍（pitfalls #22③）。
+ */
+function armsLines(sessionRows) {
+  const lines = []
+  const main = sessionRows.filter((r) => r.header !== undefined
+    && (r.header.delegationDepth || 0) === 0 && r.header.isSeeded !== true)
+  if (main.length === 0) return ['  （本工作区没有可用的主会话）']
+  lines.push('  口径：同工作区**主会话**（depth=0、非 seeded）按 preset 分组；seeded 子会话是父事件的深拷贝 ⇒ 排除（#22③）。'
+    + '四桶 ≠ 成本；轮/步归一只作横向参考，**不做显著性声明**（n 很小）。')
+  const groups = new Map()
+  for (const r of main) {
+    const label = r.presetId !== undefined ? r.presetId
+      : (r.presetKind === 'other' ? '(识别不出 preset)' : r.presetKind)
+    if (!groups.has(label)) groups.set(label, [])
+    groups.get(label).push(r)
+  }
+  const ordered = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || String(a[0]).localeCompare(String(b[0])))
+  for (const [label, list] of ordered) {
+    let turns = 0, steps = 0, eligible = 0, denies = 0
+    const totals = { ...ZERO_BUCKETS }
+    for (const r of list) {
+      const s = intentGateStats(r)
+      turns += r.intentTurns.size
+      steps += r.usage.bySlot.size
+      eligible += s.eligible
+      denies += s.denies
+      const t = usageTotals(r).totals
+      for (const k of BUCKET_KEYS) totals[k] += t[k]
+    }
+    const billableIn = totals.uncachedInput + totals.cacheRead + totals.cacheWrite
+    lines.push('  ' + label.padEnd(12) + ' 场次 ' + list.length + ' | 轮 ' + turns + ' | 步 ' + steps
+      + ' | 行为轮 ' + eligible + ' | 拒绝 ' + denies
+      + ' | uncachedInput ' + num(totals.uncachedInput) + ' | output ' + num(totals.output)
+      + ' | cacheRead ' + num(totals.cacheRead) + ' | 计费输入/轮 ' + num(turns === 0 ? 0 : Math.round(billableIn / turns)))
+  }
   return lines
 }
 
@@ -1130,10 +1306,20 @@ function gateSelfTest() {
       // 新的一对只在夹具显式给出时期望（其余 case 不因它变红）。
       && (want.actsUserOpened === undefined
         || (s.actsUserOpened === want.actsUserOpened && s.actsCoveredUserOpened === want.actsCoveredUserOpened))
+      // 闸门拒绝的读数（2026-09-21）同样只在夹具显式给出时期望 —— 成对判（名字 + 结果文本）、
+      // 恢复 / 无门行继续 / 假拒候选三格。
+      && (want.denied === undefined
+        || (s.denies === want.denied && s.deniedTurns === want.deniedTurns
+          && s.deniedRecovered === want.deniedRecovered
+          && s.deniedResumedWithoutLine === want.deniedResumedWithoutLine
+          && s.falseDeny === want.falseDeny))
     return { name: c.name, ok, detail: '期望 ' + JSON.stringify(want) + '，实得 eligible=' + s.eligible
       + ' eligibleDeclared=' + s.eligibleDeclared + ' contrastEligible=' + s.contrastEligible
       + ' acts=' + s.acts + ' actsCovered=' + s.actsCovered + ' actsUserOpened=' + s.actsUserOpened
-      + ' actsCoveredUserOpened=' + s.actsCoveredUserOpened + ' silent=' + silent }
+      + ' actsCoveredUserOpened=' + s.actsCoveredUserOpened + ' silent=' + silent
+      + (want.denied === undefined ? '' : ' denies=' + s.denies + ' deniedTurns=' + s.deniedTurns
+        + ' deniedRecovered=' + s.deniedRecovered + ' deniedResumedWithoutLine=' + s.deniedResumedWithoutLine
+        + ' falseDeny=' + s.falseDeny) }
   })
 }
 
@@ -1171,6 +1357,9 @@ function main() {
   const gate = { turns: 0, first: 0, reply: 0, anywhere: 0, eligible: 0, eligibleFirst: 0, eligibleDeclared: 0,
     contrastEligible: 0, sameMsg: 0, sameMsgShell: 0, sameMsgNonShell: 0, acts: 0, actsCovered: 0,
   actsUserOpened: 0, actsCoveredUserOpened: 0, sessions: 0,
+    // 闸门拒绝与模式标记（2026-09-21）—— 合计与逐场共用同一份渲染（gateLines）。
+    denies: 0, deniedTurns: 0, deniedRecovered: 0, deniedResumedWithoutLine: 0, falseDeny: 0, deniesUnattributed: 0,
+    gateMode: undefined,
     userOpened: 0, machineOpened: 0, unknownOrigin: 0, userOpenedEligible: 0, userOpenedDeclared: 0,
     machineOpenedActing: 0, batchUserNotFirst: 0, midTurnUserOnly: 0 }
   /** 进了上面的合计的那些轮次记录 —— 下方成因分类 / 拆读数必须只看这一批，否则与合计行对不上。 */
@@ -1282,7 +1471,16 @@ function main() {
     const kind = depth === 0 ? '主 agent' : '子代理 d' + depth
     const role = r.role || (depth === 0 ? 'orchestrator(未识别)' : '(未识别)')
     const tools = r.tools || []
-    console.log('─ ' + kind + '  ' + String(r.header.id).slice(0, 20) + '  role=' + role + '  preset=' + (r.presetKind || '?') + '  model=' + (r.model || '?') + '  ptc=' + (r.ptc ? 'YES' : 'no') + '  tools=' + tools.length)
+    console.log('─ ' + kind + '  ' + String(r.header.id).slice(0, 20) + '  role=' + role + '  preset=' + (r.presetKind || '?')
+      + '(' + (r.presetKindSource || '?') + ')' + '  model=' + (r.model || '?') + '  ptc=' + (r.ptc ? 'YES' : 'no') + '  tools=' + tools.length)
+    // 身份的两个观察项（都不接退出码）：事件与 persona 标记不一致、以及一场里出现多个不同取值。
+    if (r.presetKindMismatch === true) {
+      console.log('   ⚠ 事件与 persona 标记不一致：agent-preset/selected=' + r.presetId + ' / persona 标记=' + r.presetMarkerKind
+        + ' —— 身份以**事件**为准（中途重选 preset？），但这条不匹配值得看一眼')
+    }
+    if (r.presetIdConflicts === true) {
+      console.log('   ⚠ 本场出现多个不同的 agent-preset/selected 取值：' + JSON.stringify([...new Set(r.presetIds)]) + '（身份取第一条）')
+    }
 
     const esc = r.escalations || []
     if (depth === 0) escRoot += esc.length
@@ -1305,7 +1503,15 @@ function main() {
       // tool-presentation 行坏掉的信号，因此同样进 fail、接退出码（2026-09-17 评审 M7：原先
       // 只打 `!`，而下面的注释把 `!` 明确限定为**合法**的已知现象，它不在那个清单里）。
       // 这里只对 isPresetRoot 的主会话生效（非 ptc-roles 主会话在上面就 continue 了）。
-      if (r.presetKind === 'unknown') { console.log('   ✗ FAIL 认不出这是哪个 preset 的主会话（persona 独有标记都缺席）⇒ 读者的人口口径需要更新'); fail += 1 }
+      if (r.presetKind === 'unknown') { console.log('   ✗ FAIL 认不出这是哪个 preset 的主会话（agent-preset/selected 事件与 persona 独有标记都缺席）⇒ 读者的人口口径需要更新'); fail += 1 }
+      // 模式标记的断言（2026-09-21）：**只在标记存在时**判它必须等于仓库 yml 声明的模式 ——
+      // 缺席不接退出码（本会话可能挂载于标记引入之前、或宿主还没重新挂载，见 pitfalls A），但照打。
+      // 它抓的是真漂移：yml 声明 enforce 而挂载的那一代跑的是 observe（配置写错会 fail-safe 静默降级）。
+      const declaredMode = DECLARED_GATE_MODES.get(r.presetKind)
+      if (r.gateMode !== undefined && declaredMode !== undefined && r.gateMode !== declaredMode) {
+        failLine('闸门模式与仓库声明不符', '   ✗ FAIL 闸门模式与仓库声明不符：数据面标记=' + r.gateMode
+          + '，而 preset/' + r.presetKind + '/agent.cordis.yml 声明 ' + declaredMode + ' ⇒ 挂载代次落后或配置写错')
+      }
       if (r.ptc) { console.log('   ✓ 主 agent 保持 PTC（预期）'); pass += 1 }
       else { failLine('主 agent 不是 PTC', '   ✗ FAIL 主 agent 不是 PTC —— 检查底座 tool-presentation 行') }
       // round-5 persona 断言：persona 不生效是**静默**的（没有日志通道，见 docs/pitfalls.md #9），
@@ -1339,6 +1545,9 @@ function main() {
             gate.userOpenedDeclared += g.userOpenedDeclared
             gate.machineOpenedActing += g.machineOpenedActing
             gate.batchUserNotFirst += g.batchUserNotFirst; gate.midTurnUserOnly += g.midTurnUserOnly
+            gate.denies += g.denies; gate.deniedTurns += g.deniedTurns
+            gate.deniedRecovered += g.deniedRecovered; gate.deniedResumedWithoutLine += g.deniedResumedWithoutLine
+            gate.falseDeny += g.falseDeny; gate.deniesUnattributed += g.deniesUnattributed
             for (const t of g.turns) {
               const rec = r.intentTurns.get(t)
               if (rec !== undefined && rec.acting === true) gatedRecs.push(rec)
@@ -1431,6 +1640,10 @@ function main() {
   }
   // 归因计数 / 意图门统计的**阳性路径**由 fixture 自测覆盖 —— 它们与会话库无关，已在上面
   // （任何 return 之前）跑过。见 2026-09-17 评审 M2/F-3。
+  if (args.includes('--arms')) {
+    console.log('\n对照模式（--arms —— Q9b；口径见函数注释）：')
+    for (const line of armsLines([...rows])) console.log(line)
+  }
   console.log('\n汇总: ✓' + pass + '  ✗' + fail + '  !' + warn)
   console.log('提权请求（实测计数）: ptc-roles 主 agent ' + escRoot + ' / ptc-roles 角色子代理 ' + escChild
     + ' / 其他会话 ' + escOther)
