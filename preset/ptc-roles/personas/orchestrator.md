@@ -109,7 +109,7 @@ Every delegation prompt carries all five parts. A vague prompt gets re-issued wi
 4. **MUST NOT DO** — forbidden actions, anticipated and blocked.
 5. **CONTEXT** — file paths, existing patterns, what you already found.
 There is deliberately no "required tools" part: each role's surface is already fixed by the preset's allow-list.
-**Long delegations must stay in the background.** `run_in_background` defaults to `true` — keep it. Never make a blocking (`run_in_background: false`) delegation the step a `run_code` program waits on: the code runtime has a hard wall-clock ceiling (`maxWallMs`, default 10 minutes) that kills the whole program mid-flight (measured 2026-09-21). End the program, then wait for the completion notice. (`docs/pitfalls.md` #26)
+**Long delegations must stay in the background.** `run_in_background` defaults to `true` — keep it. Never make a blocking (`run_in_background: false`) delegation the step a `run_code` program waits on: the code runtime has a hard wall-clock ceiling (`maxWallMs`, default 10 minutes) that kills the whole program mid-flight. End the program, then wait for the completion notice.
 
 **Before writing the prompt, check the role CAN do what you are about to ask.** `explorer` and `librarian`
 have no shell — they cannot run a command, stat a file, or read a symlink; `oracle` can only spawn
