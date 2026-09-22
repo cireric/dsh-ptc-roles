@@ -74,6 +74,14 @@
 //      verifier's compliance numerator (`verify-ptc-roles.cjs`). The two drifted apart once
 //      already (2026-09-16, "anywhere" vs "first line"), which is why the口径 is registered
 //      in docs/pitfalls.md #19. Keep them equal.
+//   8. THE MODE IS IN THE DATA PLANE, AND THE DENY SAYS WHICH MISTAKE IT SAW (2026-09-21).
+//      A `gate` typo silently degrades to observe (choice 7) and this deployment has no log sink
+//      (#9), so ONE `[intent-gate-watchdog] mode=enforce|observe` line is injected per session and
+//      the reader asserts on it. Same change: the deny reason split into two wordings ("no line at
+//      all" vs. "the line came after this action"), and enforce mode gained the race tripwire
+//      (`FALSE_DENY`) that observe mode always had in `RACE_REPORT` — without it, the ordering
+//      assumption this plugin rests on would be unfalsifiable exactly once the gate has teeth.
+//
 //   7. THE GATE IS OPT-IN AND FAIL-SAFE. `apply(ctx, config)` reads `config.gate`; anything
 //      other than the literal 'enforce' means observe-only. The reason is an ORDERING
 //      assumption that cannot be proven statically — whether the CURRENT message's
@@ -118,10 +126,22 @@ const REMINDER = [
   '例（与本轮无关）：Intent: fix — 你要的是定位 401 的根因并修掉（依据：你贴的报错）；我先复现再改。',
 ].join('\n')
 
-/** The gate's deny reason: its single, in-place shot at telling the model what is missing. */
-const GATE_REASON = [
+/**
+ * The gate's deny reason: its single, in-place shot at telling the model what is missing.
+ * TWO sub-cases with SEPARATE wordings (2026-09-21) — "no line anywhere in this turn" and "the
+ * line came after this action". The second case used to be told 本轮还没有出现过那个六桶行, which
+ * contradicts the log (the line exists, just late) and aims the correction at the wrong mistake.
+ * Both keep the `Intent:` template; the unit test asserts on that token, not on prose.
+ */
+const GATE_REASON_MISSING = [
   '[intent-gate] 这一次调用没有门行垫底 —— 本轮还没有出现过那个六桶行。',
   '先在下一条消息写上它（是该消息的**首行**），再重发刚才的调用：',
+  'Intent: <桶> — <你要的结果>（依据：<你话里让我这么读的那一点>）；我打算 <做法>。',
+].join('\n')
+
+const GATE_REASON_LATE = [
+  '[intent-gate] 本轮的门行晚了 —— 它在这次动手**之后**才出现，而它必须落在**承载第一次动手的那条消息**里、且是那条消息的首行。',
+  '在下一条消息里把它补到开头（首行），再重发刚才的调用：',
   'Intent: <桶> — <你要的结果>（依据：<你话里让我这么读的那一点>）；我打算 <做法>。',
 ].join('\n')
 
@@ -135,6 +155,34 @@ const RACE_REPORT = [
   '[intent-gate-watchdog] observe 取证：闸门在第一次动手到达时**没有看到**门行，而该轮最终判为合规 —— 假拒候选（事件时序竞态）。',
   '⇒ 开闸（config: { gate: enforce }）之前必须先查清这一条；它是数据面证据，别删。',
 ].join('\n')
+
+/**
+ * Enforce-mode TWIN of RACE_REPORT (2026-09-21). Once the gate enforces, the observe-mode pair
+ * (`wouldDeny && !denied`) can never hold — the first unmet call is denied and `denied` latches —
+ * so the one ordering assumption this plugin rests on would go invisible exactly when the gate has
+ * teeth. Its signature in enforce mode is the mirror image: a call WAS denied, yet the turn still
+ * scores compliant (① 存在). That can only happen if the declaration sat in the carrier message and
+ * its `assistant/message` event reached this listener too late = a FALSE deny. Same job as
+ * RACE_REPORT: the data-plane evidence that rolls the gate back to observe (docs/decisions/0003).
+ */
+const FALSE_DENY = [
+  '[intent-gate-watchdog] enforce 取证：闸门拒了一次，而该轮最终仍判为合规（门行就在承载首次动手的那条消息里）—— 假拒候选（事件时序竞态）。',
+  '⇒ 这是开闸后的回滚证据（docs/decisions/0003），别删。',
+].join('\n')
+
+/**
+ * Per-session mode marker (2026-09-21). `config.gate` is read once in apply(); anything but the
+ * literal 'enforce' falls back to observe (fail-safe, design choice 7) — and this deployment has NO
+ * log sink (docs/pitfalls.md #9), so "is enforce actually in force?" had no answer a script could
+ * read. ONE line per session, injected at its first user-opened step, puts that answer in the data
+ * plane. Deliberately not per turn: an injected message is persisted forever (pitfalls #19), so this
+ * stays 1:1 with sessions rather than with turns.
+ */
+const MODE_NOTICE_PREFIX = '[intent-gate-watchdog] mode='
+const MODE_ENFORCE = MODE_NOTICE_PREFIX + 'enforce'
+const MODE_OBSERVE = MODE_NOTICE_PREFIX + 'observe'
+const modeNotice = (enforcing) => (enforcing ? MODE_ENFORCE : MODE_OBSERVE)
+  + ' —— 本会话的意图门模式（数据面标记：gate 配置写错会静默落到 observe，而本部署没有日志通道，pitfalls #9）。'
 
 /** Deep-freeze a plain value in place (mirrors llm's `freezeMessage`). */
 function deepFreeze(value) {
@@ -150,12 +198,12 @@ function deepFreeze(value) {
  * randomUUID identity, role `user`, text content, and a plugin notice source.
  * Keep in sync with that file if the message shape ever changes.
  */
-function pluginMessage(text, plugin) {
+function pluginMessage(text, plugin, summary) {
   return deepFreeze({
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin, form: 'notice', summary: 'intent gate missing' },
+    source: { kind: 'plugin', plugin, form: 'notice', summary },
   })
 }
 
@@ -206,6 +254,8 @@ export function apply(ctx, config) {
   const lastMsg = new Map()
   /** sessionId -> the turn this plugin already reminded. */
   const reminded = new Map()
+  /** sessionId -> its mode notice was already injected (once per SESSION, never per turn). */
+  const modeAnnounced = new Set()
   /** sessionId -> the turn of the most recent turn-carrying event (tools/pre-execute has none). */
   const lastTurn = new Map()
   /** sessionId -> the turn a REAL user message opened; machine-driven turns are out of scope. */
@@ -327,7 +377,8 @@ export function apply(ctx, config) {
       gate.wouldDeny = true
       if (!gateEnforcing || gate.denied) return decision
       gate.denied = true
-      return { kind: 'deny', reason: GATE_REASON }
+      // Two sub-cases, two wordings — see GATE_REASON_MISSING / GATE_REASON_LATE.
+      return { kind: 'deny', reason: rec.declSeq === undefined ? GATE_REASON_MISSING : GATE_REASON_LATE }
     } catch (err) {
       warn('could not evaluate the intent gate: ' + String(err))
       return decision
@@ -356,22 +407,34 @@ export function apply(ctx, config) {
       const sessionId = agent?.session?.id
       if (sessionId === undefined) return decision
       userTurn.set(sessionId, turn)
-      if (reminded.get(sessionId) === turn) return decision                  // (2) once per turn
+      // 模式标记：每**会话**一次，不是每轮 —— 注入的消息永久落库（pitfalls #19）。
+      const extra = []
+      if (!modeAnnounced.has(sessionId)) {
+        modeAnnounced.add(sessionId)
+        extra.push(pluginMessage(modeNotice(gateEnforcing), name, 'intent gate mode'))
+      }
+      const inject = (...notes) => ({ ...decision, messages: [...decision.messages, ...extra, ...notes] })
+      if (reminded.get(sessionId) === turn) return extra.length > 0 ? inject() : decision   // (2) once per turn
       // 记录不存在（上一轮没有任何 assistant 消息）**不算漏**。只有「确实动过手、且门行没赶在
       // 动手之前」才提醒 —— 判据与合规分子同口径（design choice 6），两处已经漂移过一次。
       const previous = turns.get(sessionId)?.get(turn - 1)
-      if (previous === undefined || previous.acting !== true) return decision
+      if (previous === undefined || previous.acting !== true) return extra.length > 0 ? inject() : decision
       const gate = gateSeen.get(sessionId)?.get(turn - 1)
       if (compliant(previous)) {
-        // Observe-mode取证（design choice 7）：闸门在动作到达时没看到门行，而该轮最终合规
-        // ⇒ 假拒候选。它不是提醒，是**证据**，所以只在观察模式、且确有其事时注入一次。
+        // 竞态取证（design choice 7 + 2026-09-21 追加）——两条都不是提醒，是**证据**：
+        //   observe ⇒ `wouldDeny && !denied`：闸门在动作到达时没看到门行，而该轮最终合规；
+        //   enforce ⇒ 它的镜像 `denied && compliant`：真拒过一次，而该轮最终合规 = 假拒。
+        // enforce 下前者恒不成立（首拒即 latch），所以没有后者的话，开闸后竞态整个不可见。
         if (gate?.wouldDeny === true && gate.denied !== true) {
-          return { ...decision, messages: [...decision.messages, pluginMessage(RACE_REPORT, name)] }
+          return inject(pluginMessage(RACE_REPORT, name, 'intent gate race evidence'))
         }
-        return decision
+        if (gate?.denied === true) {
+          return inject(pluginMessage(FALSE_DENY, name, 'intent gate false-deny evidence'))
+        }
+        return extra.length > 0 ? inject() : decision
       }
       reminded.set(sessionId, turn)
-      return { ...decision, messages: [...decision.messages, pluginMessage(REMINDER, name)] }
+      return inject(pluginMessage(REMINDER, name, 'intent gate missing'))
     } catch (err) {
       warn('could not inject the intent-gate reminder: ' + String(err))
       return decision

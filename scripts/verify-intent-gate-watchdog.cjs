@@ -11,6 +11,9 @@
 //   * session/event   —— 门行/行为动作的记账（判据 ①：declSeq <= firstActCarrier，即
 //     「门行所在消息**不晚于**承载第一次动手的那条消息」，含同一条消息）；
 //   * tools/pre-execute —— 闸门：观察模式只记不拒（默认），`{ gate: 'enforce' }` 才拒，且每轮至多一次。
+//     2026-09-21 起另钉三件事：**模式标记**（每会话一行 mode=enforce|observe —— config 写错会静默降级，
+//     而本部署无日志通道）、**拒绝措辞分两子情形**（可达的只有"整轮无门行"那一支，见 ADR 0003）、
+//     以及 enforce 版的竞态取证 `FALSE_DENY`（denied && ① 合规 —— 开闸后的回滚触发条件）。
 //     静态证据只有一条：ctx.on('tools/pre-execute') 这个注册本身 —— 所以 open() 收不到它就**大声抛错**。
 //
 // 用法：
@@ -68,6 +71,9 @@ const REQUIRED_CONTROL_FAILURES = [
   'gate never overrides a downstream non-allow decision',
   'observe mode injects the race report when the gate missed a line the turn did carry',
   'reports an unattributable dispatch instead of staying silent',
+  // 2026-09-21 新增的两条：对照版既没有每会话的模式标记，也没有 enforce 版的假拒取证。
+  'mode notice: exactly one per session, and it names the mode actually in force',
+  'enforce mode reports a false-deny candidate when a denied turn still scores compliant',
 ]
 
 let checks = 0
@@ -140,13 +146,28 @@ async function open(config) {
 }
 
 const ENTER = (messages) => ({ kind: 'enter', messages })
-const injected = (decision) => Array.isArray(decision?.messages) && decision.messages.length > 1
-/** Text of the last message in a pre-step decision ('' when there is none). */
+/**
+ * 模式标记（2026-09-21 起每**会话**一行）**不是**提醒 —— 「该不该提醒 / 该不该取证」类断言
+ * 不能把它算进去，否则每条「保持沉默」断言都会因为这一行而假红。
+ * appended notes = pre-step 决定里，输入消息之后追加的全部消息。
+ */
+const MODE_MARKER = '[intent-gate-watchdog] mode='
+const notices = (decision) => (Array.isArray(decision?.messages) ? decision.messages.slice(1) : [])
+const noteText = (m) => (typeof m?.content?.[0]?.text === 'string' ? m.content[0].text : '')
+const isModeNotice = (m) => noteText(m).startsWith(MODE_MARKER)
+/** 追加通知的文本；默认**排除**模式标记（includeMode === true 时才带上它）。 */
+const noteTexts = (decision, includeMode) => notices(decision)
+  .filter((m) => includeMode === true || !isModeNotice(m)).map(noteText)
+const injected = (decision) => noteTexts(decision).length > 0
+/** Text of the last appended NON-mode notice ('' when there is none). */
 const lastText = (decision) => {
-  const messages = decision?.messages
-  if (!Array.isArray(messages) || messages.length === 0) return ''
-  const content = messages[messages.length - 1]?.content
-  return Array.isArray(content) && typeof content[0]?.text === 'string' ? content[0].text : ''
+  const texts = noteTexts(decision)
+  return texts.length === 0 ? '' : texts[texts.length - 1]
+}
+/** The per-session mode marker carried by this decision ('' when it carried none). */
+const modeNoticeOf = (decision) => {
+  const marker = notices(decision).find(isModeNotice)
+  return marker === undefined ? '' : noteText(marker)
 }
 
 // ── 契约一致性（D）：插件的注入文案 ↔ persona 的模板 ─────────────────────────
@@ -307,7 +328,9 @@ async function main() {
     h.act('s1', 1)
     const d = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 2, step: 1 })
     check('appends one reminder when the previous turn lacked the marker',
-      injected(d) && d.messages.length === h.userMessages.length + 1, JSON.stringify(d).slice(0, 120))
+      // 只数**提醒**：模式标记（每会话一次）由 26 单独钉，不在这里重复判 —— 否则这条断言
+      // 会在没有模式标记的实现上因为「少了一行」而不是「提醒错了」变红（阴性对照实测）。
+      noteTexts(d).length === 1, JSON.stringify(d).slice(0, 120))
   }
 
   // 2 — the injected message must be shaped like createUserMessage's output and frozen.
@@ -624,6 +647,69 @@ async function main() {
     const d = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 2, step: 1 })
     check('observe mode does not disguise a real miss as a race report',
       injected(d) && !lastText(d).includes('observe 取证'), JSON.stringify(d).slice(0, 160))
+  }
+
+  // 26 — 模式标记：每**会话**一次，并带出**当下生效**的模式。config 写错会静默落到 observe
+  //（fail-safe，design choice 7）而本部署没有日志通道（#9）⇒ 这一行是数据面上唯一可查的证据。
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    const first = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    const sameTurn = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 2 })
+    h.turnStart('s1', 2)
+    const nextTurn = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 2, step: 1 })
+    const observed = await open({ gate: 'observe' })
+    observed.turnStart('s1', 1)
+    const obs = await observed.preStep({ agent: observed.agent(), messages: observed.userMessages, turn: 1, step: 1 })
+    check('mode notice: exactly one per session, and it names the mode actually in force',
+      modeNoticeOf(first).startsWith(MODE_MARKER + 'enforce')
+        && modeNoticeOf(sameTurn) === '' && modeNoticeOf(nextTurn) === ''
+        && modeNoticeOf(obs).startsWith(MODE_MARKER + 'observe'),
+      JSON.stringify([modeNoticeOf(first).slice(0, 36), modeNoticeOf(sameTurn), modeNoticeOf(nextTurn), modeNoticeOf(obs).slice(0, 36)]))
+  }
+
+  // 27 — 拒绝措辞拆两子情形（2026-09-21）后的**可达性事实**：闸门判据是
+  //   `declSeq === undefined || declSeq > carrier`，而 carrier = 「最后一条 assistant 消息」的序号，
+  //   且 declSeq 正是某条 assistant 消息的序号 ⇒ 一旦 declSeq 被记上就有 declSeq <= carrier。
+  //   ⇒ 今天**只有「整轮无门行」那一支可达**；「门行晚了」那一支是状态真变化时的正确措辞
+  //   （docs/decisions/0003 记了这条）。这条断言因此钉的是：可达那一支自带补救话术与字面 token，
+  //   且**不**误用另一支的措辞。
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    const d = await h.preExec('write')
+    check('deny wording: carries the Intent: template and never the unreachable "line came late" branch',
+      d?.kind === 'deny' && d.reason.includes('Intent:') && d.reason.includes('门行')
+        && !d.reason.includes('本轮的门行晚了'), JSON.stringify(d))
+  }
+
+  // 28 — enforce 版的**竞态取证**：拒了一次，而该轮最终仍判为合规 ⇒ 假拒候选必须进数据面。
+  // 这是开闸后唯一还能看见那条时序假设的形状（observe 版的 `wouldDeny && !denied` 在 enforce 下
+  // 恒不成立），也是 ADR 0003 的回滚触发条件。
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    const raced = await h.preExec('write')                        // 门行的 assistant/message 还没到 ⇒ 拒
+    h.observe('s1', 1, 'Intent: implementation — 动手。')          // 门行随后才被听到 ⇒ declSeq = 1
+    h.act('s1', 1)                                                // 载体 = 1 ⇒ ① 合规
+    const d = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 2, step: 1 })
+    check('enforce mode reports a false-deny candidate when a denied turn still scores compliant',
+      raced?.kind === 'deny' && injected(d) && lastText(d).includes('enforce 取证'), JSON.stringify(d).slice(0, 200))
+  }
+
+  // 29 — 「仅当」的另一半：**真漏**（该轮确实不合规）在 enforce 下不得伪装成假拒，该提醒就提醒。
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    const denied = await h.preExec('write')
+    h.observe('s1', 1, '直接开干，没有分类行。')
+    h.act('s1', 1)
+    const d = await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 2, step: 1 })
+    check('enforce mode does not disguise a real miss as a false deny',
+      denied?.kind === 'deny' && injected(d) && !lastText(d).includes('enforce 取证'), JSON.stringify(d).slice(0, 200))
   }
 
   if (!CONTROL_MODE) {

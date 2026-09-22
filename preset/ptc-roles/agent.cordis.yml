@@ -346,7 +346,7 @@
 # 对这类轮次要求门行）。**同一条消息里的门行算数**；②「门行早于动手」只作对照读数（见 #19）。
 # 见插件头部注释与 scripts/verify-intent-gate-watchdog.cjs。
 - id: intent-gate-watchdog
-  name: ./intent-gate-watchdog.mjs?v=10
+  name: ./intent-gate-watchdog.mjs?v=11
   # 闸门（tools/pre-execute）随本行配置：`observe` 只记账 + 注入竞态诊断行，`enforce` 才真的拒绝
   # （每轮最多一次）。配置缺失/写错都退回记账（fail-safe），不会因为一处笔误开始拦人。
   # **2026-09-18 开闸（enforce）**：前置 = 观察期里没有出现过**真注入**的 RACE_REPORT。读法必须用

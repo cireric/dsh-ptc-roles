@@ -1,4 +1,5 @@
-# The `ptc` agent preset: the standard coding agent, presented as PTC mode.
+# ptc-gate — the shipped `ptc` preset, plus the Phase-0 intent gate and a process-discipline
+# persona. It ships NO role subagents: delegation happens on demand (trailer at the bottom).
 #
 # Most of `standard` is here unchanged. The deliberate exception is the
 # general-purpose `workflow` tool: PTC mode uses `run_code` as its model-authored
@@ -194,7 +195,7 @@
     - id: tool-subagent-list-agents
       name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
 
-    # ptc-roles PATCH — the only divergence from the verbatim base preset.
+    # PRESET PATCH（两个 preset 都带这一行）—— 与逐字复制的底座之间**唯一**的偏离。
     # A child scope re-mounts this row into its OWN layer, so the leaked
     # `subagent` tool is visible to every delegated child (restrict() cannot
     # mask own-layer registrations). Without a bound, a depth-1 role spawns an
@@ -312,38 +313,15 @@
 #   • role-presentation.mjs is therefore absent: there are no role children to flip.
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# Everything ABOVE is the shipped `ptc` preset copied verbatim, with ONE
-# patched row: `tool-subagent` gained `maxDepth: 1` (rationale at that row).
-# Diff against packages/preset/agent-presets/presets/ptc/agent.cordis.yml to see
-# exactly what this preset changes. What it adds, and why:
-#
-#   • persona.prefix (patched above)      — orchestrator persona: Phase-0 intent
-#     gate, delegation table, delegation discipline, evidence gate.
-#   • five named role tools               — explorer / librarian / oracle /
-#     implementer / designer. Named tools are what let `toolFilter.allow` express
-#     the JOB BOUNDARY: oracle's allow-list names explorer+librarian, so
-#     implementer (and designer) are invisible to it.
-#   • role-presentation.mjs          — flips every delegated child to
-#     `native` so `run_code` disappears and the allow-list becomes a real
-#     capability boundary. The main agent keeps the base's PTC presentation.
-#
 # maxDepth semantics (packages/subagent/subagent/src/child-agent.ts:49-56):
 #   childDepth = delegationDepth(parent) + 1, and childDepth > maxDepth throws.
 #   The orchestrator is depth 0, so `maxDepth: 0` would reject EVERY delegation;
-#   `1` is the tightest value that still lets the orchestrator delegate. Leaf-ness
-#   cannot be expressed by maxDepth alone (one tool instance serves every caller
-#   depth), so each leaf role's allow-list also omits every role tool name.
-#     explorer / librarian : maxDepth 2  -> the orchestrator (depth 0) AND oracle
-#                            (depth 1) may call them; a depth-2 explorer cannot.
-#     oracle /
-#     implementer / designer : maxDepth 1 -> only the orchestrator may call them.
+#   `1` is the tightest value that still lets the orchestrator delegate, and it is
+#   what this preset pins on the generic `subagent` row.
 #
-# Tool names below were checked against the live agent-scoped registry (157
-# tools / 81 mcp__*). An unknown name fails the child start LOUDLY — that is
-# deliberate (fail visible), so re-check this list after any MCP server change.
-# NOT included on purpose: `skill` (roles get no skills in v1), `run_code`
-# (reserved, unmaskable — see the presentation plugin), and role tool names for
-# the four leaf roles (explorer / librarian / implementer / designer).
+# Role tools / allow-lists / role personas / role-presentation.mjs are NOT here on
+# purpose: see the "What it deliberately does NOT add" block below, and
+# docs/decisions/0002-continue-evolving.md for the measurement behind it.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # 意图门看门狗：per-turn 的 Phase 0 纪律在「漏了」时没有任何代价，于是静默衰减
@@ -354,14 +332,18 @@
 # 对这类轮次要求门行）。**同一条消息里的门行算数**；②「门行早于动手」只作对照读数（见 #19）。
 # 见插件头部注释与 scripts/verify-intent-gate-watchdog.cjs。
 - id: intent-gate-watchdog
-  name: ./intent-gate-watchdog.mjs?v=10
+  name: ./intent-gate-watchdog.mjs?v=11
   # 闸门（tools/pre-execute）随本行配置：`observe` 只记账 + 注入竞态诊断行，`enforce` 才真的拒绝
   # （每轮最多一次）。配置缺失/写错都退回记账（fail-safe），不会因为一处笔误开始拦人。
-  # **2026-09-18 开闸（enforce）**：前置 = 观察期里没有出现过**真注入**的 RACE_REPORT。读法必须用
-  # **注入前缀**（`[intent-gate-watchdog] observe` 落在 agent/inbox/spliced / user/message），不能用子串扫
-  # `RACE_REPORT` —— 引用插件源码 / pitfalls 正文 / 模型复述都会命中（实测 6/39 假阳性，见 pitfalls #23）。
-  # 冻结读数（0 次真注入 + 阳性对照 + 两个真机测试实例）：
-  # docs/evidence/2026-09-18-gate-flip-prerequisite.json
+  # 配置写错**看不见**（本部署无日志通道）：所以插件每**会话**注入一行 mode 标记，
+  # `scripts/verify-ptc-roles.cjs` 拿它与**本文件的声明**对照（不一致 ⇒ ✗ FAIL）。
+  # **2026-09-18 开闸（enforce）**：前置 = 观察期里没有出现过**真注入**的 RACE_REPORT；读法必须用
+  # **注入前缀**（落在 agent/inbox/spliced / user/message），不能用子串扫 —— 引用插件源码 / 正文 /
+  # 模型复述都会命中（实测 6/39 假阳性，见 pitfalls #23）。
+  # 冻结读数：docs/evidence/2026-09-18-gate-flip-prerequisite.json
+  # **回滚条件（2026-09-21 改判，唯一登记处 = docs/decisions/0003）**：开闸后 RACE_REPORT 恒不注入，
+  # 竞态的可见形态换成它的镜像 ——「真拒了一次、而该轮最终仍判 ① 合规」= 假拒候选：插件注入
+  # FALSE_DENY，reader 独立算出同一个数（`闸门拒绝: … ｜ 假拒候选 n`）。读到 n>0 ⇒ 改回 observe。
   config:
     gate: enforce
 
