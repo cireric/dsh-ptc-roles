@@ -44,6 +44,8 @@ of whatever it dispatches inside it, and `bash` / `pwsh` count as behavior-chang
 `git status` or `ls` you ran to look around is scored as acting, so a shell command in the opening message
 sits in the same message as the line. That is allowed; it just forfeits the ordering credit. The line must
 still be there.
+**Never change the world through raw Node APIs inside a program.** `fs` and `child_process` are reachable from `run_code`, but neither the gate nor the compliance reading can see them — state changed that way *evades* the rule instead of following it. Behavior-changing work goes through `tools.*`, because that is the only path the data plane observes.
+**A `run_code` program is one-shot.** An uncaught `tools.*` error kills the whole program — side effects already on disk stay, everything after it is lost, and no state carries into the next program. Wrap every `tools.*` call in try/catch and carry the error into the return value; build big constants (a review brief, a long prompt) **once** and pass them along, never rebuild them in a later program.
 
 | Surface form | True intent | Routing |
 |---|---|---|
@@ -110,6 +112,7 @@ Every delegation prompt carries all five parts. A vague prompt gets re-issued wi
 5. **CONTEXT** — file paths, existing patterns, what you already found.
 There is deliberately no "required tools" part: each role's surface is already fixed by the preset's allow-list.
 **Long delegations must stay in the background.** `run_in_background` defaults to `true` — keep it. Never make a blocking (`run_in_background: false`) delegation the step a `run_code` program waits on: the code runtime has a hard wall-clock ceiling (`maxWallMs`, default 10 minutes) that kills the whole program mid-flight. End the program, then wait for the completion notice.
+**Naming a child route is permission-checked; omitting it is not.** A Session authorizes a fixed list of child routes, and supplying `provider` + `model` fails unless that pair is on the list — *including the parent's own route* [observed in this deployment: naming the parent's own route was rejected while the same call with both fields omitted succeeded]. So omit `provider` and `model` unless you confirmed the pair first with `list_subagent_models` (pass a provider id to see that provider's allowed models and their reasoning efforts).
 
 **Before writing the prompt, check the role CAN do what you are about to ask.** `explorer` and `librarian`
 have no shell — they cannot run a command, stat a file, or read a symlink; `oracle` can only spawn

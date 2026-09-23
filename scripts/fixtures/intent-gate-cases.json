@@ -619,6 +619,24 @@
         {"type": "tool/ptc-dispatch", "data": {"rootCallId": "c1", "parentCallId": "c1", "subCallId": "c1:ptc:1", "name": "write", "isError": true,
           "content": [{"type": "text", "text": "Error: [intent-gate] 这一次调用没有门行垫底。"}]}}
       ]
+    },
+    {
+      "name": "闸门账：被拒 program 的其余派发照跑 ⇒ 记下工具名与「同 program 其余派发」（2026-09-23）",
+      "expect": {"eligible": 1, "eligibleDeclared": 0, "contrastEligible": 0, "acts": 3, "actsCovered": 0, "silent": true,
+        "denied": 1, "deniedTurns": 1, "deniedRecovered": 0, "deniedResumedWithoutLine": 0, "falseDeny": 0,
+        "denyNames": "bash×1", "denyProgramOthers": 3, "denyProgramSiblingsAfter": 3, "deniedUserOpened": 0},
+      "events": [
+        {"type": "assistant/message", "seq": 0, "data": {"turn": 1, "message": {"role": "assistant", "content": [{"type": "text", "text": "直接开干，没有分类行。"}]}}},
+        {"type": "tool/call", "seq": 1, "data": {"turn": 1, "step": 1, "callId": "c1", "name": "run_code", "arguments": "{}"}},
+        {"type": "tool/ptc-dispatch", "seq": 2, "data": {"rootCallId": "c1", "parentCallId": "c1", "subCallId": "c1:ptc:1", "name": "bash", "isError": true,
+          "content": [{"type": "text", "text": "Error: [intent-gate] 这一次调用没有门行垫底。"}]}},
+        {"type": "tool/ptc-dispatch", "seq": 3, "data": {"rootCallId": "c1", "parentCallId": "c1", "subCallId": "c1:ptc:2", "name": "read", "isError": false,
+          "content": [{"type": "text", "text": "ok"}]}},
+        {"type": "tool/ptc-dispatch", "seq": 4, "data": {"rootCallId": "c1", "parentCallId": "c1", "subCallId": "c1:ptc:3", "name": "bash", "isError": false,
+          "content": [{"type": "text", "text": "ok"}]}},
+        {"type": "tool/ptc-dispatch", "seq": 5, "data": {"rootCallId": "c1", "parentCallId": "c1", "subCallId": "c1:ptc:4", "name": "write", "isError": false,
+          "content": [{"type": "text", "text": "ok"}]}}
+      ]
     }
   ]
 }

@@ -67,6 +67,9 @@ const REQUIRED_CONTROL_FAILURES = [
   // 不看本轮是不是真人开的、覆盖下游决定、也不留竞态取证（⑥，见 fixture 文件头）。
   'gate in observe mode never denies, and returns the downstream allow untouched',
   'gate denies at most once per turn, then re-arms on the next turn',
+  // 并发版（2026-09-23）：同轮两个行为调用**同时在飞**时也只能拒一次。对照版无条件拒 ⇒ 两个都拒
+  // ⇒ 这条在它身上必须失败。它是「每轮至多一次拒绝」这条**安全属性**的并发钉子。
+  'gate denies exactly once when two behavior calls of one turn are in flight together',
   'gate skips a turn no real user message opened, and still gates a real one',
   'gate never overrides a downstream non-allow decision',
   'observe mode injects the race report when the gate missed a line the turn did carry',
@@ -582,6 +585,23 @@ async function main() {
       JSON.stringify([first?.kind, second?.kind, nextTurn?.kind]))
   }
 
+  // 20b — 并发版（2026-09-23）：同轮两个行为调用**同时在飞**。判据读的是插件里那个 check-and-set
+  //（`wouldDeny = true` → `if (denied) return` → `denied = true` → return deny，中间**没有 await**）
+  // ⇒ 两个调用只可能有一个被拒。为什么单写一条：20 覆盖的是**顺序**调用，而 PTC 里 `Promise.all` 并发
+  // 派发是常态；这条钉的是「每轮至多一次拒绝」这个安全属性在并发下仍成立 —— 将来有人把 latch 改成
+  // 异步（中间插 await）时它会立刻变红。（docs/pitfalls.md #19 的 2026-09-23 更正：早先「并发多拒
+  // 窗口」的推断已被代码阅读证伪，这条断言现在钉的是**证伪后的**性质。）
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    h.observe('s1', 1, '直接开干，没有分类行。')
+    const both = await Promise.all([h.preExec('write'), h.preExec('bash')])
+    const denies = both.filter((d) => d?.kind === 'deny').length
+    check('gate denies exactly once when two behavior calls of one turn are in flight together',
+      denies === 1, 'denies=' + denies + ' kinds=' + JSON.stringify(both.map((d) => d?.kind)))
+  }
+
   // 21 — 不是真人开的轮次（子代理通知 / goal 轮）永不拒；同一个实例在真人轮上照样拒。
   {
     const h = await open({ gate: 'enforce' })
@@ -713,17 +733,31 @@ async function main() {
   }
 
   if (!CONTROL_MODE) {
-    console.log('\n契约一致性（D —— 插件文案 ↔ persona 模板；--control 下跳过）:')
+    console.log('\n契约一致性（D —— 插件文案 ↔ persona 模板 **两份**；--control 下跳过）:')
+    // 2026-09-23 修：本机实际跑的是 ptc-gate 的 persona，而此前这里只读 ptc-roles 那一份 ——
+    // 声明的 `PERSONA_PATHS` **从未被使用**（全仓 grep 只有声明那一处），于是那行注释
+    //「两份都要接契约一致性断言」是空头承诺：未部署的那份被钉死，正在跑的那份可以静默漂移。
+    // 现在两份都跑；断言名带 preset 前缀（失败集合按**名字**判，名字必须唯一）。
     let pluginSrcText
-    let personaText
     try {
       pluginSrcText = fs.readFileSync(PLUGIN, 'utf8')
-      personaText = fs.readFileSync(PERSONA_PATH, 'utf8')
     } catch (e) {
-      check('preset 插件与 persona 可读', false, String((e && e.message) || e))
+      check('preset 插件可读（' + path.basename(path.dirname(PLUGIN)) + '）', false, String((e && e.message) || e))
     }
-    if (pluginSrcText !== undefined && personaText !== undefined) {
-      for (const t of contractSelfTest(pluginSrcText, personaText)) check(t.name, t.ok, t.detail)
+    if (pluginSrcText !== undefined) {
+      for (const personaPath of PERSONA_PATHS) {
+        const label = path.basename(path.dirname(path.dirname(personaPath)))
+        let personaText
+        try {
+          personaText = fs.readFileSync(personaPath, 'utf8')
+        } catch (e) {
+          check('persona 可读（' + label + '）', false, String((e && e.message) || e))
+          continue
+        }
+        for (const t of contractSelfTest(pluginSrcText, personaText)) {
+          check('[' + label + '] ' + t.name, t.ok, t.detail)
+        }
+      }
     }
   }
 

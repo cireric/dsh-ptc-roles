@@ -70,8 +70,11 @@
 //   node scripts/verify-ptc-roles.cjs             # 只看本项目的会话
 //   node scripts/verify-ptc-roles.cjs --all       # 扫全部工作区
 //   node scripts/verify-ptc-roles.cjs --raw       # 额外打印每个会话的完整工具名列表
+//   node scripts/verify-ptc-roles.cjs --arms      # 同工作区主会话按 preset 分组的对照读数
+//   node scripts/verify-ptc-roles.cjs --snapshot <path.json>   # 只写这一个文件：判定读数快照（不含 token 桶）
 //
-// 全程只读，不写任何文件。
+// 全程只读 —— **唯一的例外**是显式传 `--snapshot <path>`：那时只写那一个 JSON（判定读数快照，
+// 不含 token 桶：口径纪律见 pitfalls #19，持久化裁决见 pitfalls #22 与 docs/decisions/0003）。
 
 const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
@@ -89,8 +92,24 @@ let SESSIONS_ROOT = process.env.PTC_SESSIONS !== undefined && process.env.PTC_SE
 
 /** `--control-sessions`：本次运行的输入是**合成会话夹具**，判据 = 失败集合相等（复盘 P1-2）。 */
 const CONTROL_SESSIONS = process.argv.includes('--control-sessions')
-/** 合成夹具 `scripts/fixtures/sessions-ci/main.jsonl` 上**必须**失败的那几条（名字与 failLine 一致）。 */
-const REQUIRED_FIXTURE_FAILURES = ['主 agent 不是 PTC']
+/**
+ * 合成夹具 `scripts/fixtures/sessions-ci/` 上**必须**失败的那几条（名字与 failLine 一致；判据 = 集合相等）。
+ *
+ * 两份夹具、四个名字，每个都对应一条**真实**的坏会话形状（不是为了让脚本变绿）：
+ *  · `main.jsonl` —— 没有 `agent-preset/selected` 事件、也没有门 persona 标记 ⇒ 身份读不出来（'unknown'），
+ *    且 system prompt 不含 PTC / round-5 标记 ⇒ 三条一起红。其中后两条此前**没有对照组**：
+ *    「认不出 preset」当时只 `fail += 1`、没有名字（逃过集合判据）；「未载入 round-5 persona」则是夹具
+ *    `createdAt` 早于 `PERSONA_V2_SINCE`、被时间锚豁免 —— 2026-09-23 把夹具时间挪到下界之后，它才第一次有牙。
+ *  · `stale-contract.jsonl` —— 一份**下界之后挂载**、身份认得出、PTC 与 round-5 标记都在，唯独
+ *    **缺程序契约段**的会话 ⇒ 只让 `主 agent 载入的 persona 缺程序契约段` 一条红。那是该断言（只在
+ *    「下界之后的挂载」上生效）的**阴性接线**：没有它，接线只被一次性探针证明过。
+ */
+const REQUIRED_FIXTURE_FAILURES = [
+  '主 agent 不是 PTC',
+  '认不出这是哪个 preset 的主会话',
+  '主 agent 未载入 round-5 persona',
+  '主 agent 载入的 persona 缺程序契约段',
+]
 /** 夹具会话的 cwd —— 会话扫描按工作区过滤，所以夹具模式必须把工作区也指过去。 */
 const FIXTURE_CWD = '/tmp/ptc-fixture-workspace'
 
@@ -170,6 +189,27 @@ const PERSONA_V2_SINCE = Date.parse('2026-09-13T14:39:29Z')
 const PERSONA_V2_MARK = 'Delegation contract'
 
 /**
+ * **程序契约段的时间锚与标记**（2026-09-23 追加；与 PERSONA_V2_SINCE 同型，但锚在**新增的那一段**上）。
+ *
+ * 它证什么：这一场**载入的** system prompt 里有那段「one-shot / try/catch」程序契约 —— 也就是
+ * 「宿主真的重新挂载过，且挂的是本仓库这一份」。
+ * 为什么需要它：persona 是**挂载时**读取（pitfalls A 节），代次落后是**静默**的（无日志通道，#9）；
+ * 而**文件级**断言（本脚本的 D 契约 / roleFactsSelfTest / `make verify`）只证「文件里有」，
+ * 证不了「这一场读到的是它」；上面那个 PERSONA_V2_MARK 只认 round-5 那一代，对它之后新增的段落是瞎的
+ * ⇒ 2026-09-23 落地的两句程序契约（`docs/pitfalls.md` #29 的对策）此前**没有任何数据面守卫**。
+ * ⚠️ 边界：**只证文本被载入，不证行为改变**（与 PERSONA_V2_SINCE 那条同注记）。
+ * ⚠️ 只给**契约段**一个锚点，不逐句 lint persona —— 逐句检查会把读者变成散文检查器（#16 的取舍）。
+ */
+const PROGRAM_CONTRACT_MARK = 'program is one-shot'
+/**
+ * 该锚点**开始适用**的下界（= 段落落盘时刻），比较对象是**最后一次挂载的时刻**（`lastSystem.time`）
+ * 而不是 `header.createdAt`：老会话被 resume 时会换上新代 persona、却保留旧 createdAt —— 锚 createdAt
+ * 会把最要紧的那类场景（resume 重挂载）整批豁免（2026-09-23 实测发现，当场改）。
+ * 早于下界的挂载按历史豁免，否则全库历史会话会永久报红。
+ */
+const PROGRAM_CONTRACT_SINCE = Date.parse('2026-09-23T13:59:47.000Z')
+
+/**
  * 意图门门行（intent gate）的 markers —— 与 preset/ptc-roles/intent-gate-watchdog.mjs 的
  * DEFAULT_MARKERS 同口径（那里是看门狗实际注入提醒的判据）。改一处就要同步另一处：
  * 解析插件配置会引入一个会歪的解析器，而漂移不会静默（合规率立刻变 0）。
@@ -191,6 +231,18 @@ const INTENT_MARKERS = ['Intent:', '意图判定']
 const USER_OPENED_SCOPE = 'user-opened turns'
 /** persona 文件 —— 口径的另一个登记点（与 BEHAVIOR_TOOLS 的插件↔脚本关系同构）。 */
 const PERSONA_FILE = path.join(__dirname, '..', 'preset', 'ptc-roles', 'personas', 'orchestrator.md')
+/**
+ * 本仓库**两份** orchestrator persona（薄版 ptc-gate / 完整版 ptc-roles）。
+ *
+ * 为什么是两份（2026-09-23 修）：本机实际部署并运行的是 `ptc-gate` 那一份，而静态口径守卫此前
+ * 只读 `PERSONA_FILE`（ptc-roles）⇒ **正在跑的那份 persona 可以静默漂移、没有任何脚本会红**。
+ * 这与 pitfalls #12 的「三份手工副本」不是一回事：这里登记的是**文件路径**（两个文件），
+ * 角色事实的唯一源仍只有 yml 一处。
+ */
+const PERSONA_FILES = [
+  PERSONA_FILE,
+  path.join(__dirname, '..', 'preset', 'ptc-gate', 'personas', 'orchestrator.md'),
+]
 /** `user/message.data.source.kind` 取这个值 = **真用户**开的轮；其余 kind 一律算机器开轮。 */
 const USER_KIND = 'user'
 
@@ -379,11 +431,13 @@ function sameCwd(a, b) {
 }
 
 function analyze(raw) {
-  const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', escalations: [], intentTurns: new Map(), unattributable: new Set(),
+  const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', lastSystem: undefined, escalations: [], intentTurns: new Map(), unattributable: new Set(),
     /** `agent-preset/selected` 的取值序列（**权威** preset 身份；persona 正文只作 legacy 回退）。 */
     presetIds: [],
     /** 闸门拒绝（成对判，见 GATE_DENY_MARK）与每会话的模式标记；`deniesUnattributed` 见 post-loop。 */
     denies: [], gateModes: [], deniesUnattributed: 0,
+    /** rootCallId → 该 program 内每个派发**完成**事件的 seq。闸门账用它数「同 program 其余派发」。 */
+    dispatchSeqs: new Map(),
     // ── 每会话常备读数（2026-09-20）─────────────────────────────────────────
     /** 逐条 `user/message`：**没有 turn 字段**，只能按 `seq` 归轮（`{ seq, kind }`，文件顺序即 seq 顺序）。 */
     userMsgs: [],
@@ -437,17 +491,26 @@ function analyze(raw) {
         if (typeof toolName === 'string') callNames.set(callId, toolName)
       }
       if (BEHAVIOR_TOOLS.has(toolName)) noteAction(turn, lastMsgSeq, toolName)
-    } else if (event.type === 'tool/ptc-dispatch' && BEHAVIOR_TOOLS.has(toolName)) {
+    } else if (event.type === 'tool/ptc-dispatch') {
       // 只计**完成**事件：同一派发会同时出 `-start` 与完成两个事件，而两者的 `owner.carrier` 完全相同
       // （载体来自外层 `tool/call` 的映射）⇒ 计两次只会让 `carriers` 翻倍，即覆盖率的分母凭空翻倍
-      // （2026-09-20 修：实测一场 30 次派发被印成 60）。
+      // （2026-09-20 修：实测一场 30 次派发被印成 60）。闸门账的「同 program 其余派发」按同一口径。
       const rootCallId = event.data && event.data.rootCallId
-      const owner = callTurns.get(rootCallId)
-      if (owner !== undefined) noteAction(owner.turn, owner.carrier, toolName)
-      // 归因失败**绝不静默**（按 rootCallId 去重：同一派发会同时出 -start 与完成两个事件，
-      // 按事件计数会把数字凭空翻倍）。插件 intent-gate-watchdog.mjs 在同情形 warn；
-      // 这里没有 warn 通道（pitfalls #9），所以它必须进**数据面**：计数并进汇总行。
-      else result.unattributable.add(typeof rootCallId === 'string' ? rootCallId : '<no rootCallId>')
+      // 闸门账（2026-09-23）：**全部**派发都记（含只读的）—— 它数的是「被拒那次 program 里还有什么」。
+      if (typeof rootCallId === 'string' && typeof event.seq === 'number') {
+        const seenSeqs = result.dispatchSeqs.get(rootCallId)
+        if (seenSeqs === undefined) result.dispatchSeqs.set(rootCallId, [event.seq])
+        else seenSeqs.push(event.seq)
+      }
+      // 行为判据只对行为工具生效：只读派发照旧不进任何分子分母（但它们已进上面的闸门账）。
+      if (BEHAVIOR_TOOLS.has(toolName)) {
+        const owner = callTurns.get(rootCallId)
+        if (owner !== undefined) noteAction(owner.turn, owner.carrier, toolName)
+        // 归因失败**绝不静默**（按 rootCallId 去重：同一派发会同时出 -start 与完成两个事件，
+        // 按事件计数会把数字凭空翻倍）。插件 intent-gate-watchdog.mjs 在同情形 warn；
+        // 这里没有 warn 通道（pitfalls #9），所以它必须进**数据面**：计数并进汇总行。
+        else result.unattributable.add(typeof rootCallId === 'string' ? rootCallId : '<no rootCallId>')
+      }
     }
     if (typeof turn === 'number') {
       const rec = recFor(turn)
@@ -499,6 +562,8 @@ function analyze(raw) {
       && BEHAVIOR_TOOLS.has(toolName) && resultTextOf(event).includes(GATE_DENY_MARK)) {
       const owner = callTurns.get(event.data.rootCallId)
       result.denies.push({ stage: 'ptc-dispatch', name: toolName,
+        seq: typeof event.seq === 'number' ? event.seq : undefined,
+        rootCallId: typeof event.data.rootCallId === 'string' ? event.data.rootCallId : undefined,
         turn: owner === undefined ? undefined : owner.turn,
         carrier: owner === undefined ? lastMsgSeq : owner.carrier })
     } else if (event.type === 'tool/result' && typeof turn === 'number') {
@@ -526,7 +591,15 @@ function analyze(raw) {
       // 只取本会话自己的 system prompt —— 绝不能扫整份 JSONL：工具结果里也会出现
       // persona 文本（例如恰好 cat 过预设文件），那会把角色识别带偏。
       const blocks = (event.data && event.data.message && event.data.message.content) || []
-      for (const b of blocks) if (b && typeof b.text === 'string') result.systemText += b.text + '\n'
+      let thisSys = ''
+      for (const b of blocks) if (b && typeof b.text === 'string') thisSys += b.text + '\n'
+      result.systemText += thisSys
+      // **最后一次挂载**（2026-09-23）：会话库里的 `system/message` 是**每次挂载写一条** ——
+      // 实测（session-51c3bce8）：创建时 13:50 一条、重启 resume 后 14:52 又一条。
+      // 程序契约段的存活判据必须锚在**这一条**上，而不是 header.createdAt：
+      // 老会话被 resume 时会**换上新代 persona 却保留旧 createdAt**（本节最要紧的那类场景），
+      // 锚 createdAt 会把这类会话整批豁免 ⇒ 断言恰好对「resume 重挂载」瞎。
+      result.lastSystem = { time: typeof event.time === 'number' ? event.time : undefined, text: thisSys }
     } else if (event.type === 'tool/call' || event.type === 'tool/ptc-dispatch') {
       // A model-initiated sandbox-escalation request. Match the PARSED argument keys,
       // never the raw text: the field names also appear inside files these tools read.
@@ -576,6 +649,17 @@ function analyze(raw) {
   //   无门行继续   = 被拒之后仍有行为动作落在门行之前（含整轮没补）—— 「每轮只拒一次」的代价面
   //   假拒候选     = 被拒过的轮**最终仍判 ① 合规** ⇒ enforce 版的竞态签名（与插件 FALSE_DENY 同判据，
   //                 也是 ADR 0003 的回滚触发条件）
+  // 闸门账补项（2026-09-23，口径登记在 pitfalls #19）：被拒那次派发**所在 program 的其余派发**。
+  // 为什么读它：闸门每轮只拒一次（ADR 0003 的有意设计），所以被拒 program 里的后续派发**照跑** ——
+  // 「拒绝的代价面」与「这一发拦住了什么」都在这个数里。全部由既有事件推出（同 ADR 0003 对 Q3② 的
+  // 取舍：能从既有事件推出的事实**不做注入**），reader 是唯一消费者。
+  // 只算**同一 rootCallId**（= 同一个 run_code 程序）；native 的拒绝没有 program 概念 ⇒ 保持 undefined。
+  for (const deny of result.denies) {
+    const seqs = deny.rootCallId === undefined ? undefined : result.dispatchSeqs.get(deny.rootCallId)
+    if (seqs === undefined || typeof deny.seq !== 'number') continue
+    deny.programDispatches = seqs.length
+    deny.programSiblingsAfter = seqs.filter((x) => x > deny.seq).length
+  }
   const deniedByTurn = new Map()
   for (const deny of result.denies) {
     if (typeof deny.turn !== 'number') { result.deniesUnattributed += 1; continue }
@@ -623,6 +707,17 @@ function declared(rec) {
 function declaredBefore(rec) {
   return rec !== undefined && rec.acting === true && rec.declSeq !== undefined
     && rec.firstActCarrier !== undefined && rec.declSeq < rec.firstActCarrier
+}
+
+/**
+ * 被拒工具名的**渲染**（打印与 fixture 自测共用一份 —— 两处各写一遍就会漂移，pitfalls #12 的病）。
+ * 排序固定：次数降序、同次数按名字升序；否则同一份数据会渲染出两个字符串，断言随机红。
+ */
+function denyNamesLabel(s) {
+  if (s.denyNames === undefined || s.denyNames.size === 0) return '—'
+  return [...s.denyNames.entries()]
+    .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+    .map(([n, c]) => n + '×' + c).join(' / ')
 }
 
 /** 「整场静默」判据（① 口径，**每轮制对照**）—— 打印与自测**共用同一份**，两处漂移会让 C 项变成空转。 */
@@ -804,6 +899,18 @@ function intentGateStats(r) {
   s.falseDeny = denied.filter((d) => d.falseDeny).length
   s.deniesUnattributed = r.deniesUnattributed || 0
   s.gateMode = r.gateMode
+  // 闸门账（2026-09-23）：被拒工具名 + 被拒 program 的其余派发数 + **拒绝率**的分子分母。
+  // 分母 = user-opened 且**会改变行为**的轮次（现役合规率用的同一个分母，不新造第二个）。
+  s.denyNames = new Map()
+  s.denyProgramOthers = 0
+  s.denyProgramSiblingsAfter = 0
+  for (const deny of r.denies) {
+    const key = String(deny.name)
+    s.denyNames.set(key, (s.denyNames.get(key) || 0) + 1)
+    if (typeof deny.programDispatches === 'number') s.denyProgramOthers += Math.max(0, deny.programDispatches - 1)
+    if (typeof deny.programSiblingsAfter === 'number') s.denyProgramSiblingsAfter += deny.programSiblingsAfter
+  }
+  s.deniedUserOpened = denied.filter((d) => s.originByTurn.get(d.turn) === 'user').length
   return s
 }
 
@@ -829,11 +936,20 @@ function gateLines(s, labelPrefix, indent) {
     + '批内 user 非首条 ' + s.batchUserNotFirst + ' / 轮内才出现真用户消息 ' + s.midTurnUserOnly)
   lines.push(indent + '其中「同消息」达标 ' + s.sameMsg + ' 轮：首发是 shell 侦察 ' + s.sameMsgShell + ' 轮 / 非 shell '
     + s.sameMsgNonShell + ' 轮（pitfalls #17：门行与侦察同处一条消息，在 ② 下必然不算前置）')
+  const denyNames = denyNamesLabel(s)
   lines.push(indent + '闸门拒绝: ' + s.denies + ' 次 / ' + s.deniedTurns + ' 轮（恢复 ' + s.deniedRecovered
     + ' / 无门行继续 ' + s.deniedResumedWithoutLine + '）｜ 假拒候选 ' + s.falseDeny
     + '（denied && ① 合规 ⇒ 回滚触发条件，见 docs/decisions/0003）｜ 模式标记 '
     + (s.gateMode === undefined ? '缺席（本会话挂载早于标记引入，或插件被静默降级 ⇒ 见 pitfalls A 的重挂载判据）' : s.gateMode)
     + (s.deniesUnattributed > 0 ? ' ｜ ⚠ 无法归轮的拒绝 ' + s.deniesUnattributed + ' 次' : ''))
+  // 闸门账（2026-09-23）：被拒工具名 + 「同 program 其余派发」——后者是**拒绝的代价面**：
+  // 闸门每轮只拒一次，所以被拒 program 的其余派发照跑（判据与出处见 pitfalls #19）。
+  lines.push(indent + '  闸门账: 被拒工具 ' + denyNames
+    + ' ｜ 同 program 其余派发 ' + (s.denyProgramOthers === undefined ? 0 : s.denyProgramOthers)
+    + '（其中在被拒之后 ' + (s.denyProgramSiblingsAfter === undefined ? 0 : s.denyProgramSiblingsAfter) + '）'
+    + ' ｜ 拒绝率（user-opened 行为轮口径）: ' + (s.deniedUserOpened === undefined ? 0 : s.deniedUserOpened)
+    + '/' + s.userOpenedEligible + ' (' + rate(s.deniedUserOpened === undefined ? 0 : s.deniedUserOpened, s.userOpenedEligible)
+    + ') —— 预登记弱线：阈值以 docs/decisions/0003 §1 为准（越线即复审）')
   return lines
 }
 
@@ -894,7 +1010,12 @@ function armsLines(sessionRows) {
   const groups = new Map()
   for (const r of main) {
     const label = r.presetId !== undefined ? r.presetId
-      : (r.presetKind === 'other' ? '(识别不出 preset)' : r.presetKind)
+      // 2026-09-23 改名：「识别不出 preset」会被读成 reader 的盲区，实际含义是
+      //「这场没有任何 preset 身份（既无 agent-preset/selected 事件，也无门 persona）」—— 宿主默认
+      // standard 臂就是这一类。名字必须说出**事实**，否则下一个人会重复 2026-09-23 那次误读
+      //（当时把它当成「对照臂被静默吞掉」；2026-09-23 已撤回 —— 那 5 条跳过行与 5 场无 preset 身份的
+      // 会话一一对应，reader 本来就单独成臂。事实写在这里，不指向 .tmp/：那里 gitignore + `make clean`）。
+      : (r.presetKind === 'other' ? '(无 preset 身份 —— 随宿主默认)' : r.presetKind)
     if (!groups.has(label)) groups.set(label, [])
     groups.get(label).push(r)
   }
@@ -1019,11 +1140,70 @@ function tokenFoldingSelfTest() {
  * （pitfalls #19：「同一个词有四个数」）⇒ 逐字比对，并用内存变异证明它有牙。
  * 对照自身也必须能失败：变异没生效 ⇒ 这条对照自己 FAIL（pitfalls #21 第二条）。
  */
-function userOpenedScopeSelfTest() {
-  let text
-  try { text = fs.readFileSync(PERSONA_FILE, 'utf8') } catch (e) {
-    return [{ name: '读 persona（' + PERSONA_FILE + '）', ok: false, detail: String((e && e.message) || e) }]
+/**
+ * 程序契约段的**存活判定**（纯函数 ⇒ 可被变异自测驱动，形状同 userOpenedScopeSelfTest）。
+ * 返回 '' = 正常；否则返回一句给 failLine 的说明。三个分支各自对应一个已登记的豁免/失败面。
+ */
+function contractCheck(mountedAt, mountedText, mark) {
+  if ((mountedAt || 0) < PROGRAM_CONTRACT_SINCE) return { kind: 'exempt' }
+  if (typeof mountedText !== 'string' || mountedText === '') {
+    return { kind: 'miss', detail: '这一场没有 system/message 事件 —— 读者拿不到**载入的**文本，按缺失计（不静默放过）' }
   }
+  return mountedText.includes(mark)
+    ? { kind: 'ok' }
+    : { kind: 'miss', detail: '最新一次挂载的 system prompt 里没有 ' + JSON.stringify(mark) }
+}
+function programContractCheck(rec) {
+  const last = rec.lastSystem
+  const at = last !== undefined && last.time !== undefined ? last.time : (rec.header === undefined ? 0 : rec.header.createdAt)
+  const text = last !== undefined ? last.text : rec.systemText
+  return contractCheck(at, text, PROGRAM_CONTRACT_MARK)
+}
+
+/**
+ * 上一条断言的**变异自测**：阳性 + 三条阴性 + 一条「对照自身能失败」（pitfalls #21 第二条）。
+ * 为什么必须有：它只在**下界之后创建的会话**上生效，没有自测就无法当场证明它抓得住东西
+ * （这正是 2026-09-15 评审 R-01 的教训：看不出失败的断言 = 没牙）。
+ */
+function programContractSelfTest() {
+  const out = []
+  const after = PROGRAM_CONTRACT_SINCE + 60000
+  const before = PROGRAM_CONTRACT_SINCE - 60000
+  const WITH = 'orchestrator persona … A `run_code` program is one-shot. …'
+  const WITHOUT = 'orchestrator persona … Delegation contract …'
+  const t = (name, mountedAt, text, expectKind) => {
+    const got = contractCheck(mountedAt, text, PROGRAM_CONTRACT_MARK)
+    out.push({ name, ok: got.kind === expectKind,
+      detail: '期望 ' + expectKind + '，实得 ' + got.kind + (got.detail === undefined ? '' : '（' + got.detail.slice(0, 80) + '）') })
+  }
+  // **三态**必须分开：'exempt' 与 'ok' 若共用一个返回值，豁免的历史会话会被打印成 ✓（假阳性）——
+  // 这是本轮实现时当场踩到的（第一版就是那样）。
+  t('下界后创建的会话 + 有契约段 ⇒ ok（阳性路径）', after, WITH, 'ok')
+  t('下界后创建的会话 + **缺**契约段 ⇒ miss（这正是一条「宿主没重挂载」的信号）', after, WITHOUT, 'miss')
+  t('下界前的历史会话 + 缺契约段 ⇒ exempt（时间锚保护，否则全库历史会永久报红）', before, WITHOUT, 'exempt')
+  t('下界后挂载但读不到 systemText ⇒ miss（拿不到载入文本按缺失计）', after, '', 'miss')
+  // ↓ 两种「resume」形状（2026-09-23 实测发现锚 createdAt 会漏掉它们，故单列）
+  t('旧会话被 resume 且**换上了**新代 ⇒ ok（同 session-51c3bce8 实测）', after, WITH, 'ok')
+  t('旧会话被 resume 但**仍是旧代**（陈旧挂载）⇒ miss —— 这是最有价值的一格', after, WITHOUT, 'miss')
+  // 对照①：把标记换成另一个词（等价于常量漂移）⇒ 同一份「有契约段」的文本立刻变成 miss（搜索有牙）。
+  const drifted = contractCheck(after, WITH, 'per-program contract')
+  out.push({ name: '对照①：标记常量换成另一个词 ⇒ 有契约段的文本也 miss（搜索有牙）',
+    ok: drifted.kind === 'miss', detail: drifted.kind === 'ok' ? '没报差异 —— 断言空转' : '已报 ' + drifted.kind })
+  // 采集侧也要有牙：两次挂载（旧 → 新）必须取**后一条**的文本与时刻（analyze 的 latest-wins）。
+  const twoMounts = [
+    JSON.stringify({ type: 'session', id: 'x', cwd: '/tmp', createdAt: PROGRAM_CONTRACT_SINCE - 600000, delegationDepth: 0 }),
+    JSON.stringify({ type: 'system/message', seq: 1, time: PROGRAM_CONTRACT_SINCE - 600000, data: { message: { role: 'system', content: [{ type: 'text', text: WITHOUT }] } } }),
+    JSON.stringify({ type: 'system/message', seq: 2, time: PROGRAM_CONTRACT_SINCE + 600000, data: { message: { role: 'system', content: [{ type: 'text', text: WITH }] } } }),
+  ].join('\n')
+  const rec = analyze(twoMounts)
+  const got = programContractCheck(rec)
+  out.push({ name: '采集侧：两次挂载取**后一条**（resume 会把旧 createdAt 留在原地）⇒ ok',
+    ok: got.kind === 'ok' && rec.lastSystem !== undefined && rec.lastSystem.text.includes(PROGRAM_CONTRACT_MARK),
+    detail: 'kind=' + got.kind + ' lastSystem.time=' + (rec.lastSystem === undefined ? 'undefined' : rec.lastSystem.time) })
+  return out
+}
+
+function userOpenedScopeSelfTest() {
   /** 找出「persona 文本里有没有 expected 这个口径字面量」；解析不出来 = 响亮失败，不当成通过。 */
   const finding = (personaText, expected) => {
     if (typeof personaText !== 'string' || personaText === '') return 'persona 文本为空/读不到'
@@ -1033,24 +1213,34 @@ function userOpenedScopeSelfTest() {
     return ''
   }
   const out = []
-  const bad = finding(text, USER_OPENED_SCOPE)
-  out.push({
-    name: 'persona 写死字面量 ' + JSON.stringify(USER_OPENED_SCOPE) + '，本脚本用同一串给分母命名',
-    ok: bad === '',
-    detail: bad,
-  })
-  const control = (label, personaText, expected) => {
-    const detail = finding(personaText, expected)
-    out.push({ name: label, ok: detail !== '', detail: detail === '' ? '没报差异 —— 断言空转' : detail })
+  // **两份 persona 都查**（2026-09-23）：本机跑的是 ptc-gate 那一份，只查 ptc-roles 等于没查。
+  // 断言名带 preset 前缀 —— 它们进的是「失败集合」，名字必须唯一。
+  for (const personaFile of PERSONA_FILES) {
+    const label = path.basename(path.dirname(path.dirname(personaFile)))
+    let text
+    try { text = fs.readFileSync(personaFile, 'utf8') } catch (e) {
+      out.push({ name: '读 persona（' + personaFile + '）', ok: false, detail: String((e && e.message) || e) })
+      continue
+    }
+    const bad = finding(text, USER_OPENED_SCOPE)
+    out.push({
+      name: '[' + label + '] persona 写死字面量 ' + JSON.stringify(USER_OPENED_SCOPE) + '，本脚本用同一串给分母命名',
+      ok: bad === '',
+      detail: bad,
+    })
+    const control = (label2, personaText, expected) => {
+      const detail = finding(personaText, expected)
+      out.push({ name: '[' + label + '] ' + label2, ok: detail !== '', detail: detail === '' ? '没报差异 —— 断言空转' : detail })
+    }
+    const renamed = text.split(USER_OPENED_SCOPE).join('per-turn scope')
+    if (renamed === text) out.push({ name: '[' + label + '] 对照①：persona 给口径改名 ⇒ 报告漂移', ok: false, detail: '对照组本身失效：变异目标文本不存在' })
+    else control('对照①：persona 给口径改名 ⇒ 报告漂移', renamed, USER_OPENED_SCOPE)
+    const removed = text.split(USER_OPENED_SCOPE).join('')
+    if (removed === text) out.push({ name: '[' + label + '] 对照②：persona 里口径字面量整块消失 ⇒ 报告漂移', ok: false, detail: '对照组本身失效：变异目标文本不存在' })
+    else control('对照②：persona 里口径字面量整块消失 ⇒ 报告漂移', removed, USER_OPENED_SCOPE)
+    // 对照③ 走**本脚本那一侧**：把期望字面量改成另一个词（等价于脚本常量漂移）⇒ 同一份 persona 立刻对不上。
+    control('对照③：本脚本的口径常量换成另一个词 ⇒ 报告漂移', text, 'per-turn turns')
   }
-  const renamed = text.split(USER_OPENED_SCOPE).join('per-turn scope')
-  if (renamed === text) out.push({ name: '对照①：persona 给口径改名 ⇒ 报告漂移', ok: false, detail: '对照组本身失效：变异目标文本不存在' })
-  else control('对照①：persona 给口径改名 ⇒ 报告漂移', renamed, USER_OPENED_SCOPE)
-  const removed = text.split(USER_OPENED_SCOPE).join('')
-  if (removed === text) out.push({ name: '对照②：persona 里口径字面量整块消失 ⇒ 报告漂移', ok: false, detail: '对照组本身失效：变异目标文本不存在' })
-  else control('对照②：persona 里口径字面量整块消失 ⇒ 报告漂移', removed, USER_OPENED_SCOPE)
-  // 对照③ 走**本脚本那一侧**：把期望字面量改成另一个词（等价于脚本常量漂移）⇒ 同一份 persona 立刻对不上。
-  control('对照③：本脚本的口径常量换成另一个词 ⇒ 报告漂移', text, 'per-turn turns')
   return out
 }
 
@@ -1313,13 +1503,22 @@ function gateSelfTest() {
           && s.deniedRecovered === want.deniedRecovered
           && s.deniedResumedWithoutLine === want.deniedResumedWithoutLine
           && s.falseDeny === want.falseDeny))
+      // 闸门账（2026-09-23）同样只在夹具显式给出时期望：工具名 / 同 program 其余派发 / 拒绝率分子。
+      && (want.denyProgramOthers === undefined
+        || (s.denyProgramOthers === want.denyProgramOthers
+          && s.denyProgramSiblingsAfter === want.denyProgramSiblingsAfter
+          && denyNamesLabel(s) === want.denyNames
+          && s.deniedUserOpened === want.deniedUserOpened))
     return { name: c.name, ok, detail: '期望 ' + JSON.stringify(want) + '，实得 eligible=' + s.eligible
       + ' eligibleDeclared=' + s.eligibleDeclared + ' contrastEligible=' + s.contrastEligible
       + ' acts=' + s.acts + ' actsCovered=' + s.actsCovered + ' actsUserOpened=' + s.actsUserOpened
       + ' actsCoveredUserOpened=' + s.actsCoveredUserOpened + ' silent=' + silent
       + (want.denied === undefined ? '' : ' denies=' + s.denies + ' deniedTurns=' + s.deniedTurns
         + ' deniedRecovered=' + s.deniedRecovered + ' deniedResumedWithoutLine=' + s.deniedResumedWithoutLine
-        + ' falseDeny=' + s.falseDeny) }
+        + ' falseDeny=' + s.falseDeny)
+      + (want.denyProgramOthers === undefined ? '' : ' denyNames=' + denyNamesLabel(s)
+        + ' denyProgramOthers=' + s.denyProgramOthers + ' denyProgramSiblingsAfter=' + s.denyProgramSiblingsAfter
+        + ' deniedUserOpened=' + s.deniedUserOpened) }
   })
 }
 
@@ -1348,6 +1547,19 @@ function main() {
     ? path.resolve(args[cwdFlag + 1])
     : (CONTROL_SESSIONS ? FIXTURE_CWD : DEFAULT_PROJECT_CWD)
   const rawOut = args.includes('--raw')
+  // `--snapshot <path>`（2026-09-23）：把**判定读数**落一个 JSON。会话库是滚动窗口（pitfalls #15），
+  // 已经吃掉 #19 与 #26 引用的两条基线 ⇒ 「本次运行的读数」需要一个便宜的留档方式。
+  // 默认不写：不传这个旗标时本脚本仍然一个字节都不落盘。
+  // 用法错误必须**响亮**（2026-09-23 更正）：此前无值时**静默不写**、值写成另一个旗标时会把 `--raw`
+  // 当路径、在 cwd 里造出一个名叫 `--raw` 的文件 —— 两条都违反「失败必须可见」（与 #9 同族）。
+  const snapFlag = args.indexOf('--snapshot')
+  const snapValue = snapFlag >= 0 ? args[snapFlag + 1] : undefined
+  if (snapFlag >= 0 && (snapValue === undefined || snapValue.startsWith('--'))) {
+    console.log('✗ FAIL 用法：--snapshot 需要一个输出路径，收到 ' + (snapValue === undefined ? '(无)' : JSON.stringify(snapValue)))
+    console.log('  ⇒ 例：node scripts/verify-ptc-roles.cjs --snapshot .tmp/readings.json（不传该旗标 = 全程只读）')
+    process.exit(2)
+  }
+  const snapshotPath = snapFlag >= 0 ? path.resolve(snapValue) : undefined
   let pass = 0, fail = 0, warn = 0, escChild = 0, escRoot = 0, escOther = 0
   /** 失败**名字**清单 —— `--control-sessions` 的判据是它与 REQUIRED_FIXTURE_FAILURES 集合相等。 */
   const failedNames = []
@@ -1359,9 +1571,29 @@ function main() {
   actsUserOpened: 0, actsCoveredUserOpened: 0, sessions: 0,
     // 闸门拒绝与模式标记（2026-09-21）—— 合计与逐场共用同一份渲染（gateLines）。
     denies: 0, deniedTurns: 0, deniedRecovered: 0, deniedResumedWithoutLine: 0, falseDeny: 0, deniesUnattributed: 0,
+    denyNames: new Map(), denyProgramOthers: 0, denyProgramSiblingsAfter: 0, deniedUserOpened: 0,
     gateMode: undefined,
     userOpened: 0, machineOpened: 0, unknownOrigin: 0, userOpenedEligible: 0, userOpenedDeclared: 0,
     machineOpenedActing: 0, batchUserNotFirst: 0, midTurnUserOnly: 0 }
+  /**
+   * `--snapshot` 的载荷：**只收判定读数**（口径引用 + 每场读数），**不收 token 桶**。
+   * 为什么不含 token：pitfalls #22 的裁决把「快照能力」卡在 token 口径上（错口径 + 日期戳比没有数字更坏），
+   * 而闸门/合规读数在 #19 与 ADR 0003 已是定稿口径 ⇒ 这份快照回答的是「本次运行的判定」。
+   */
+  const snapshot = snapshotPath === undefined ? undefined : {
+    tool: 'verify-ptc-roles.cjs',
+    口径: {
+      userOpenedScope: USER_OPENED_SCOPE,
+      合规分子: '① 存在：门行所在消息序号 ≤ 承载首个行为动作的载体消息序号（同一条消息算数）',
+      闸门拒绝: '成对判：name ∈ BEHAVIOR_TOOLS ∧ 结果文本含 [intent-gate]（PTC 落 tool/ptc-dispatch+isError，native 落 tool/result）',
+      拒绝率: '分子 = 被拒的 user-opened 行为轮；分母 = user-opened 且会改变行为的轮',
+      登记处: 'docs/pitfalls.md #19（口径）· docs/decisions/0003（预登记弱线：**阈值以该文件为准**，此处不复制 —— #12 的病）',
+    },
+    generatedAt: new Date().toISOString(),
+    sessionsRoot: SESSIONS_ROOT,
+    scope: all ? 'ALL' : projectCwd,
+    会话: [],
+  }
   /** 进了上面的合计的那些轮次记录 —— 下方成因分类 / 拆读数必须只看这一批，否则与合计行对不上。 */
   const gatedRecs = []
 
@@ -1405,7 +1637,12 @@ function main() {
     if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
     else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
   }
-  console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-cases.json —— 同一 (turn,step) 的替换语义）:')
+  console.log('\n程序契约段存活判定自测（纯函数 + 变异对照 —— 锚点 ' + JSON.stringify(PROGRAM_CONTRACT_MARK) + '）:')
+for (const t of programContractSelfTest()) {
+  if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
+  else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
+}
+console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-cases.json —— 同一 (turn,step) 的替换语义）:')
   for (const t of tokenFoldingSelfTest()) {
     if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
     else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
@@ -1503,7 +1740,12 @@ function main() {
       // tool-presentation 行坏掉的信号，因此同样进 fail、接退出码（2026-09-17 评审 M7：原先
       // 只打 `!`，而下面的注释把 `!` 明确限定为**合法**的已知现象，它不在那个清单里）。
       // 这里只对 isPresetRoot 的主会话生效（非 ptc-roles 主会话在上面就 continue 了）。
-      if (r.presetKind === 'unknown') { console.log('   ✗ FAIL 认不出这是哪个 preset 的主会话（agent-preset/selected 事件与 persona 独有标记都缺席）⇒ 读者的人口口径需要更新'); fail += 1 }
+      // 名字必须进 failedNames（2026-09-23 更正）：此前这条只 `fail += 1` —— 它进了「共 N 项失败」，
+      // 却**不进**集合判据 ⇒「多一条也是异常」在这条路径上不成立（与 2026-09-15 评审 R-01 同型：
+      // 判据看不见的失败 = 没牙）。
+      if (r.presetKind === 'unknown') {
+        failLine('认不出这是哪个 preset 的主会话', '   ✗ FAIL 认不出这是哪个 preset 的主会话（agent-preset/selected 事件与 persona 独有标记都缺席）⇒ 读者的人口口径需要更新')
+      }
       // 模式标记的断言（2026-09-21）：**只在标记存在时**判它必须等于仓库 yml 声明的模式 ——
       // 缺席不接退出码（本会话可能挂载于标记引入之前、或宿主还没重新挂载，见 pitfalls A），但照打。
       // 它抓的是真漂移：yml 声明 enforce 而挂载的那一代跑的是 observe（配置写错会 fail-safe 静默降级）。
@@ -1521,9 +1763,25 @@ function main() {
           console.log('   ✓ 主 agent 载入 round-5 纪律 persona（含 "' + PERSONA_V2_MARK + '"）')
           pass += 1
         } else {
-          console.log('   ✗ FAIL 主 agent 未载入 round-5 persona：system prompt 里没有 "' + PERSONA_V2_MARK + '"')
-          console.log('     ⇒ 纪律补全没生效。检查 ~/.dsh/.agent-presets/ptc-roles/personas 软链在位，且本会话是 PERSONA_V2_SINCE 之后新开的。')
-          fail += 1
+          failLine('主 agent 未载入 round-5 persona', '   ✗ FAIL 主 agent 未载入 round-5 persona：system prompt 里没有 "' + PERSONA_V2_MARK + '"'
+            + '\n     ⇒ 纪律补全没生效。检查 ~/.dsh/.agent-presets/ptc-roles/personas 软链在位，且本会话是 PERSONA_V2_SINCE 之后新开的。')
+        }
+      }
+      // **程序契约段的存活断言**（2026-09-23）：与上一条同型，但锚在**新增的那一段**上 ——
+      // 上一条只认 round-5 那一代，对它之后新增的段落是瞎的（完整理由见常量处注释）。
+      // 只对**本仓的两份 preset** 生效：'unknown' 身份在上面已经报过 FAIL，这里再报一次只是噪声。
+      if (r.presetKind === 'ptc-gate' || r.presetKind === 'ptc-roles') {
+        const c = programContractCheck(r)
+        if (c.kind === 'exempt') {
+          // ⊘ 而不是 ✓：豁免**不是**验证通过（第一版把它打成 ✓ 是假阳性，当场修掉）。
+          console.log('   ⊘ 本场早于程序契约下界（' + new Date(PROGRAM_CONTRACT_SINCE).toISOString() + '）⇒ 历史豁免，不判')
+        } else if (c.kind === 'ok') {
+          console.log('   ✓ 主 agent 载入的是**含程序契约段**的那一代 persona（含 "' + PROGRAM_CONTRACT_MARK + '"）')
+          pass += 1
+        } else {
+          failLine('主 agent 载入的 persona 缺程序契约段', '   ✗ FAIL 主 agent 载入的 persona 缺程序契约段：' + c.detail
+            + '\n     ⇒ persona 是**挂载时**读取：先逼一次真正的重新挂载（同进程里新开会话**不算**，pitfalls A 节），'
+            + '再核对 ~/.dsh/.agent-presets/<preset>/personas 软链指向本仓库（\`make check\` 会点名）。')
         }
       }
       // 意图门合规率：只对**装了门的**主 agent 会话统计（老 persona 的输出形式不同，混入会污染率）。
@@ -1548,6 +1806,9 @@ function main() {
             gate.denies += g.denies; gate.deniedTurns += g.deniedTurns
             gate.deniedRecovered += g.deniedRecovered; gate.deniedResumedWithoutLine += g.deniedResumedWithoutLine
             gate.falseDeny += g.falseDeny; gate.deniesUnattributed += g.deniesUnattributed
+            gate.denyProgramOthers += g.denyProgramOthers; gate.denyProgramSiblingsAfter += g.denyProgramSiblingsAfter
+            gate.deniedUserOpened += g.deniedUserOpened
+            for (const [n, c] of g.denyNames) gate.denyNames.set(n, (gate.denyNames.get(n) || 0) + c)
             for (const t of g.turns) {
               const rec = r.intentTurns.get(t)
               if (rec !== undefined && rec.acting === true) gatedRecs.push(rec)
@@ -1572,6 +1833,27 @@ function main() {
             silentUserOpenedSessions += 1
             console.log('   ! 本场门行**整场静默（' + USER_OPENED_SCOPE + ' 口径，现役分母）**：该欠行的轮次 ' + g.userOpenedEligible + '、① 存在口径命中 0')
           }
+        }
+        if (snapshot !== undefined) {
+          snapshot.会话.push({
+            id: r.header.id,
+            createdAt: r.header.createdAt === undefined ? undefined : new Date(r.header.createdAt).toISOString(),
+            cwd: r.header.cwd,
+            preset: r.presetKind, presetSource: r.presetKindSource, role, ptc: r.ptc === true,
+            gateMode: g.gateMode,
+            轮次: {
+              total: g.turns.length, userOpened: g.userOpened, machineOpened: g.machineOpened,
+              unknownOrigin: g.unknownOrigin, machineOpenedActing: g.machineOpenedActing,
+              userOpenedEligible: g.userOpenedEligible, userOpenedDeclared: g.userOpenedDeclared,
+            },
+            闸门: {
+              denies: g.denies, deniedTurns: g.deniedTurns, recovered: g.deniedRecovered,
+              resumedWithoutLine: g.deniedResumedWithoutLine, falseDeny: g.falseDeny,
+              denyNames: denyNamesLabel(g), deniedUserOpened: g.deniedUserOpened,
+              programOthers: g.denyProgramOthers, programSiblingsAfter: g.denyProgramSiblingsAfter,
+            },
+            观察项: { 整场静默_每轮制: gateSilent(g), 整场静默_userOpened: gateSilentUserOpened(g), 同消息: g.sameMsg },
+          })
         }
       }
       console.log('   工具面: ' + (rawOut ? tools.join(', ') : tools.slice(0, 8).join(', ') + (tools.length > 8 ? ' …' : '')))
@@ -1644,7 +1926,20 @@ function main() {
     console.log('\n对照模式（--arms —— Q9b；口径见函数注释）：')
     for (const line of armsLines([...rows])) console.log(line)
   }
+  if (snapshot !== undefined) {
+    snapshot.合计 = {
+      人口: 'ptc-roles only —— ptc-gate 逐场照打、不并入合计（跨代次不可汇总，pitfalls #19）',
+      sessions: gate.sessions, turns: gate.turns, eligible: gate.eligible,
+      userOpenedEligible: gate.userOpenedEligible, userOpenedDeclared: gate.userOpenedDeclared,
+      denies: gate.denies, deniedTurns: gate.deniedTurns, deniedRecovered: gate.deniedRecovered,
+      deniedResumedWithoutLine: gate.deniedResumedWithoutLine, falseDeny: gate.falseDeny,
+      denyNames: denyNamesLabel(gate), deniedUserOpened: gate.deniedUserOpened,
+    }
+    snapshot.本次运行的判定 = { pass, fail, warn, 整场静默_每轮制: silentSessions, 整场静默_userOpened: silentUserOpenedSessions }
+    fs.writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2) + '\n')
+  }
   console.log('\n汇总: ✓' + pass + '  ✗' + fail + '  !' + warn)
+  if (snapshot !== undefined) console.log('快照: ' + snapshotPath + '（' + snapshot.会话.length + ' 场判定读数；本脚本其余路径全程只读）')
   console.log('提权请求（实测计数）: ptc-roles 主 agent ' + escRoot + ' / ptc-roles 角色子代理 ' + escChild
     + ' / 其他会话 ' + escOther)
   if (escChild === 0) console.log('  ← ptc-roles 角色子代理零提权，与 approval policy never 一致（尚无理由做 sandbox-strip）')

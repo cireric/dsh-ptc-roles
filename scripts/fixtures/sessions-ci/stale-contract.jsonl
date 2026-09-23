@@ -1,0 +1,5 @@
+{"type":"session","id":"synthetic-stale-contract","cwd":"/tmp/ptc-fixture-workspace","createdAt":1790172047000,"delegationDepth":0}
+{"type":"system/message","seq":1,"time":1790172047000,"data":{"turn":1,"message":{"role":"system","content":[{"type":"text","text":"You are the orchestrator. Phase 0 — Intent Gate. run_code is the only tool you can call directly. This preset ships **no predefined roles**."}]}}}
+{"type":"request/header","data":{"header":{"tools":[{"name":"run_code"}],"config":{"model":"fixture-model"}}}}
+{"type":"assistant/message","data":{"turn":1,"message":{"role":"assistant","content":[{"type":"text","text":"Intent: implementation — 合成会话。"}]}}}
+{"type":"tool/call","data":{"turn":1,"step":1,"callId":"c1","name":"run_code","arguments":"{}"}}
