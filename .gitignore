@@ -1,16 +1,29 @@
-# 依赖
+# ptc-roles 的仓库形态：**零依赖的 Node 脚本 + preset 部署源**（Makefile 驱动，没有 package.json、
+# 没有构建产物、没有依赖树）。所以忽略规则只覆盖三类东西：**工具运行时目录、探针区、编辑器/OS 垃圾**。
+#
+# 判据：只忽略「能重建、且不含手写内容」的东西。以下都是**入库内容**，不要给它们加忽略规则：
+#   · preset/*/agent.cordis.yml 里由 dev_reload_preset 写进的 `?v=N` —— 那是正常的代次 bump（pitfalls A 节）
+#   · docs/evidence/*.json —— 证据留档，是结论的原始输出
+#   · scripts/fixtures/*.jsonl、*.prev.mjs —— 合成会话与冻结夹具（名字像产物，其实是测试数据）
+#   · HANDOFF.md / .tmp 之外的任何 .md —— 本仓库的文档就是产物
+
+# 工具运行时目录（都可重建；前两个与 Makefile 的 clean 清单**保持一致**，改一处要改两处）
+#   .tmp/      探针区：一次性脚本、reader 跑分、审计流水（`make clean` 整目录删）
+#   scratch/   更早的临时区，clean 仍在清理它
+#   .codegraph/ codegraph 索引（可选工具，删掉重建即可）
+.tmp/
+scratch/
+.codegraph/
+
+# 依赖（当前零依赖：这是**防御性**一行 —— 将来真加了 package.json，不至于误提交整棵 node_modules）
 node_modules/
 
-# 系统 / 编辑器
+# 日志（Makefile 的 clean 也清 *.log）
+*.log
+
+# macOS / 编辑器
 .DS_Store
 *.swp
 .idea/
 .vscode/
 
-# 日志与临时
-*.log
-scratch/
-.tmp/
-
-# 
-.codegraph/
