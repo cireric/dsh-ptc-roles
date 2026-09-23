@@ -1,0 +1,142 @@
+{
+  "tool": "verify-ptc-roles.cjs",
+  "口径": {
+    "userOpenedScope": "user-opened turns",
+    "合规分子": "① 存在：门行所在消息序号 ≤ 承载首个行为动作的载体消息序号（同一条消息算数）",
+    "闸门拒绝": "成对判：name ∈ BEHAVIOR_TOOLS ∧ 结果文本含 [intent-gate]（PTC 落 tool/ptc-dispatch+isError，native 落 tool/result）",
+    "拒绝率": "分子 = 被拒的 user-opened 行为轮；分母 = user-opened 且会改变行为的轮",
+    "登记处": "docs/pitfalls.md #19（口径）· docs/decisions/0003（预登记弱线：**阈值以该文件为准**，此处不复制 —— #12 的病）"
+  },
+  "generatedAt": "2026-09-23T14:22:56.763Z",
+  "sessionsRoot": "/Users/eric/.dsh/sessions",
+  "scope": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+  "会话": [
+    {
+      "id": "session-299709d6-5eca-418d-a079-d4669f050cc6",
+      "createdAt": "2026-09-22T13:06:20.817Z",
+      "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+      "preset": "ptc-gate",
+      "presetSource": "persona",
+      "role": "orchestrator(未识别)",
+      "ptc": true,
+      "gateMode": "enforce",
+      "轮次": {
+        "total": 3,
+        "userOpened": 1,
+        "machineOpened": 2,
+        "unknownOrigin": 0,
+        "machineOpenedActing": 2,
+        "userOpenedEligible": 1,
+        "userOpenedDeclared": 0
+      },
+      "闸门": {
+        "denies": 1,
+        "deniedTurns": 1,
+        "recovered": 1,
+        "resumedWithoutLine": 0,
+        "falseDeny": 0,
+        "denyNames": "bash×1",
+        "deniedUserOpened": 1,
+        "programOthers": 5,
+        "programSiblingsAfter": 5
+      },
+      "观察项": {
+        "整场静默_每轮制": true,
+        "整场静默_userOpened": true,
+        "同消息": 0
+      }
+    },
+    {
+      "id": "session-c413f21c-7f0f-4498-a15d-ccaaa85b5c9c",
+      "createdAt": "2026-09-23T12:31:32.643Z",
+      "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+      "preset": "ptc-gate",
+      "presetSource": "persona",
+      "role": "orchestrator(未识别)",
+      "ptc": true,
+      "gateMode": "enforce",
+      "轮次": {
+        "total": 5,
+        "userOpened": 5,
+        "machineOpened": 0,
+        "unknownOrigin": 0,
+        "machineOpenedActing": 0,
+        "userOpenedEligible": 5,
+        "userOpenedDeclared": 4
+      },
+      "闸门": {
+        "denies": 1,
+        "deniedTurns": 1,
+        "recovered": 1,
+        "resumedWithoutLine": 0,
+        "falseDeny": 0,
+        "denyNames": "bash×1",
+        "deniedUserOpened": 1,
+        "programOthers": 0,
+        "programSiblingsAfter": 0
+      },
+      "观察项": {
+        "整场静默_每轮制": false,
+        "整场静默_userOpened": false,
+        "同消息": 4
+      }
+    },
+    {
+      "id": "session-51c3bce8-3071-40b0-8947-a7ed9cf22139",
+      "createdAt": "2026-09-23T13:49:32.913Z",
+      "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+      "preset": "ptc-gate",
+      "presetSource": "persona",
+      "role": "orchestrator(未识别)",
+      "ptc": true,
+      "gateMode": "enforce",
+      "轮次": {
+        "total": 3,
+        "userOpened": 3,
+        "machineOpened": 0,
+        "unknownOrigin": 0,
+        "machineOpenedActing": 0,
+        "userOpenedEligible": 3,
+        "userOpenedDeclared": 3
+      },
+      "闸门": {
+        "denies": 0,
+        "deniedTurns": 0,
+        "recovered": 0,
+        "resumedWithoutLine": 0,
+        "falseDeny": 0,
+        "denyNames": "—",
+        "deniedUserOpened": 0,
+        "programOthers": 0,
+        "programSiblingsAfter": 0
+      },
+      "观察项": {
+        "整场静默_每轮制": false,
+        "整场静默_userOpened": false,
+        "同消息": 3
+      }
+    }
+  ],
+  "合计": {
+    "人口": "ptc-roles only —— ptc-gate 逐场照打、不并入合计（跨代次不可汇总，pitfalls #19）",
+    "sessions": 0,
+    "turns": 0,
+    "eligible": 0,
+    "userOpenedEligible": 0,
+    "userOpenedDeclared": 0,
+    "denies": 0,
+    "deniedTurns": 0,
+    "deniedRecovered": 0,
+    "deniedResumedWithoutLine": 0,
+    "falseDeny": 0,
+    "denyNames": "—",
+    "deniedUserOpened": 0
+  },
+  "本次运行的判定": {
+    "pass": 50,
+    "fail": 0,
+    "warn": 0,
+    "整场静默_每轮制": 1,
+    "整场静默_userOpened": 1
+  }
+}

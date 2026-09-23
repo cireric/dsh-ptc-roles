@@ -17,7 +17,15 @@ DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里必须是**真目录 + �
   但 bump 会落在拷贝上、仓库源**静默**不更新 ⇒ 本仓库统一用软链，别手工改成副本。
 - **整目录做软链会被静默跳过**：发现逻辑按 Dirent 判 `isDirectory()`、不跟随软链（`discovery.ts:303`）⇒
   部署目录本身是软链时 `make check` 退 2 并点名。
-- 改 `agent.cordis.yml` / `personas/*.md` → **开新会话即生效**（每次新会话重读）。
+- 改 `agent.cordis.yml` / `personas/*.md` → **必须有一次真正的重新挂载**（宿主进程重启，或让 preset 重新装配）才生效；
+  persona 在**挂载时**读取，「同一个宿主进程里新开会话」**不算**（判据 = 下一条的三次实测）。
+  ⚠️ 2026-09-23 更正：本行旧措辞是「**开新会话即生效**（每次新会话重读）」—— 那是**错的**，
+  它只对**新进程**成立；旧措辞与下面的实测段并存过一段时间，而且它才是先被读到的那一条。
+- **判「这一场载入的是哪一代」要看**最后一条** `system/message` 事件**（2026-09-23 实测）：会话库里
+  `system/message` 是**每次挂载写一条** —— 实测 `session-51c3bce8`：创建时一条、重启 resume 后**又一条**
+  （两条文本不同，后一条才是新代；事件带 `time` 字段）。⇒ 老会话被 **resume** 会**换上新一代 persona
+  却保留旧 `createdAt`**：任何拿 `createdAt` 当「这一场是什么时候挂载的」的判据，都会把 resume 这批整批误判
+  （reader 的程序契约段存活断言就踩过这个坑，见 `PROGRAM_CONTRACT_SINCE` 的注释）。
 - 改 `role-presentation.mjs` → 先 `dev_reload_preset preset=ptc-roles`（bump `?v=N` 绕 ESM 缓存），
   **再开新会话**。⚠️ 该工具只认**不带引号**的 `.mjs` 引用：写成 `'./x.mjs'` 时它回「无相对 .mjs 引用」
   然后**什么都不做**，主机的 ESM 缓存继续把**旧代**插件发给每个新会话，而你以为热更新过了（已实测）。
@@ -287,6 +295,18 @@ DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里必须是**真目录 + �
       **本场基线（口径 = 本条，窗口 = 本仓库工作区，2026-09-21 当场实测）**：`session-5d9dcf8f`
       （ptc-gate）3 个 user-opened 轮 ⇒ 拒绝 **1**（T1 开轮那条只读 `ls`）/ 恢复 **1** / 无门行继续 **0** /
       假拒候选 **0**，与「T1[user]✗[动后补]」同源。
+
+    - **2026-09-23 追加（两处新读数，都落进 reader）**：
+      · **拒绝率的分母定死**：分子 = 被拒的 **user-opened 行为轮**，分母 = **user-opened 且会改变行为的轮**
+        （与现役合规分子**同分母**，不新造第二个）。预登记弱线**已从 `HANDOFF.md` 与 0002 的改判段搬进 ADR 0003**
+        （阈值只在那里登记） —— 交接件是可整份重写的，安全阀放在那里等于没有（ADR 0003 的背景段自己就说过这句）。
+        本窗口读数：`session-299709d6` **1/1 (100%) ⇒ 越线**；同场按旧「每轮制行为轮」是 1/3
+        （留档：**证据 ⑱** `docs/evidence/2026-09-23-gate-deny-account.json`，`--snapshot` 原样输出）。
+        越线**不等于门坏了**：那场唯一的拒绝落在**只读侦察**上、且恢复 1/1 —— 它量出来的正是「开轮就动手」。
+      · **闸门账**（reader 逐场打印 `闸门账: 被拒工具 … ｜ 同 program 其余派发 n（其中在被拒之后 m）`）：
+        闸门**每轮至多拒一次**（ADR 0003 §2），所以被拒 program 的其余派发**照跑** —— 本窗口实测那把 program
+        共 6 次派发、其余 5 次全部执行。⇒ **拒绝的代价面 = 1 次派发，不是 1 个程序**；反过来「整个程序连坐被杀」
+        只在模型**没包 try/catch** 时出现（python 以外都算，见 #29）。
 20. **纯文本的 assistant 消息会**结束本轮** —— 所以「先单独发一条声明、再动手」在本框架里做不到。**
     `agent.ts:486-488`：`const toolCalls = message.content.filter(block => block.type === 'tool-call');
     if (toolCalls.length === 0) return { kind: 'completed' }` ⇒ 一条**没有工具调用**的助手消息＝本轮到此
@@ -444,6 +464,54 @@ DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里必须是**真目录 + �
     ② 提到另一个 preset 时必须说明它是**需要安装的**，不是现成的。
     配套判据不必靠人读：`make check` 现在把「未部署」记成 ⓘ（不进漂移），所以「装了没有」不会再假红。
 
+28. **意图门是**路径级卡点**，不是能力边界 —— `tools.*` 之外的动手它看不见，合规率也看不见。**
+    [实测] 2026-09-23（在 ptc-gate 会话里当场跑，dsh 0.1.5-rc.2）：`run_code` 程序里
+    `await import('node:fs' / 'node:child_process')` **可导入且可用**，`fs.writeFileSync()` 真的写出了文件、
+    `execSync()` 真的跑了命令，**全程零 `tools.*` 派发** ⇒ ①`tools/pre-execute` 闸门不拒绝它
+    ②reader 的 `BEHAVIOR_TOOLS` 判据不把该轮算作「动手」（**连合规分母都进不去**）—— 门与度量共享同一个盲区。
+    - **0.1.6 起只收窄、不消除**：`run_code` 内的 direct-fs 转为受 **session 常设文件策略**约束
+      （`docs/dsh-v0.1.6-ptc-impact.md` §1.1/§2.2），而本部署策略是 `workspace-write` ⇒ **工作区内写入仍然成功、
+      仍然不经过门**；读范围与进程/网络在 0.1.6 下也**不**受 gate 约束。
+    - **怎么办**：①prompt 侧写明「行为动作一律走 `tools.*`，Node API 直写是**规避**形态」（persona 已加）；
+      ②**不要**写「正则 linter」去判程序文本里有没有 `fs`（同 #16 的取舍：误伤面更大）；
+      ③这条边界**没有**离线脚本能自动证伪（reader 是离线读者、单测只驱动插件回调）⇒ 只能靠本文 + 一次性探针钉住。
+29. **PTC 程序是「一次性的」：未捕获的工具异常会杀掉**整个** program，且程序之间没有状态。**
+    [读码 + 实测] 2026-09-23：一个未捕获的 `ToolCallError`（`subagent` 路由被拒 / `edit` 撞上
+    「read-before-edit」文件策略 / 程序文本语法错，type-strip 阶段就失败）会把**整个** program 终止。
+    ⚠️ **本条只登记机制、不登记计数** —— 「哪几场各炸了几个程序」是**探针级**读数：程序账**没做进
+    reader**（reader 只从拒绝派生「同 program 其余派发」），按规则 9 这类计数不得进本文件
+    （口径与边界见 #24；探针产物在 `.tmp/ptc-gate-audit/`，探针区、不入库）。要引用计数，先把程序账做进 reader。
+    - **代价**：异常之前**已产生的副作用留在盘上**（`mv` 成功、随后的 `edit` 失败），之后所有动作全丢，
+      重跑要重新生成**整个**程序。2026-09-23 另有一例更极端：门拒绝了一个 `bash` 派发、而程序**没包 try/catch**
+      ⇒ 连同一批只读读数的兄弟调用一起丢（`闸门账` 的 `同 program 其余派发 0` 是**这个症状**，但它
+      **单独不足以证明**：0 也可能是「该程序本来就只有一次派发」⇒ 要证得看程序文本里还有几个 `tools.*`）。
+    - **程序之间没有状态**：用 `globalThis` 兜底也读不到上一个程序的局部变量（实测某模型写下
+      `(globalThis as any).__X ?? {}` 后自己注释「previous program's locals are gone」）⇒ 大常量（评审 brief 之类）
+      会被**重建第二次**（窗口内一次约 5KB）。
+    - **怎么写**：①每个 `tools.*` 都包 try/catch，把错误**带进返回值**而不是让它冒泡；②大常量一次交给
+      `subagent` 的 brief，别在后续程序里重建；③只读侦察用 fs 工具而不是 shell（同 #17 与 persona 的 Phase 0 段）。
+      ⇒ ①②已进**两份 persona**；而「这两句到底有没有**载入**」有常设断言盯着（reader 的
+      `主 agent 载入的 persona 缺程序契约段`，判据与下界见 C 节）——**文本载入 ≠ 行为改变**，别把绿当效用。
+30. **`subagent-model-selection` 的白名单有两条静默路径：删不掉，也会悄悄不生效。**
+    [读源码] 2026-09-23（harness `tool-subagent`）：
+    - `SubagentModelSelectionConfig.validate()` 里 **`enabled && allowedModels.length === 0` 直接抛错**
+      （schema 给 `allowedModels` 的默认值是 `[]`）⇒ **「删掉 allowedModels、保留 enabled: true」是非法配置**。
+    - 非法 section 的失败模式是**静默**：`settings.publish()` 捕获后 `logger.warn('keeping last good …')` +
+      `continue`（原文 "an invalid section keeps that namespace's last good value"），而本部署 `logger.warn`
+      **没有落盘通道**（#9）⇒ 手改 `settings.yaml` 时**你以为删了，白名单仍在跑**；改用设置 UI 写则走
+      `update()` → 直接抛，是响亮路径 —— 两条写入路径的可见性不同。
+    - `enabled: false`（或整段删除）⇒ `selectForSession()` 取 `undefined` ⇒ **policy 不存在**：
+      ①显式命名**不再有任何白名单校验** ②**`list_subagent_models` 工具整个消失**（`install()` 只在 policy
+      存在时注册它）—— 那是「模型查允许集」的唯一入口。
+    - **显式命名 vs 纯继承**：`assertAllowedModelSelection` 在 `provider`/`model`/`reasoning_effort`
+      **任一出现**时校验，解析出的路由必须在允许集内 ⇒ **点名父路由本身同样被拒**（报错原文
+      `child LLM route "…" is not allowed for this Session`）；把 `provider`/`model` 一起省略则通过
+      （纯继承，不校验 —— 计数口径同 #29：委派账**没做进 reader**，任何「N 次」都是探针级读数）。
+      [推断，未实测：`reasoning_effort` **单独**出现时按代码也会进校验（现场也见过 effort-only 通过）
+      —— 机制未查清；**排障按「省略 provider + model」这条操作规则走**。]
+    - **怎么办**：要显式选档就先 `list_subagent_models {provider}` 看允许集；或把**父路由**加进
+      `allowedModels`；不要走「删白名单」那条路（丢掉的是发现工具本身）。
+
 ## C. 排障表（症状 → 原因 → 修法）
 
 | 症状 | 原因 | 修法 |
@@ -451,11 +519,15 @@ DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里必须是**真目录 + �
 | 选择器里没有 `ptc-roles` | 软链没建；或把**目录**做了软链（被静默跳过）；或缺 `agent.cordis.yml` | 跑 `make check`（退 2 会点名是哪一类）→ `make deploy` |
 | `make check` 退 2 | 部署与仓库漂移：缺项 / 断链 / 指错 / 目标目录本身是软链 / 多余项 | `make deploy` 重新部署（目标已存在时它会先列差异再问 y/N） |
 | 合规率（v2）几乎全 ✗，但模型每轮都写了门行 | 门行与动作写在**同一条消息**里（同一次生成）⇒ v2 判为未前置；旧「首行」口径会把它记成合规（所以旧读数看着很好）。⚠️ **PTC 下「只读侦察」若走 bash 也算动手** —— bash/pwsh 无条件计入 BEHAVIOR_TOOLS（#17），所以「门行 + shell 侦察」同处一条消息**必然**未前置 | 门行放**开轮那条消息**里，且开轮消息只跑**不改变世界**的工具（read / grep / glob / lsp）；要 shell 侦察就挪到**下一条**消息：#19 / #20 / #17 |
+| 闸门拒了一次只读 `ls` / `git log`，我以为「侦察不算动手」 | `bash`/`pwsh` **无条件**计入 `BEHAVIOR_TOOLS`（#17），PTC 下 `run_code` 是派发的载体 ⇒ 开轮消息里跑 shell 就是动手 | 门行写进**那条消息的首行**；要侦察不欠行就用 `read`/`grep`/`glob`/`lsp` 而不是 shell（#17 / persona Phase 0） |
+| `run_code` 整段失败，输出只剩一行 `Error: code run failed (exception)` | 程序里某个 `tools.*` 抛了而**没有** try/catch ⇒ 整个 program 被终止，之前已生效的副作用留在盘上（#29） | 每个 `tools.*` 都包 try/catch 并把错误带进返回值；别依赖跨程序状态（#29） |
+| 改了 `settings.yaml` 的 `subagent-model-selection` 却「没有任何变化」 | 非法 section 走 `keep last good` + `logger.warn`（本部署**无落盘通道**，#9）⇒ 静默回退；删 `allowedModels` 保 `enabled: true` 就是非法（#30） | 用设置 UI 改（那条路径响亮报错），或按 #30 的三条操作规则改 |
 | mount 报错指向 `persona` 行 | `!!js` + `baseUrl` 在 preset 组合里未生效 | 把 persona 文本**内联**进 yml 的 `prefix` / `persona`（literal block），删掉 `!!js` |
 | mount 报错指向 `role-*` 行 | `allow` 里有**未知名**：①工具改名 / MCP server 变更 ②**跨平台**（win32 上 `tool-bash` 被禁用，硬编码 `bash` 的角色行会直接派不出去） | 按 live 工具面核对后改白名单；带 shell 的角色行**必须**用平台表达式且**带引号**（#11）。未知名**响亮失败**是有意设计 |
 | 子代理派出去就报错 | ①model 不在 provider 实时目录 ②模型**不支持**所声明的 `reasoningEffort`（explorer 曾栽在②） | **先读报错原文**：`does not support reasoning effort "X"` ⇒ 删掉该 effort 或换该模型支持的档；`route ... is not allowed for this Session` ⇒ 见 #8 |
 | 脚本报 `✗ FAIL 子代理仍是 PTC` | 插件没生效 —— **本 preset 概率最高的失效模式**：插件行没挂上 / `.mjs` 软链失效 / ESM 缓存未 bump | ①核对 5 个软链在真目录里 ②`dev_reload_preset` 后开新会话 ③**别去查日志**（无落盘通道，#9）—— 脚本输出就是那条信号 |
-| 脚本报 `✗ FAIL 主 agent 未载入 round-5 persona` | persona 在**挂载时**读取：软链断 / 改了但没开新会话 / 该会话早于 `PERSONA_V2_SINCE`（脚本扫全部历史，故有时间锚保护） | ①核对 `personas` 软链指向本仓库 ②**开新会话** ③若仍是新会话还报，说明挂的不是这份 —— 比对软链目标里 `orchestrator.md` 是否含 `Delegation contract`。⚠️ 该断言**只证文本被载入**，不证行为改变 |
+| 脚本报 `✗ FAIL 主 agent 未载入 round-5 persona` | persona 在**挂载时**读取：软链断 / 改了但没**重新挂载**（同进程里新开会话不算，见 A 节）/ 该会话早于 `PERSONA_V2_SINCE`（脚本扫全部历史，故有时间锚保护） | ①核对 `personas` 软链指向本仓库 ②逼一次**真正的重新挂载**（宿主进程重启 / preset 重新装配；A 节）③若重挂之后仍报，说明挂的不是这份 —— 比对软链目标里 `orchestrator.md` 是否含 `Delegation contract`。⚠️ 该断言**只证文本被载入**，不证行为改变 |
+| 脚本报 `✗ FAIL 主 agent 载入的 persona 缺程序契约段` | **最新一次挂载**早于 2026-09-23（下界 `PROGRAM_CONTRACT_SINCE` = 段落落盘时刻；锚点是最后一条 `system/message` 的 `time`，不是 `createdAt`，见 A 节）：宿主**没重新挂载**（同进程里新开会话不算），或挂的不是本仓库这一份 | ①阳性判据 = `✓ 主 agent 载入的是**含程序契约段**的那一代 persona`；`⊘ 本场早于程序契约下界` = 历史豁免、**不是**通过 ②逼一次真正的重新挂载 ③仍报 ⇒ `make check` 点名软链。⚠️ 只证文本被载入，不证行为改变（同上一行） |
 | 子代理工具面比白名单**多**（恰是 `subagent` + `list_subagent_models`） | 自身层泄漏（#7） | **掩不掉**：`deny` 与插件式挂载**同样无效**，别花时间。脚本已容忍标注。要彻底消除**只能**置 `modelSelectionSettings: false`（代价＝编排器通用 `subagent` 失去模型侧选择参数） |
 | 只读角色竟然派出了子代理 / 出现「depth-2 + 162 工具 + orchestrator persona」的孙代 | 通用 `subagent` 泄漏到子代理面，且该行**未**显式配 `maxDepth`（默认值是 **3**） | 已修：该行加 `maxDepth: 1`（#7）。若再现，先确认该行没被改回 |
 | oracle 能看到 `implementer` | oracle 的 allow 被改过，或该角色行不在同一 preset | 核对 `role-oracle.config.toolFilter.allow` |
