@@ -346,7 +346,8 @@ async function main() {
     check('injected message matches createUserMessage shape and is frozen',
       m?.role === 'user' && typeof m.id === 'string' && m.id.length > 0
         && Array.isArray(m.content) && m.content[0]?.type === 'text' && typeof m.content[0].text === 'string'
-        && m.source?.kind === 'plugin' && m.source.plugin === 'intent-gate-watchdog'
+        && m.source?.kind === 'intent-gate-watchdog' && m.source.kind !== 'plugin'
+        && typeof m.source.summary === 'string'
         && Object.isFrozen(m) && Object.isFrozen(m.content[0]))
   }
 
@@ -429,7 +430,7 @@ async function main() {
     h.observe('s1', 1, '没有分类行')
     h.act('s1', 1)
     const d = await h.preStep({ agent: h.agent(), turn: 2, step: 1,
-      messages: [{ id: 'n1', role: 'user', content: [{ type: 'text', text: 'notice' }], source: { kind: 'plugin', plugin: 'x' } }] })
+      messages: [{ id: 'n1', role: 'user', content: [{ type: 'text', text: 'notice' }], source: { kind: 'some-other-producer' } }] })
     check('skips steps with no real user message', !injected(d))
   }
 

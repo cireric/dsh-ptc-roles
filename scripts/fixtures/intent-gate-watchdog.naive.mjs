@@ -43,12 +43,13 @@ function deepFreeze(value) {
   return value
 }
 
-function pluginMessage(text, plugin) {
+function pluginMessage(text, kind) {
   return deepFreeze({
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin, form: 'notice', summary: 'intent gate missing' },
+    // v4 形状与真插件同代：kind 是生产者自己的名字（'plugin' 已被 v4 拒绝）
+    source: { kind, form: 'notice', summary: 'intent gate missing' },
   })
 }
 

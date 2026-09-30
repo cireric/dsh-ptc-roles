@@ -93,7 +93,15 @@
 // Zero `@deepseek-ai/*` imports on purpose (a preset directory lives under the
 // user home, where Node cannot resolve the harness packages); Node builtins are
 // allowed. The injected message must match `createUserMessage`'s shape exactly
-// (llm/src/message.ts:186-211), which is why `pluginMessage` re-implements it.
+// (llm/src/message.ts: `createUserMessage` + `MessageSourceMap`), which is why
+// `pluginMessage` re-implements it.
+//
+// WARNING 0.2.0 (session format v4): the source `kind` must be THIS producer's own
+// name. The old `kind: 'plugin'` is the retired v3 wrapper and is refused on
+// admission with "format v4 message requires a producer-owned source kind"
+// (session-format-v3-to-v4/src/message-sources.ts:10). Measured 2026-09-29: this
+// plugin died exactly there, on the first turn of a session, while injecting the
+// per-session mode marker.
 
 import { randomUUID } from 'node:crypto'
 
@@ -194,16 +202,20 @@ function deepFreeze(value) {
 }
 
 /**
- * Re-implementation of `createUserMessage` (llm/src/message.ts:186-211): a fresh
- * randomUUID identity, role `user`, text content, and a plugin notice source.
- * Keep in sync with that file if the message shape ever changes.
+ * Re-implementation of `createUserMessage` (llm/src/message.ts: `createUserMessage`
+ * plus `MessageSourceMap`): a fresh randomUUID identity, role `user`, text content,
+ * and a `notice`-form source owned by THIS producer.
+ *
+ * `kind` is the plugin's own name: v4 has no shared catch-all `plugin` kind
+ * ("each producer declares its own kind in its own module"), and `kind: 'plugin'`
+ * is refused on admission. Keep in sync with that file if the shape ever changes.
  */
-function pluginMessage(text, plugin, summary) {
+function pluginMessage(text, kind, summary) {
   return deepFreeze({
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin, form: 'notice', summary },
+    source: { kind, form: 'notice', summary },
   })
 }
 
