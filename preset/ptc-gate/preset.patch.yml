@@ -368,6 +368,9 @@
             # **注入前缀**（落在 agent/inbox/spliced / user/message），不能用子串扫 —— 引用插件源码 / 正文 /
             # 模型复述都会命中（实测 6/39 假阳性，见 pitfalls #23）。
             # 冻结读数：docs/evidence/2026-09-18-gate-flip-prerequisite.json
+            # **2026-09-30 verbatim-gate（ADR 0003 追加段）**：marker 判据 = 首行 `Intent:` + 六桶之一
+            # （桶词+词边界，大小写不敏感）；拒绝理由三态 MISSING/INVALID/LATE，reader 拒绝账按理由分桶、
+            # 假拒候选改按严格判据 —— 口径登记在 docs/pitfalls.md #19。
             # **回滚条件（2026-09-21 改判，唯一登记处 = docs/decisions/0003）**：开闸后 RACE_REPORT 恒不注入，
             # 竞态的可见形态换成它的镜像 ——「真拒了一次、而该轮最终仍判 ① 合规」= 假拒候选：插件注入
             # FALSE_DENY，reader 独立算出同一个数（`闸门拒绝: … ｜ 假拒候选 n`）。读到 n>0 ⇒ 改回 observe。

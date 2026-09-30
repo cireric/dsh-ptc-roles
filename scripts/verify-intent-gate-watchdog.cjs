@@ -14,6 +14,9 @@
 //     2026-09-21 起另钉三件事：**模式标记**（每会话一行 mode=enforce|observe —— config 写错会静默降级，
 //     而本部署无日志通道）、**拒绝措辞分两子情形**（可达的只有"整轮无门行"那一支，见 ADR 0003）、
 //     以及 enforce 版的竞态取证 `FALSE_DENY`（denied && ① 合规 —— 开闸后的回滚触发条件）。
+//     2026-09-30 起另钉 **verbatim-gate**（ADR 0003 追加段）：门行 = 首行 `Intent:` + 六桶之一（大小写不敏感）、
+//     拒绝理由三态（MISSING/INVALID/LATE，可达的是 MISSING 与 INVALID），以及**三读者正则交叉核对**
+//     （插件 GATE_LINE_RE ↔ reader STRICT_GATE_RE ↔ persona 六桶枚举，逐字对账）。
 //     静态证据只有一条：ctx.on('tools/pre-execute') 这个注册本身 —— 所以 open() 收不到它就**大声抛错**。
 //
 // 用法：
@@ -77,6 +80,11 @@ const REQUIRED_CONTROL_FAILURES = [
   // 2026-09-21 新增的两条：对照版既没有每会话的模式标记，也没有 enforce 版的假拒取证。
   'mode notice: exactly one per session, and it names the mode actually in force',
   'enforce mode reports a false-deny candidate when a denied turn still scores compliant',
+  // 2026-09-30 verbatim-gate（ADR 0003 追加段）四条：对照版无条件拒 + 单一文案 ⇒ 全部必须失败。
+  'gate in enforce mode allows a call whose carrier message carries a valid-bucket gate line',
+  'gate denies an invalid-bucket gate line with the INVALID wording (six buckets named)',
+  'gate is case-insensitive: lowercase token and uppercase bucket still count as declared',
+  'a gate line off the first line denies with the MISSING wording, not INVALID',
 ]
 
 let checks = 0
@@ -188,6 +196,16 @@ const PERSONA_PATHS = [
   path.join(__dirname, '..', 'preset', 'ptc-gate', 'personas', 'orchestrator.md'),
 ]
 
+/**
+ * verbatim-gate 的三读者正则（ADR 0003 追加段 §1，2026-09-30）：插件 GATE_LINE_RE 与 reader
+ * STRICT_GATE_RE 必须含**逐字相同**的正则源文本；桶枚举必须与 persona/提醒的六桶一致。
+ * （旧契约锚在 DEFAULT_MARKERS 子串表上 —— verbatim-gate 之后插件没有那张表了，正则即判据。）
+ */
+const MARKER_TOKEN = 'Intent:'
+const STRICT_RE = '^Intent:\\s*(research|implementation|investigation|evaluation|fix|open-ended)\\b/i'
+const STRICT_BUCKETS = ['research', 'implementation', 'investigation', 'evaluation', 'fix', 'open-ended']
+const READER_PATH = path.join(__dirname, 'verify-ptc-roles.cjs')
+
 // 判据 ①（存在档，2026-09-17 改）的锚点字面量，两处各写一遍、漂移即 FAIL：
 //   persona  → 「the message that carries the first behavior-changing call」（该消息的**首行**）
 //   提醒     → 「承载第一次动手的那条消息」+「必须是那条消息的首行」
@@ -240,24 +258,26 @@ function bucketSeq(text) {
 }
 
 /** 契约漂移清单（空 = 一致）。 */
-function contractFindings(pluginSrc, personaText) {
+function contractFindings(pluginSrc, personaText, readerSrc) {
   const findings = []
-  const markers = arrayStrings(pluginSrc, 'DEFAULT_MARKERS')
   const reminderLines = arrayStrings(pluginSrc, 'REMINDER')
-  if (markers === undefined) findings.push('插件里解析不出 DEFAULT_MARKERS（结构变了吗）')
   // 提醒现在 3 行（判据 ① 把「先声明再动手」那句并进第一行了）。
   if (reminderLines === undefined || reminderLines.length < 3) findings.push('插件里解析不出 REMINDER（结构变了吗）')
+  // verbatim-gate 正则：插件与 reader 必须含逐字相同的源文本（三读者同口径的机械面）。
+  if (!pluginSrc.includes(STRICT_RE)) findings.push('插件里找不到 verbatim-gate 正则 /' + STRICT_RE + '（判据退化了？）')
+  if (typeof readerSrc !== 'string') findings.push('读不到 reader 源码（verify-ptc-roles.cjs）—— 正则交叉核对失效')
+  else if (!readerSrc.includes(STRICT_RE)) findings.push('reader 里找不到同一 verbatim-gate 正则 —— 插件与 reader 判据漂移')
   if (findings.length > 0) return findings
   const reminder = reminderLines.join('\n')
-  for (const mk of markers) {
-    if (!personaText.includes(mk)) findings.push('persona 里找不到插件匹配的字面 token「' + mk + '」')
-    if (!reminder.includes(mk)) findings.push('提醒里找不到自己匹配的 token「' + mk + '」')
-  }
+  if (!personaText.includes(MARKER_TOKEN)) findings.push('persona 里找不到字面 token「' + MARKER_TOKEN + '」')
+  if (!reminder.includes(MARKER_TOKEN)) findings.push('提醒里找不到自己匹配的 token「' + MARKER_TOKEN + '」')
   const pb = bucketSeq(personaText)
   const rb = bucketSeq(reminder)
+  const wantBuckets = STRICT_BUCKETS.join('/')
   if (pb === undefined) findings.push('persona 里解析不出六个桶（枚举被改写了？）')
-  else if (rb === undefined) findings.push('提醒里解析不出六个桶（枚举被改写了？）')
-  else if (pb.join('/') !== rb.join('/')) findings.push('六桶不一致：persona=' + pb.join('/') + ' vs 提醒=' + rb.join('/'))
+  else if (pb.join('/') !== wantBuckets) findings.push('persona 的六个桶与正则不一致：persona=' + pb.join('/') + ' vs 正则=' + wantBuckets)
+  if (rb === undefined) findings.push('提醒里解析不出六个桶（枚举被改写了？）')
+  else if (rb.join('/') !== wantBuckets) findings.push('提醒的六个桶与正则不一致：提醒=' + rb.join('/') + ' vs 正则=' + wantBuckets)
   // 判据 ①（存在档，2026-09-17 三改）：两处都必须要求「门行落在**承载第一次动手的那条消息**里，
   // 且是那条消息的**首行**」。旧的 ② 前置措辞（开轮那条消息 / 同一条消息）已废弃。
   if (!personaText.includes(PERSONA_CARRIER_ANCHOR)) {
@@ -270,17 +290,17 @@ function contractFindings(pluginSrc, personaText) {
     findings.push('提醒不再要求门行是「' + REMINDER_FIRSTLINE_ANCHOR + '」')
   }
   const example = reminderLines.find((l) => l.trim().indexOf('例') === 0)
-  if (example !== undefined && !markers.some((mk) => example.includes(mk))) {
+  if (example !== undefined && !example.includes(MARKER_TOKEN)) {
     findings.push('提醒里的示例行不以任何 marker 开头：' + example.slice(0, 40))
   }
   return findings
 }
 
 /** 契约检查自证：真文件比一次 + 五条内存变异各自必须被抓到。 */
-function contractSelfTest(pluginSrc, personaText) {
+function contractSelfTest(pluginSrc, personaText, readerSrc) {
   const out = []
-  const clean = contractFindings(pluginSrc, personaText)
-  out.push({ name: '契约一致：插件 token / 六桶 / 存在档锚点 ↔ persona 模板', ok: clean.length === 0, detail: clean.join('；') })
+  const clean = contractFindings(pluginSrc, personaText, readerSrc)
+  out.push({ name: '契约一致：verbatim-gate 正则（插件 ↔ reader）/ token / 六桶 / 存在档锚点 ↔ persona 模板', ok: clean.length === 0, detail: clean.join('；') })
   /**
    * 一条对照 = 一次内存变异 + 「报告里必须出现这个 needle」。
    * ⚠ 变异没打中（目标文本已不存在）时，**这条对照自己 FAIL**，绝不带占位对象往下走 —— 旧写法把
@@ -300,22 +320,30 @@ function contractSelfTest(pluginSrc, personaText) {
   const mutate = (text, from, to) => { const next = text.split(from).join(to); return next === text ? undefined : next }
   const personaNoToken = mutate(personaText, 'Intent:', 'IntentX:')
   control('对照⑤：persona 的 token 被改写 ⇒ 报告 token 漂移',
-    personaNoToken === undefined ? undefined : contractFindings(pluginSrc, personaNoToken), 'Intent:')
+    personaNoToken === undefined ? undefined : contractFindings(pluginSrc, personaNoToken, readerSrc), 'Intent:')
   const personaNoBuckets = mutate(personaText, 'research / implementation / investigation / evaluation / fix / open-ended', 'research / implementation / investigation / evaluation / fix')
   control('对照⑥：persona 的桶少一个 ⇒ 报告六桶漂移',
-    personaNoBuckets === undefined ? undefined : contractFindings(pluginSrc, personaNoBuckets), '六个桶')
+    personaNoBuckets === undefined ? undefined : contractFindings(pluginSrc, personaNoBuckets, readerSrc), '六个桶')
   const personaNoCarrier = mutate(personaText, PERSONA_CARRIER_ANCHOR, 'the message that OPENS the turn')
   control('对照⑦：persona 不再要求「承载第一次动手的那条消息」⇒ 报告 persona 锚点漂移',
-    personaNoCarrier === undefined ? undefined : contractFindings(pluginSrc, personaNoCarrier), PERSONA_CARRIER_ANCHOR)
+    personaNoCarrier === undefined ? undefined : contractFindings(pluginSrc, personaNoCarrier, readerSrc), PERSONA_CARRIER_ANCHOR)
   const pluginNoCarrier = mutate(pluginSrc, REMINDER_CARRIER_ANCHOR, '某条消息')
   control('对照⑨：提醒不再点名「承载第一次动手的那条消息」⇒ 报告提醒锚点漂移',
-    pluginNoCarrier === undefined ? undefined : contractFindings(pluginNoCarrier, personaText), REMINDER_CARRIER_ANCHOR)
+    pluginNoCarrier === undefined ? undefined : contractFindings(pluginNoCarrier, personaText, readerSrc), REMINDER_CARRIER_ANCHOR)
   const pluginNoFirstline = mutate(pluginSrc, REMINDER_FIRSTLINE_ANCHOR, '随便哪一行都行')
   control('对照⑩：提醒不再要求「必须是那条消息的首行」⇒ 报告首行要求漂移',
-    pluginNoFirstline === undefined ? undefined : contractFindings(pluginNoFirstline, personaText), REMINDER_FIRSTLINE_ANCHOR)
+    pluginNoFirstline === undefined ? undefined : contractFindings(pluginNoFirstline, personaText, readerSrc), REMINDER_FIRSTLINE_ANCHOR)
   const pluginExample = mutate(pluginSrc, 'Intent: fix — ', 'Fix: — ')
   control('对照⑧：提醒的示例行丢掉 token ⇒ 报告示例漂移',
-    pluginExample === undefined ? undefined : contractFindings(pluginExample, personaText), '示例')
+    pluginExample === undefined ? undefined : contractFindings(pluginExample, personaText, readerSrc), '示例')
+  // verbatim-gate（ADR 0003 追加段 §1）的两条对照：正则判据的漂移必须可见 ——
+  // ⑪ 动插件那一侧、⑬ 动 reader 那一侧（三读者交叉核对各自的牙）。
+  const pluginNoStrictBucket = mutate(pluginSrc, '|open-ended)\\b/i', ')\\b/i')
+  control('对照⑪：插件正则删掉 open-ended 桶 ⇒ 报告判据退化',
+    pluginNoStrictBucket === undefined ? undefined : contractFindings(pluginNoStrictBucket, personaText, readerSrc), 'verbatim-gate 正则')
+  const readerNoStrict = mutate(readerSrc, '|open-ended)\\b/i', ')\\b/i')
+  control('对照⑬：reader 正则漂移 ⇒ 报告三读者漂移',
+    readerNoStrict === undefined ? undefined : contractFindings(pluginSrc, personaText, readerNoStrict), '同一 verbatim-gate 正则')
   return out
 }
 
@@ -733,6 +761,55 @@ async function main() {
       denied?.kind === 'deny' && injected(d) && !lastText(d).includes('enforce 取证'), JSON.stringify(d).slice(0, 200))
   }
 
+  // 30 — verbatim-gate（ADR 0003 追加段 §1）：合法桶词的门行垫底 ⇒ enforce 也不拒（闸门放行）。
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    h.observe('s1', 1, 'Intent: implementation — 动手。')
+    const d = await h.preExec('write')
+    check('gate in enforce mode allows a call whose carrier message carries a valid-bucket gate line',
+      d?.kind === 'allow', JSON.stringify(d))
+  }
+
+  // 31 — 桶无效（写了但写错）：首行以 `Intent:` 开头、桶不在六个之内 ⇒ 拒，且理由是 INVALID 文案
+  //（六个合法桶 + Intent: 模板），不是 MISSING 的「没写」话术（#19：纠正话术要瞄准真实犯的错）。
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    h.observe('s1', 1, 'Intent: 任意词 — 动手。')
+    const d = await h.preExec('write')
+    check('gate denies an invalid-bucket gate line with the INVALID wording (six buckets named)',
+      d?.kind === 'deny' && d.reason.includes('桶不合法') && d.reason.includes('Intent:')
+        && d.reason.includes('research / implementation / investigation / evaluation / fix / open-ended'),
+      JSON.stringify(d))
+  }
+
+  // 32 — 大小写不敏感压误拒（ADR 0003 追加段 §1，对齐 OmO /i 惯例）：小写 token + 大写桶 ⇒ 仍算已声明。
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    h.observe('s1', 1, 'intent: RESEARCH — 动手。')
+    const d = await h.preExec('write')
+    check('gate is case-insensitive: lowercase token and uppercase bucket still count as declared',
+      d?.kind === 'allow', JSON.stringify(d))
+  }
+
+  // 33 — INVALID 与 MISSING 的分界：门行不在首行（位置错，桶本身合法）⇒ MISSING 文案，
+  // 不得误用「桶不合法」（gateish 只认**首行** —— 位置错误属于「没写到点上」，不是「桶写错」）。
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    h.observe('s1', 1, '先说一句。\nIntent: research — 但不在首行。')
+    const d = await h.preExec('write')
+    check('a gate line off the first line denies with the MISSING wording, not INVALID',
+      d?.kind === 'deny' && !d.reason.includes('桶不合法') && d.reason.includes('本轮还没有出现过'),
+      JSON.stringify(d))
+  }
+
   if (!CONTROL_MODE) {
     console.log('\n契约一致性（D —— 插件文案 ↔ persona 模板 **两份**；--control 下跳过）:')
     // 2026-09-23 修：本机实际跑的是 ptc-gate 的 persona，而此前这里只读 ptc-roles 那一份 ——
@@ -745,6 +822,13 @@ async function main() {
     } catch (e) {
       check('preset 插件可读（' + path.basename(path.dirname(PLUGIN)) + '）', false, String((e && e.message) || e))
     }
+    let readerSrcText
+    try {
+      readerSrcText = fs.readFileSync(READER_PATH, 'utf8')
+    } catch (e) {
+      readerSrcText = undefined
+      check('reader 源码可读（' + path.basename(READER_PATH) + '）', false, String((e && e.message) || e))
+    }
     if (pluginSrcText !== undefined) {
       for (const personaPath of PERSONA_PATHS) {
         const label = path.basename(path.dirname(path.dirname(personaPath)))
@@ -755,7 +839,7 @@ async function main() {
           check('persona 可读（' + label + '）', false, String((e && e.message) || e))
           continue
         }
-        for (const t of contractSelfTest(pluginSrcText, personaText)) {
+        for (const t of contractSelfTest(pluginSrcText, personaText, readerSrcText)) {
           check('[' + label + '] ' + t.name, t.ok, t.detail)
         }
       }

@@ -90,6 +90,17 @@
 //      be a compliant call, and 'enforce' is switched on only after that report stays empty.
 //      At most ONE deny per turn, so a model that ignores the reason is never walled in.
 //
+//   9. VERBATIM GATE (2026-09-30, ADR 0003 追加段). "Declared" now means the message's FIRST LINE
+//      matches `^Intent:\\s*(<one of the six buckets>)\\b`, case-insensitive — a substring `Intent:`
+//      anywhere in the first line no longer counts (measured 2026-09-30: `Intent: 随便` passed both
+//      this plugin and the reader as pure substring matches). ONLY the bucket word is validated:
+//      the separator `—`, the because-clause and the commitment tail stay prompt-side (pitfalls #16's
+//      trade-off, not overturned). Deny reasons split three ways — MISSING (no gate-ish line at all) /
+//      INVALID (a first line starting with `Intent:` whose bucket is not one of the six) / LATE
+//      (unreachable today, wording kept). The reader's compliance molecule stays LOOSE on purpose
+//      (historical comparability, #19); its strict reading and this plugin share ONE regex, pinned
+//      byte-for-byte by the unit test's D contract across plugin + reader + persona buckets.
+//
 // Zero `@deepseek-ai/*` imports on purpose (a preset directory lives under the
 // user home, where Node cannot resolve the harness packages); Node builtins are
 // allowed. The injected message must match `createUserMessage`'s shape exactly
@@ -108,13 +119,22 @@ import { randomUUID } from 'node:crypto'
 export const name = 'intent-gate-watchdog'
 
 /**
- * Literal markers that count as "the gate line was emitted". Keep in sync with the
- * persona's template (personas/orchestrator.md) — the token migrated from 意图判定 to
- * `Intent:` on 2026-09-16. The verifier (scripts/verify-ptc-roles.cjs) additionally
- * accepts the legacy token because it scores HISTORICAL sessions; this plugin only ever
- * looks at the previous turn, so it stays strict.
+ * The gate line, verbatim-gate caliber (ADR 0003 追加段 §1, 2026-09-30): the FIRST LINE of a
+ * message must start with the literal token `Intent:` followed by ONE OF THE SIX BUCKETS —
+ * `Intent: 随便` used to pass as a substring match, on both this plugin and the reader.
+ * Deliberately NOT validated: the separator, the because-clause, the commitment tail (content
+ * quality stays prompt-side, pitfalls #16). Case-insensitive to keep false denies down.
+ * Keep in sync with the reader's STRICT_GATE_RE (scripts/verify-ptc-roles.cjs) — the unit
+ * test's D contract pins the two regex literals byte-for-byte.
  */
-const DEFAULT_MARKERS = ['Intent:']
+const GATE_LINE_RE = /^Intent:\s*(research|implementation|investigation|evaluation|fix|open-ended)\b/i
+/**
+ * "The model wrote SOMETHING gate-line-shaped": first line starts with the token but the bucket
+ * is not one of the six. That is the INVALID deny reason — the correction it needs ("pick a
+ * legal bucket") differs from MISSING's ("write the line at all"), per pitfalls #19's lesson
+ * that the wording must aim at the mistake actually made.
+ */
+const GATEISH_RE = /^Intent:/i
 
 /**
  * Tools whose use makes a turn "behavior-changing" — the turns the persona's Phase 0
@@ -136,14 +156,22 @@ const REMINDER = [
 
 /**
  * The gate's deny reason: its single, in-place shot at telling the model what is missing.
- * TWO sub-cases with SEPARATE wordings (2026-09-21) — "no line anywhere in this turn" and "the
- * line came after this action". The second case used to be told 本轮还没有出现过那个六桶行, which
- * contradicts the log (the line exists, just late) and aims the correction at the wrong mistake.
- * Both keep the `Intent:` template; the unit test asserts on that token, not on prose.
+ * THREE states with SEPARATE wordings (2026-09-21 two, 2026-09-30 three — ADR 0003 追加段 §2):
+ * MISSING = "no gate-ish line at all this turn"; INVALID = "a line starting with `Intent:` was
+ * written but the bucket is not one of the six" (the model wrote but wrote wrong — the MISSING
+ * copy would aim the correction at a mistake it did not make, #19's lesson); LATE = "the line
+ * came after this action" (unreachable today, wording kept for when state genuinely changes).
+ * All keep the `Intent:` template; the unit test asserts on that token, not on prose.
  */
 const GATE_REASON_MISSING = [
   '[intent-gate] 这一次调用没有门行垫底 —— 本轮还没有出现过那个六桶行。',
   '先在下一条消息写上它（是该消息的**首行**），再重发刚才的调用：',
+  'Intent: <桶> — <你要的结果>（依据：<你话里让我这么读的那一点>）；我打算 <做法>。',
+].join('\n')
+
+const GATE_REASON_INVALID = [
+  '[intent-gate] 门行写了，但桶不合法 —— 首行的桶词必须是这六个之一：research / implementation / investigation / evaluation / fix / open-ended（大小写不限）。',
+  '在下一条消息把桶改对（仍以 `Intent:` 开头、仍是首行），再重发刚才的调用：',
   'Intent: <桶> — <你要的结果>（依据：<你话里让我这么读的那一点>）；我打算 <做法>。',
 ].join('\n')
 
@@ -249,7 +277,6 @@ function resolveDepth(agent) {
  * @param ctx - plugin context; listeners are scoped to it and disposed with it.
  */
 export function apply(ctx, config) {
-  const markers = DEFAULT_MARKERS
   // Fail-safe, not fail-silent: anything but the literal 'enforce' keeps the gate in observe
   // mode, so a mistyped key can never start denying calls. The switch itself is pinned by the
   // unit test's two gate assertions (observe never denies / enforce denies once).
@@ -286,7 +313,7 @@ export function apply(ctx, config) {
     if (byTurn === undefined) { byTurn = new Map(); turns.set(sessionId, byTurn) }
     let rec = byTurn.get(turn)
     if (rec === undefined) {
-      rec = { declSeq: undefined, firstActCarrier: undefined, acting: false }
+      rec = { declSeq: undefined, gateishSeq: undefined, firstActCarrier: undefined, acting: false }
       byTurn.set(turn, rec)
     }
     return rec
@@ -318,9 +345,14 @@ export function apply(ctx, config) {
         const text = messageText(event.data?.message)
         if (text.trim() !== '') {
           const rec = recFor(sessionId, turn)
-          // 认**第一次**出现的门行（该行必须是某条消息的**首行**），之后的文本不再改判。
-          if (rec.declSeq === undefined && markers.some(marker => text.split('\n')[0].includes(marker))) {
+          const firstLine = text.split('\n')[0]
+          // 认**第一次**出现的门行（verbatim-gate：首行 = `Intent:` + 六桶之一，大小写不敏感），之后不再改判。
+          if (rec.declSeq === undefined && GATE_LINE_RE.test(firstLine)) {
             rec.declSeq = seq
+          }
+          // INVALID 的判别输入：首行以 `Intent:` 开头但桶不合法 ⇒「写了但写错」，拒绝理由走 INVALID 而非 MISSING。
+          if (rec.gateishSeq === undefined && GATEISH_RE.test(firstLine)) {
+            rec.gateishSeq = seq
           }
         }
         const byTurn = turns.get(sessionId)
@@ -389,8 +421,14 @@ export function apply(ctx, config) {
       gate.wouldDeny = true
       if (!gateEnforcing || gate.denied) return decision
       gate.denied = true
-      // Two sub-cases, two wordings — see GATE_REASON_MISSING / GATE_REASON_LATE.
-      return { kind: 'deny', reason: rec.declSeq === undefined ? GATE_REASON_MISSING : GATE_REASON_LATE }
+      // Three states (ADR 0003 追加段 §2) — see GATE_REASON_MISSING / GATE_REASON_INVALID / GATE_REASON_LATE:
+      // MISSING = no gate-ish first line anywhere; INVALID = one was written but the bucket is not
+      // one of the six; LATE = a valid line exists but sits after this carrier (unreachable today,
+      // wording kept for when state genuinely changes).
+      const reason = rec.declSeq !== undefined ? GATE_REASON_LATE
+        : rec.gateishSeq !== undefined ? GATE_REASON_INVALID
+        : GATE_REASON_MISSING
+      return { kind: 'deny', reason }
     } catch (err) {
       warn('could not evaluate the intent gate: ' + String(err))
       return decision

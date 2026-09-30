@@ -70,3 +70,51 @@
 3. **闸门是路径级卡点，不是能力边界**：`tools.*` 之外的 Node API 直写既不过门、也不进合规分母 ⇒ 门与度量
    共享同一个盲区。事实、范围（0.1.5-rc.2 vs ≥0.1.6）与「不写正则 linter」的取舍见 `docs/pitfalls.md` #28；
    persona 已补一条 prompt 侧防线。
+
+## 2026-09-30 追加（第三轮：verbatim-gate —— 六桶的机械校验，来自 OmO 对照分析）
+
+> 决策上下文：`/grill-me` 十题（Q1–Q6 需求轮 + Q7/Q8/10/11 落点轮）全部按推荐锁定；可行性分析确认后采纳。
+> 需求裁决：目标 preset = `ptc-gate`（验证有效后回移植 `ptc-roles`）；误拒容忍 = 低（deny + 恢复路径 +
+> FALSE_DENY tripwire，机制现成）；正则形态 = 桶词 + 词边界（Q7=A）。
+
+1. **判据收紧：marker 检查从「子串」升级为「桶词 + 词边界」。**
+   现状（[源码] 2026-09-30 核实）：插件 `intent-gate-watchdog.mjs`（`text.split('\n')[0].includes(marker)`）
+   与 reader `verify-ptc-roles.cjs:689`（`hasFirstLineMarker`）**两处均为子串匹配**，`Intent: 随便` 双双过闸
+   —— 六桶枚举只是 REMINDER 文案里的 prompt 侧请求。收紧为：
+   `/^Intent:\s*(research|implementation|investigation|evaluation|fix|open-ended)\b/i`。
+   **边界（同 #16 的取舍，不推翻）**：分隔符 `—`、`because:/依据:` 从句、commitment 结构**一律不校验**
+   —— 机械层只管「桶是不是六个之一」，内容质量仍只住 prompt 侧；任何「连分隔符/从句也校验」的提议都是
+   向内容 linter 滑坡，属本文第二轮已否决的同类。case-insensitive 压误拒（对齐 OmO `/i` 惯例）。
+2. **拒绝理由三态化**：桶无效被拒时模型是「写了但写错」，不能沿用 MISSING 文案（那瞄准的是「根本没写」，
+   #19 的教训：纠正话术要瞄准真实犯的错）⇒ 新增 `GATE_REASON_INVALID`：列出六个合法桶 + 补行话术。
+   三态 = MISSING（没写）/ INVALID（写了但桶不合法）/ LATE（按 §2 今天不可达，文案保留不删）。
+   **拒绝账按理由分桶打印**（MISSING/INVALID 计数分开），否则三种错误混在一个数里不可归因。
+   reader 拒绝账的成对判据（`[intent-gate]` 前缀 + 行为工具名）不变，理由分类按结果文本再分。
+3. **reader 分子不动，严格读数并列新增**：合规分子（宽松子串）**保持原样** —— 口径历史可比性是命根子
+   （#19 整节在收拾口径漂移的残局），本轮不再断一次口径链。新增一行「严格合规 n/m」对照读数，且**只对
+   带 mode 标记的会话计算**（旧 token 时代会话严格读数恒 0，混算即复刻 #19 的「跨代次不可汇总」故障）。
+   宽严差是有意的：deny 是行为纠正、分子是机制健康检查（§2 已确立两者可同时为真）；口径差异登记进
+   `pitfalls.md` #19，不在此复制。
+4. **同步面四处**（改一处漏三处 = 本仓 #12 类故障）：插件 marker 正则 / reader 严格读数 / 单测（D 契约 +
+   阴性对照集合相等）/ fixture（新增「桶无效」夹具：`Intent: 任意词` 必须被拒 + INVALID 文案断言）。
+   假拒线**不受污染**：补行重发的轮次按现行读法记 `✗[动后补]`，`denied && ①合规` 不成立 ⇒ FALSE_DENY
+   不触发 —— 已核对插件 latch 与 reader 判据（[源码]）。
+5. **回滚条件沿用 §4 不新增**：假拒候选 n > 0 ⇒ 改回 observe；弱线（单场拒绝率 >0.5 或连续两场 0 恢复）
+   ⇒ 复审。桶校验的误拒（中文桶名、拼写错）落进同一套既有回滚线，**不新设阈值**（#22 的「不新定阈值」纪律）。
+6. **出处**：机制对标 code-yeongyu/oh-my-openagent 的 IntentGate（`z.enum` 封闭桶集合 + 按实质不按措辞的
+   决定表，[源码] dev 分支）；本仓缺口由 2026-09-30 源码核实（插件 `rec.declSeq` 记录条件 + reader
+   `hasFirstLineMarker`）确认。 OmO 机械层的其余部分（注入后撒手、无强制、无 reader）**不做对标**：
+   ptc-gate 的 pre-execute 闸门 + 数据面 reader 在机械层强于 OmO，反向无借鉴项。
+7. **实现裁决回写（同日施工轮，评审发现两点 §2/§4 未定义或前提有误，登记在此）：**
+   · **假拒候选判据改按严格① —— 这是对 §4 回滚线判据的实质改判（本条即登记处）。** §4 原文
+     「已核对插件 latch 与 reader 判据」只覆盖了**补行重发**形状（门行在被拒后出现 ⇒ ① 不合规）；
+     **桶无效**形状下宽松 declSeq 会被 `Intent: 任意词` 的首行**抢先记上** ⇒ `denied && ①宽松合规`
+     在**第一个合法的 INVALID 拒绝**上就成立 ⇒ 误触「假拒候选 n>0 ⇒ 改回 observe」。裁定：reader 的
+     恢复 / 无门行继续 / 假拒候选三项一律换**严格 declSeq**（与插件 compliant() 同源）；口径登记进
+     `pitfalls.md` #19（2026-09-30 追加段），fixture 以桶无效 case 的 `falseDeny: 0` 钉住。插件侧
+     无需改动即自洽（其 compliant() 本就以严格 declSeq 为准）。
+   · **MISSING/INVALID 的分界 = 首行**：gateish 判别只认**首行** `^Intent:` —— 门行不在首行（桶本身
+     合法）归 MISSING（位置错属「没写到点上」），不误用「桶不合法」文案；单测 33 钉住。
+8. **副本同步的登记（回应「目标 preset = ptc-gate」与组成契约的张力）**：组成契约
+   （`deploy-preset.cjs --compose`）强制两份门插件**逐字一致** ⇒ 机制改动必须同时落 ptc-roles 副本；
+   §需求裁决的「目标 preset = ptc-gate」指的是**验证窗口**（启用中的 preset 的会话读数），不是文件落点。

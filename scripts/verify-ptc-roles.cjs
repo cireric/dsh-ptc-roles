@@ -19,8 +19,8 @@
 //     门行所在消息的序号 ≤ 承载**首个**行为动作的那条消息的序号（同一条消息里的门行**算数** ——
 //     文本与工具调用是同一次生成，且没有工具调用的消息会结束本轮，见 pitfalls #19/#20）。
 //     旧的 **② 前置口径**（门行**早于**动作载体）降为**对照读数**（「最好更早」），不再接合规分子。
-//     门行 = 字面量 `Intent:`，与 preset/ptc-roles/intent-gate-watchdog.mjs 的 DEFAULT_MARKERS **同口径**
-//     （两处必须同步改；本脚本另收旧 token `意图判定`，因为扫的是历史会话，见下方 INTENT_MARKERS 注释）。为什么要把它做进脚本：这个门的失败记录**只能当场测**——会话库是滚动窗口，
+//     门行（宽松分子）= 字面量 `Intent:`（另收旧 token `意图判定`，扫历史会话）；2026-09-30（ADR 0003 追加段）
+//     起另有**严格对照**读数（桶词+词边界，STRICT_GATE_RE，与插件 GATE_LINE_RE 同源，见下方注释）。为什么要把它做进脚本：这个门的失败记录**只能当场测**——会话库是滚动窗口，
 //     过一阵就测不回来了（见 docs/evidence/2026-09-15-intent-gate-failure-record.json）。
 //     只统计 isPresetRoot 且创建于 PERSONA_V2_SINCE 之后的主 agent 会话（旧 persona 的输出形式不同，混进来会污染率）。
 //     **合规分子与分母都只算「会改变行为」的轮次**（要委派 / 要拒绝 / 要提问 / 要改文件）—— persona 的
@@ -210,15 +210,21 @@ const PROGRAM_CONTRACT_MARK = 'program is one-shot'
 const PROGRAM_CONTRACT_SINCE = Date.parse('2026-09-23T13:59:47.000Z')
 
 /**
- * 意图门门行（intent gate）的 markers —— 与 preset/ptc-roles/intent-gate-watchdog.mjs 的
- * DEFAULT_MARKERS 同口径（那里是看门狗实际注入提醒的判据）。改一处就要同步另一处：
- * 解析插件配置会引入一个会歪的解析器，而漂移不会静默（合规率立刻变 0）。
- *
- * **这里比插件多一个 token 是有意的**（2026-09-16 门行迁移：意图判定 → `Intent:`）：
- * 本脚本扫的是**历史**会话，迁移前那批只会说旧 token；插件只看**上一轮**，故保持严格。
- * 插件（严）+ 脚本（宽）⇒ 历史读数与 ADR 0002 的回归基线仍然可比。
+ * 意图门门行（intent gate）的**宽松** markers —— 历史合规分子的判据（口径登记在 #19）。
+ * 2026-09-30（ADR 0003 追加段 §3）：宽松分子**原样保留**（口径历史可比性是命根子），另增
+ * STRICT_GATE_RE 作并列的「严格对照」读数。本脚本比插件多一个 legacy token 是有意的
+ * （2026-09-16 门行迁移：意图判定 → `Intent:`：本脚本扫**历史**会话，迁移前那批只会说旧 token）。
+ * 宽严差有意：deny 是行为纠正、分子是机制健康检查（#19）。
  */
 const INTENT_MARKERS = ['Intent:', '意图判定']
+/**
+ * verbatim-gate 的严格判据（ADR 0003 追加段 §1，2026-09-30）：首行 = `Intent:` + 六桶之一
+ * （大小写不敏感；分隔符 `—`、依据从句、commitment 结构**不校验** —— 机械层只管桶，内容质量仍住
+ * prompt 侧，#16）。与插件 intent-gate-watchdog.mjs 的 GATE_LINE_RE **同一份正则**（单测 D 契约
+ * 逐字钉住两处）。两个用途：① 严格对照读数的分子；② 闸门拒绝账的恢复/无门行继续/假拒候选判据
+ * （2026-09-30 起与插件执行判据同源，见 deniedTurns 处的注释）。
+ */
+const STRICT_GATE_RE = /^Intent:\s*(research|implementation|investigation|evaluation|fix|open-ended)\b/i
 
 /**
  * 轮次资格口径的**字面量** —— persona 与 reader 各写一份，两处必须同口径。
@@ -273,6 +279,17 @@ function rate(hit, total) { return total === 0 ? '—' : Math.round((hit / total
  *     `[intent-gate]` 的那次），按子串扫它会被数成一次拒绝。
  */
 const GATE_DENY_MARK = '[intent-gate]'
+
+/**
+ * 闸门拒绝理由三态（ADR 0003 追加段 §2，2026-09-30）：按拒绝的**结果文本**分类 —— 插件三套文案
+ * 各带独有字面（GATE_REASON_INVALID 含「桶不合法」、GATE_REASON_LATE 含「门行晚了」、MISSING 其余）。
+ * 分桶目的：三种错误混在一个数里不可归因。旧会话的拒绝全是 MISSING 文案 ⇒ 落 missing。
+ */
+function denyReasonOf(text) {
+  if (text.includes('桶不合法')) return 'invalid'
+  if (text.includes('门行晚了')) return 'late'
+  return 'missing'
+}
 
 /** 一次工具结果的文本：PTC 派发在 `data.content[]`，native 的 `tool/result` 在 `data.message.content[].content[]`。 */
 function resultTextOf(event) {
@@ -459,7 +476,7 @@ function analyze(raw) {
     let rec = result.intentTurns.get(t)
     if (rec === undefined) {
       rec = { any: false, reply: false, first: false, seenText: false, acting: false,
-        declSeq: undefined, firstActCarrier: undefined, carriers: [],
+        declSeq: undefined, strictDeclSeq: undefined, firstActCarrier: undefined, carriers: [],
         // 轮次资格（user-opened）用：轮起点 seq 与该轮首个 assistant/message 的 seq。
         originSeq: undefined, firstAsstSeq: undefined }
       result.intentTurns.set(t, rec)
@@ -529,6 +546,9 @@ function analyze(raw) {
           }
           // ① / ② 的共用输入：认**第一次**出现的门行（某条消息的首行），之后不再改判。
           if (rec.declSeq === undefined && hasFirstLineMarker(text)) rec.declSeq = msgSeq
+          // verbatim-gate（ADR 0003 追加段）：严格 declSeq —— 首行 = `Intent:` + 六桶之一。
+          // 桶无效的首行只记宽松 declSeq、不记这里（严格对照与拒绝账的判据面）。
+          if (rec.strictDeclSeq === undefined && STRICT_GATE_RE.test(text.split('\n')[0])) rec.strictDeclSeq = msgSeq
         }
         // token 折叠（pitfalls #22②）：同一 (turn, step) 是**替换** ⇒ Map 后写覆盖先写（取最后一条）。
         const u = usageOf(event)
@@ -565,12 +585,13 @@ function analyze(raw) {
         seq: typeof event.seq === 'number' ? event.seq : undefined,
         rootCallId: typeof event.data.rootCallId === 'string' ? event.data.rootCallId : undefined,
         turn: owner === undefined ? undefined : owner.turn,
-        carrier: owner === undefined ? lastMsgSeq : owner.carrier })
+        carrier: owner === undefined ? lastMsgSeq : owner.carrier,
+        reason: denyReasonOf(resultTextOf(event)) })
     } else if (event.type === 'tool/result' && typeof turn === 'number') {
       const source = event.data && event.data.message && event.data.message.source
       const name = source && typeof source.callId === 'string' ? callNames.get(source.callId) : undefined
       if (name !== undefined && BEHAVIOR_TOOLS.has(name) && resultTextOf(event).includes(GATE_DENY_MARK)) {
-        result.denies.push({ stage: 'tool-result', name, turn, carrier: lastMsgSeq })
+        result.denies.push({ stage: 'tool-result', name, turn, carrier: lastMsgSeq, reason: denyReasonOf(resultTextOf(event)) })
       }
     }
     if (event.type === 'user/message' || event.type === 'agent/inbox/spliced') {
@@ -643,12 +664,15 @@ function analyze(raw) {
   result.presetKindMismatch = knownFromEvent
     && (markerKind === 'ptc-roles' || markerKind === 'ptc-gate') && markerKind !== result.presetId
   result.gateMode = result.gateModes.length > 0 ? result.gateModes[0].mode : undefined
-  // ── 闸门拒绝的读法（口径登记在 pitfalls #19）────────────────────────────────
-  //   n          = 拒绝次数（成对判，见 GATE_DENY_MARK —— 用名字 + 结果文本，不看参数）
+  // ── 闸门拒绝的读法（口径登记在 pitfalls #19；2026-09-30 verbatim-gate 改判见下）────────
+  //   n          = 拒绝次数（成对判，见 GATE_DENY_MARK —— 用名字 + 结果文本，不看参数），按理由分桶
   //   恢复        = 被拒的轮里**之后**又出现了门行（模型按补救话术补的）
   //   无门行继续   = 被拒之后仍有行为动作落在门行之前（含整轮没补）—— 「每轮只拒一次」的代价面
   //   假拒候选     = 被拒过的轮**最终仍判 ① 合规** ⇒ enforce 版的竞态签名（与插件 FALSE_DENY 同判据，
   //                 也是 ADR 0003 的回滚触发条件）
+  //   2026-09-30 verbatim-gate 改判：恢复/无门行继续/假拒候选的「门行」一律按**严格** declSeq
+  //   （STRICT_GATE_RE，与插件执行判据同源）—— 宽松 declSeq 会被桶无效的首行抢先记上，让
+  //   INVALID 拒绝后的改桶重发读不出恢复、假拒候选在**合法的 INVALID 拒绝**上误触发回滚线。
   // 闸门账补项（2026-09-23，口径登记在 pitfalls #19）：被拒那次派发**所在 program 的其余派发**。
   // 为什么读它：闸门每轮只拒一次（ADR 0003 的有意设计），所以被拒 program 里的后续派发**照跑** ——
   // 「拒绝的代价面」与「这一发拦住了什么」都在这个数里。全部由既有事件推出（同 ADR 0003 对 Q3② 的
@@ -670,16 +694,19 @@ function analyze(raw) {
   }
   result.deniedTurns = [...deniedByTurn.values()].map((rec) => {
     const turnRec = result.intentTurns.get(rec.turn)
-    const declSeq = turnRec === undefined ? undefined : turnRec.declSeq
+    // verbatim-gate（ADR 0003 追加段）：三项判据全部换**严格** declSeq（与插件同源，理由见上方注释）。
+    const declSeq = turnRec === undefined ? undefined : turnRec.strictDeclSeq
     const lastDenyCarrier = Math.max(...rec.carriers)
     return {
       turn: rec.turn,
       denies: rec.denies,
-      // 「恢复」= 门行在**被拒那次调用之后**才出现（假拒候选那类不算恢复，它们进 falseDeny）。
+      // 「恢复」= **严格合法**的门行在**被拒那次调用之后**才出现（INVALID 后改桶重发也算恢复）。
       recovered: declSeq !== undefined && declSeq > lastDenyCarrier,
       resumedWithoutLine: turnRec !== undefined
         && turnRec.carriers.some((c) => c > lastDenyCarrier && (declSeq === undefined || c < declSeq)),
-      falseDeny: declared(turnRec),
+      // 假拒候选 = 严格①合规（与插件 FALSE_DENY 的 compliant() 同判据）：宽松合规但桶无效的拒绝
+      // 是有意的宽严差（ADR 0003 追加段 §3），不算竞态、不触发回滚线。
+      falseDeny: strictDeclared(turnRec),
     }
   }).sort((a, b) => a.turn - b.turn)
   return result
@@ -701,6 +728,16 @@ function hasFirstLineMarker(text) { return INTENT_MARKERS.some((m) => text.split
 function declared(rec) {
   return rec !== undefined && rec.acting === true && rec.declSeq !== undefined
     && rec.firstActCarrier !== undefined && rec.declSeq <= rec.firstActCarrier
+}
+
+/**
+ * ① 存在口径的**严格**版（verbatim-gate，ADR 0003 追加段）：declSeq 换成严格 declSeq
+ * （首行 = `Intent:` + 六桶之一）。仅用于闸门拒绝账（假拒候选/恢复/无门行继续）与严格对照读数
+ * —— 与插件的 compliant() 同判据；合规分子保持宽松（declared），两套口径的差异登记在 #19。
+ */
+function strictDeclared(rec) {
+  return rec !== undefined && rec.acting === true && rec.strictDeclSeq !== undefined
+    && rec.firstActCarrier !== undefined && rec.strictDeclSeq <= rec.firstActCarrier
 }
 
 /** ② 前置口径 —— **对照读数**（「最好更早」）：门行所在消息严格早于首个动作的载体消息。 */
@@ -844,6 +881,14 @@ function intentGateStats(r) {
     batchUserNotFirst: 0, midTurnUserOnly: 0,
     /** 逐轮资格（t → 'user' | 'machine' | 'unknown'）—— 逐轮打印与它同源，避免第二份判据。 */
     originByTurn: new Map(),
+    // ── verbatim-gate（ADR 0003 追加段 §2/§3，2026-09-30）────────────────────────
+    // 严格对照读数（分母 = user-opened 行为轮，与现役分子同分母；分子 = 严格①）。
+    // 「只对带 mode 标记的会话计算」落在打印与合计并入处（gateLines / main），采集本身无条件。
+    userOpenedEligibleStrict: 0, userOpenedDeclaredStrict: 0,
+    /** 合计专用：带 mode 标记的会话数（>0 时合计行才打印严格对照）。 */
+    strictSessions: 0,
+    // 拒绝理由三态分桶（按拒绝结果文本分类，denyReasonOf）。
+    denyReasonMissing: 0, denyReasonInvalid: 0, denyReasonLate: 0,
   }
   for (const row of qual.rows) {
     const t = row.turn
@@ -860,6 +905,9 @@ function intentGateStats(r) {
         // 新分母：user-opened **且会改变行为**的轮次；新分子：其中 ① 存在口径达标者。
         s.userOpenedEligible += 1
         if (declared(rec)) s.userOpenedDeclared += 1
+        // 严格对照（ADR 0003 追加段 §3）：同一分母，分子 = 严格①（桶词+词边界）。
+        s.userOpenedEligibleStrict += 1
+        if (strictDeclared(rec)) s.userOpenedDeclaredStrict += 1
       }
       if (rec.first) s.eligibleFirst += 1
       if (declared(rec)) s.eligibleDeclared += 1
@@ -907,6 +955,10 @@ function intentGateStats(r) {
   for (const deny of r.denies) {
     const key = String(deny.name)
     s.denyNames.set(key, (s.denyNames.get(key) || 0) + 1)
+    // 拒绝理由三态分桶（ADR 0003 追加段 §2）：MISSING/INVALID 计数分开，三种错误才可归因。
+    if (deny.reason === 'invalid') s.denyReasonInvalid += 1
+    else if (deny.reason === 'late') s.denyReasonLate += 1
+    else s.denyReasonMissing += 1
     if (typeof deny.programDispatches === 'number') s.denyProgramOthers += Math.max(0, deny.programDispatches - 1)
     if (typeof deny.programSiblingsAfter === 'number') s.denyProgramSiblingsAfter += deny.programSiblingsAfter
   }
@@ -927,6 +979,20 @@ function gateLines(s, labelPrefix, indent) {
     + s.userOpenedDeclared + '/' + s.userOpenedEligible + ' (' + rate(s.userOpenedDeclared, s.userOpenedEligible) + ')'
     + ' | 行为动作覆盖（user-opened 轮）: ' + s.actsCoveredUserOpened + '/' + s.actsUserOpened
     + ' (' + rate(s.actsCoveredUserOpened, s.actsUserOpened) + ') ｜ 每轮制对照 ' + s.actsCovered + '/' + s.acts)
+  // 严格对照（verbatim-gate，ADR 0003 追加段 §3）：分子 = 严格①（桶词+词边界），分母与现役同（user-opened 行为轮）。
+  // **只对带 mode 标记的会话计算**（旧 token 时代会话严格读数恒 0，混算 = 复刻 #19 的跨代次汇总故障）；
+  // 合计只并入带 marker 的那几场（strictSessions）。宽严差有意：deny 是行为纠正、分子是机制健康检查。
+  if (s.gateMode !== undefined) {
+    lines.push(indent + '严格对照（桶词+词边界，本场带 mode 标记）: ' + s.userOpenedDeclaredStrict + '/'
+      + s.userOpenedEligibleStrict + ' (' + rate(s.userOpenedDeclaredStrict, s.userOpenedEligibleStrict)
+      + ') —— 宽严差 = 桶词不合法的写法（ADR 0003 追加段）')
+  } else if (s.strictSessions > 0) {
+    lines.push(indent + '严格对照（桶词+词边界，仅计入带 mode 标记的 ' + s.strictSessions + ' 场）: '
+      + s.userOpenedDeclaredStrict + '/' + s.userOpenedEligibleStrict
+      + ' (' + rate(s.userOpenedDeclaredStrict, s.userOpenedEligibleStrict) + ')')
+  } else {
+    lines.push(indent + '严格对照（桶词+词边界）: —（无 mode 标记 ⇒ 不计算，ADR 0003 追加段 §3）')
+  }
   lines.push(indent + '对照口径（每轮制，旧读数）: ① 存在 ' + s.eligibleDeclared + '/' + s.eligible
     + ' (' + rate(s.eligibleDeclared, s.eligible) + ') | ② 前置 ' + s.contrastEligible + '/' + s.eligible
     + ' | 可见回复 ' + s.reply + ' | 任意文本 ' + s.anywhere)
@@ -937,9 +1003,10 @@ function gateLines(s, labelPrefix, indent) {
   lines.push(indent + '其中「同消息」达标 ' + s.sameMsg + ' 轮：首发是 shell 侦察 ' + s.sameMsgShell + ' 轮 / 非 shell '
     + s.sameMsgNonShell + ' 轮（pitfalls #17：门行与侦察同处一条消息，在 ② 下必然不算前置）')
   const denyNames = denyNamesLabel(s)
-  lines.push(indent + '闸门拒绝: ' + s.denies + ' 次 / ' + s.deniedTurns + ' 轮（恢复 ' + s.deniedRecovered
-    + ' / 无门行继续 ' + s.deniedResumedWithoutLine + '）｜ 假拒候选 ' + s.falseDeny
-    + '（denied && ① 合规 ⇒ 回滚触发条件，见 docs/decisions/0003）｜ 模式标记 '
+  lines.push(indent + '闸门拒绝: ' + s.denies + ' 次（理由 missing ' + s.denyReasonMissing
+    + ' / invalid ' + s.denyReasonInvalid + ' / late ' + s.denyReasonLate + '）/ ' + s.deniedTurns + ' 轮（恢复 '
+    + s.deniedRecovered + ' / 无门行继续 ' + s.deniedResumedWithoutLine + '）｜ 假拒候选 ' + s.falseDeny
+    + '（denied && 严格① 合规 ⇒ 回滚触发条件，见 docs/decisions/0003）｜ 模式标记 '
     + (s.gateMode === undefined ? '缺席（本会话挂载早于标记引入，或插件被静默降级 ⇒ 见 pitfalls A 的重挂载判据）' : s.gateMode)
     + (s.deniesUnattributed > 0 ? ' ｜ ⚠ 无法归轮的拒绝 ' + s.deniesUnattributed + ' 次' : ''))
   // 闸门账（2026-09-23）：被拒工具名 + 「同 program 其余派发」——后者是**拒绝的代价面**：
@@ -1520,6 +1587,13 @@ function gateSelfTest() {
           && s.denyProgramSiblingsAfter === want.denyProgramSiblingsAfter
           && denyNamesLabel(s) === want.denyNames
           && s.deniedUserOpened === want.deniedUserOpened))
+      // verbatim-gate（ADR 0003 追加段 §2/§3）：严格对照与拒绝理由分桶，同样只在夹具显式给出时期望。
+      && (want.strictEligible === undefined
+        || (s.userOpenedEligibleStrict === want.strictEligible
+          && s.userOpenedDeclaredStrict === want.strictDeclared))
+      && (want.denyReasonInvalid === undefined || s.denyReasonInvalid === want.denyReasonInvalid)
+      && (want.denyReasonMissing === undefined || s.denyReasonMissing === want.denyReasonMissing)
+      && (want.denyReasonLate === undefined || s.denyReasonLate === want.denyReasonLate)
     return { name: c.name, ok, detail: '期望 ' + JSON.stringify(want) + '，实得 eligible=' + s.eligible
       + ' eligibleDeclared=' + s.eligibleDeclared + ' contrastEligible=' + s.contrastEligible
       + ' acts=' + s.acts + ' actsCovered=' + s.actsCovered + ' actsUserOpened=' + s.actsUserOpened
@@ -1529,7 +1603,10 @@ function gateSelfTest() {
         + ' falseDeny=' + s.falseDeny)
       + (want.denyProgramOthers === undefined ? '' : ' denyNames=' + denyNamesLabel(s)
         + ' denyProgramOthers=' + s.denyProgramOthers + ' denyProgramSiblingsAfter=' + s.denyProgramSiblingsAfter
-        + ' deniedUserOpened=' + s.deniedUserOpened) }
+        + ' deniedUserOpened=' + s.deniedUserOpened)
+      + (want.strictEligible === undefined ? '' : ' strict=' + s.userOpenedDeclaredStrict + '/' + s.userOpenedEligibleStrict)
+      + (want.denyReasonInvalid === undefined ? '' : ' denyReasons=missing ' + s.denyReasonMissing
+        + ' / invalid ' + s.denyReasonInvalid) }
   })
 }
 
@@ -1583,6 +1660,8 @@ function main() {
     // 闸门拒绝与模式标记（2026-09-21）—— 合计与逐场共用同一份渲染（gateLines）。
     denies: 0, deniedTurns: 0, deniedRecovered: 0, deniedResumedWithoutLine: 0, falseDeny: 0, deniesUnattributed: 0,
     denyNames: new Map(), denyProgramOthers: 0, denyProgramSiblingsAfter: 0, deniedUserOpened: 0,
+    denyReasonMissing: 0, denyReasonInvalid: 0, denyReasonLate: 0,
+    userOpenedEligibleStrict: 0, userOpenedDeclaredStrict: 0, strictSessions: 0,
     gateMode: undefined,
     userOpened: 0, machineOpened: 0, unknownOrigin: 0, userOpenedEligible: 0, userOpenedDeclared: 0,
     machineOpenedActing: 0, batchUserNotFirst: 0, midTurnUserOnly: 0 }
@@ -1596,7 +1675,9 @@ function main() {
     口径: {
       userOpenedScope: USER_OPENED_SCOPE,
       合规分子: '① 存在：门行所在消息序号 ≤ 承载首个行为动作的载体消息序号（同一条消息算数）',
-      闸门拒绝: '成对判：name ∈ BEHAVIOR_TOOLS ∧ 结果文本含 [intent-gate]（PTC 落 tool/ptc-dispatch+isError，native 落 tool/result）',
+      闸门拒绝: '成对判：name ∈ BEHAVIOR_TOOLS ∧ 结果文本含 [intent-gate]（PTC 落 tool/ptc-dispatch+isError，native 落 tool/result）；理由按结果文本分桶（missing/invalid/late，ADR 0003 追加段 §2）',
+      严格对照: '桶词+词边界（^Intent:\\s*(六桶)\\b/i，与插件 GATE_LINE_RE 同源）；分子 = 严格①，分母 = user-opened 行为轮；只对带 mode 标记的会话计算/并入合计（ADR 0003 追加段 §3）',
+      假拒候选: 'denied && 严格①合规（与插件 FALSE_DENY 同判据）；宽松合规但桶无效的拒绝是有意宽严差，不触发',
       拒绝率: '分子 = 被拒的 user-opened 行为轮；分母 = user-opened 且会改变行为的轮',
       登记处: 'docs/pitfalls.md #19（口径）· docs/decisions/0003（预登记弱线：**阈值以该文件为准**，此处不复制 —— #12 的病）',
     },
@@ -1819,6 +1900,15 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
             gate.falseDeny += g.falseDeny; gate.deniesUnattributed += g.deniesUnattributed
             gate.denyProgramOthers += g.denyProgramOthers; gate.denyProgramSiblingsAfter += g.denyProgramSiblingsAfter
             gate.deniedUserOpened += g.deniedUserOpened
+            gate.denyReasonMissing += g.denyReasonMissing; gate.denyReasonInvalid += g.denyReasonInvalid
+            gate.denyReasonLate += g.denyReasonLate
+            // 严格对照（ADR 0003 追加段 §3）：合计只并入**带 mode 标记**的会话 —— 旧 token 时代会话
+            // 严格读数恒 0，混算即复刻 #19 的跨代次汇总故障。
+            if (g.gateMode !== undefined) {
+              gate.strictSessions += 1
+              gate.userOpenedEligibleStrict += g.userOpenedEligibleStrict
+              gate.userOpenedDeclaredStrict += g.userOpenedDeclaredStrict
+            }
             for (const [n, c] of g.denyNames) gate.denyNames.set(n, (gate.denyNames.get(n) || 0) + c)
             for (const t of g.turns) {
               const rec = r.intentTurns.get(t)
@@ -1860,8 +1950,10 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
             闸门: {
               denies: g.denies, deniedTurns: g.deniedTurns, recovered: g.deniedRecovered,
               resumedWithoutLine: g.deniedResumedWithoutLine, falseDeny: g.falseDeny,
+              denyReasons: { missing: g.denyReasonMissing, invalid: g.denyReasonInvalid, late: g.denyReasonLate },
               denyNames: denyNamesLabel(g), deniedUserOpened: g.deniedUserOpened,
               programOthers: g.denyProgramOthers, programSiblingsAfter: g.denyProgramSiblingsAfter,
+              strict: { declared: g.userOpenedDeclaredStrict, eligible: g.userOpenedEligibleStrict },
             },
             观察项: { 整场静默_每轮制: gateSilent(g), 整场静默_userOpened: gateSilentUserOpened(g), 同消息: g.sameMsg },
           })
@@ -1944,6 +2036,8 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
       userOpenedEligible: gate.userOpenedEligible, userOpenedDeclared: gate.userOpenedDeclared,
       denies: gate.denies, deniedTurns: gate.deniedTurns, deniedRecovered: gate.deniedRecovered,
       deniedResumedWithoutLine: gate.deniedResumedWithoutLine, falseDeny: gate.falseDeny,
+      denyReasons: { missing: gate.denyReasonMissing, invalid: gate.denyReasonInvalid, late: gate.denyReasonLate },
+      strict: { declared: gate.userOpenedDeclaredStrict, eligible: gate.userOpenedEligibleStrict, strictSessions: gate.strictSessions },
       denyNames: denyNamesLabel(gate), deniedUserOpened: gate.deniedUserOpened,
     }
     snapshot.本次运行的判定 = { pass, fail, warn, 整场静默_每轮制: silentSessions, 整场静默_userOpened: silentUserOpenedSessions }
