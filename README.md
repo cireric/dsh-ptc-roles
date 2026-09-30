@@ -3,7 +3,7 @@
 本仓库提供**两个** DSH **agent preset**：
 
 - **`ptc-gate`（本机选它）** —— PTC 主 agent + 意图门纪律，**不预置**角色子代理，委派按需发生。
-  它是**本机有意只装的那一个**（不是上游默认：宿主 `settings.yaml` 的 `agent-presets.default` 仍是 `standard`），
+  它是**本机有意只装的那一个**（不是上游默认：宿主组合里 `agent-preset-registry` 的 `config.default` 仍是 `standard`），
   且**未达**原毕业判据（成本判据已按 ADR 0002 重锚，见下）。
 - **`ptc-roles`** —— 在 `ptc-gate` 的基础上再加五个有职责边界的角色子代理
   （explorer / librarian / oracle / implementer / designer），白名单即硬能力边界。
@@ -16,8 +16,9 @@
 
 ## 两个 preset 怎么选
 
-**本机默认选 `ptc-gate`**（前提：它已 `make deploy`；本机只装它是有意的）。只有当任务**同时**满足
-下面 ≥3 条时，才改用 `ptc-roles` —— 那是**需要安装的**另一个 preset：`make deploy ptc-roles` + 一次真正的重新挂载。
+**本机默认选 `ptc-gate`**（前提：bundle 已 `make deploy` 且它处于启用态）。只有当任务**同时**满足
+下面 ≥3 条时，才改用 `ptc-roles` —— 它现在是**归档**态：把 `preset/ptc-roles/preset.patch.yml` 里声明行的
+`disabled: true` 改成 `false`，跑 `make deploy`，再做一次真正的重新挂载。
 
 | 条件 | 判据 |
 |---|---|
@@ -44,31 +45,35 @@
 
 ## 安装
 
-preset 源码在本仓库；DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读取，那里必须是**真目录 + 内部软链**
-（把整个目录做软链会被发现逻辑**静默跳过**）：
+**0.2.0 起 preset 是一个 bundle，不再是一个目录**（机制见 `docs/pitfalls.md` A 节 / #31）：
+本仓库自己就是那个 bundle —— `package.json` 的 `dsh.bundle.patch` 列出 `preset/<id>/preset.patch.yml`，
+每个文件是一条 `@deepseek-ai/dsh-agent-preset` 声明行。安装 = 在 profile 里建一条指向本仓库的软链：
 
 ```bash
-make deploy            # 部署全部 preset；建真目录 + 内部软链，目标已存在时会先列出差异并问 y/N
-make deploy ptc-gate   # 只部署指定 preset（ptc-roles / ptc-gate；等价 make deploy PRESET=ptc-gate）
-make check             # 对账：**已部署**的那一份 vs 仓库（缺项 / 断链 / 指错 / 多余），漂移退 2；
-                       # **未部署记 ⓘ、不算漂移**（2026-09-21 起：「该不该装」是人的意图，检查器猜不到）
+make deploy    # 写 profile 的 package.json（dependencies 加 link:<repo>）+ dsh.profile.bundles 追加
+               # + 在 profile 目录 pnpm install ⇒ node_modules/<包名> 变成指向本仓库的软链
+make check     # 对账：**已安装**的那一份 vs 仓库（依赖规格 / bundles 列表 / 软链 / 组成契约），漂移退 2
+               # **未安装记 ⓘ、不算漂移**（「该不该装」是人的意图，检查器猜不到）
 ```
 
-部署清单由 `scripts/deploy-preset.cjs` **自动发现** `preset/<id>/` 的全部顶层条目（跳过点文件）——
-加一个插件文件不需要改任何文档，也不再有三处手抄的 `ln -s` 清单。
+`make deploy` **不再接受 preset id**：一次装整个 bundle。要动个体，改对应声明行本身 ——
+`ptc-gate` 启用、`ptc-roles` 归档（`disabled: true`）；把 `disabled` 改成 `false` 再 `make deploy`
+就是「启用归档 preset」的全部动作。
 
-**形态**：内部条目一律软链。副本**也能跑**（与官方内置 preset 同形：真目录 + 真文件），但它会跟
-`dev_reload_preset` 冲突 —— 那个工具改写的是部署目录里那份 `agent.cordis.yml`，软链会**透过链接写回本仓库**
-（这就是 `git status` 里那份 M 的来源），副本则让 bump 落在没人读的拷贝上、仓库源静默不同步。
-唯一的硬规则：**别把 `ptc-roles` 目录本身做成软链**（会被发现逻辑静默跳过）。
-机制细节见 `docs/pitfalls.md` A 节。
+**资产引用**：声明行里的相对 `name: ./x.mjs` 与 `!!js` 的 `baseUrl` **都解析到 profile 目录**（不是本仓库），
+所以资产一律走包名子路径（`@cireric/dsh-ptc-roles/preset/<id>/x.mjs`）与
+`createRequire(baseUrl).resolve('@cireric/dsh-ptc-roles/package.json')`。这条是迁移里最容易踩的坑，
+`make verify` 的组成契约会拦住写法残留。
+
+**生效**：装完必须有一次**真正的重新挂载**（宿主进程重启 / preset 重新装配）——
+同一进程里新开会话**不算**（判据见 `docs/pitfalls.md` A 节）。
 
 ## 使用
 
 新会话在 preset 选择器里选 **`ptc-gate`**（或按上一节的判据选 `ptc-roles`），然后正常说话即可 ——
 主 agent 会按 orchestrator persona 的意图门判断；需要派活时它会用通用的 `subagent` 工具按需委派。
 
-> 宿主默认 preset（`~/.dsh/settings.yaml` 的 `agent-presets.default`）**不由本仓库改** —— 它现在是 `standard`；换默认值属于宿主的决定。
+> 宿主默认 preset（宿主组合里 `agent-preset-registry` 的 `config.default`，0.2.0 起不再是 `settings.yaml` 的键）**不由本仓库改** —— 它现在是 `standard`；换默认值属于宿主的决定（可在 profile 补丁层覆盖那一行）。
 
 ## 验证
 
@@ -84,7 +89,7 @@ make control   # 两个阴性对照：断言有没有空转
 | `verify-intent-gate-watchdog.cjs` | 看门狗的单元校验 + 契约一致性（插件 token / 六桶 / **存在要求**（门行在承载首个行为动作的那条消息里、且为首行，①）与闸门的四条不变量 ↔ persona 模板） |
 | `verify-harness-contract.cjs` | **框架契约门禁** —— 升级 dsh 本体**前后各跑一次**：变红的那条直接指出 preset 侧要改哪一处（`--harness <checkout>`，默认 `~/.dsh/dsh-harness`） |
 
-| `deploy-preset.cjs --compose` | **组成契约**（只读、只查仓库）：每个 preset 该有哪些 agent 行（`ptc-gate` **不得**有角色行、`ptc-roles` 必须有五个）+ **门插件副本一致性**（preset 目录须自包含 ⇒ 副本漂移必须可见） |
+| `deploy-preset.cjs --compose` | **组成契约**（只读、只查仓库）：manifest 与 `preset/` 一一对应 + 启用/归档态（`ptc-gate` 启用、`ptc-roles` 归档）+ 角色行（`ptc-gate` **不得**有、`ptc-roles` 必须有五个）+ **门插件副本一致性** + **0.2.0 写法残留必须为零**（相对 `.mjs` 名 / `new URL('personas/…', baseUrl)` / 已删除的 `dsh-workflow-worker-thread`） |
 
 **判据是各脚本自己打印的判定行** —— 不是退出码，也不是写进任何文档的断言条数（条数随改动变，抄进文档必漂）。
 四支脚本 + 组成契约统一「0 = 本次运行符合预期」，`--control` 在预期失败数上同样退 0；断言集合由脚本内的
@@ -99,7 +104,8 @@ make control   # 两个阴性对照：断言有没有空转
 （「任意文本」含工具结果，读过插件源码的轮次也会命中，不作合规分子）。口径与历次基线：
 `docs/pitfalls.md` #19（唯一登记处）。
 
-> 改了 `preset/<id>/*.mjs` 之后必须 `dev_reload_preset preset=<id>`（输出要含 `x.mjs -> ?v=N`）**并确保一次真正的重新挂载**（**宿主重启 / preset 重新装配**才算；同一进程里新开会话不算 —— 判据见 `docs/pitfalls.md` A 节）；仍在运行的会话保持旧代。
+> 改了 `preset/<id>/*.mjs` 或 `personas/*.md` 之后**必须做一次真正的重新挂载**（宿主重启 / preset 重新装配；同一进程里新开会话不算 —— 判据见 `docs/pitfalls.md` A 节）。
+> 旧的 `dev_reload_preset`（bump `?v=N`）**已失效**：它硬编码 `.agent-presets`，且裸包名子路径不能带 query（#31）。
 
 ## 文档地图（每份文档只干一件事）
 

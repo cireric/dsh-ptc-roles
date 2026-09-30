@@ -33,7 +33,8 @@ const os = require('node:os')
 const path = require('node:path')
 
 const REPO = path.join(__dirname, '..')
-const PRESET_YML = path.join(REPO, 'preset', 'ptc-roles', 'agent.cordis.yml')
+// 0.2.0 起 preset 是一条声明行：单一源 = preset/<id>/preset.patch.yml（旧 agent.cordis.yml 已废）。
+const PRESET_YML = path.join(REPO, 'preset', 'ptc-roles', 'preset.patch.yml')
 const PLUGIN_FILES = {
   'role-presentation.mjs': path.join(REPO, 'preset', 'ptc-roles', 'role-presentation.mjs'),
   'intent-gate-watchdog.mjs': path.join(REPO, 'preset', 'ptc-roles', 'intent-gate-watchdog.mjs'),
@@ -235,7 +236,9 @@ function contractControls(input) {
   else control('对照③：删掉 presentAs 的冲突判定 ⇒ 报告近层语义漂移',
     { ...input, sources: { ...input.sources, tools: presentMut } }, '冲突判定')
 
-  const createdMut = mut(input.sources.agent, "'agent/created', { agent: entry.agent }", "'agent/created', {}")
+  // 发射点形态随版本变（0.2.0 起 payload 多了 source/signal），变异改锚在 payload 的 agent 字段上，
+  // 否则对照自己失效（实测 2026-09-29：旧锚串 "'agent/created', { agent: entry.agent }" 已不存在）。
+  const createdMut = mut(input.sources.agent, 'agent: entry.agent,', 'worker: entry.agent,')
   if (createdMut === undefined) bad('对照④：改掉 agent/created 载荷 ⇒ 报告载荷漂移')
   else control('对照④：改掉 agent/created 载荷 ⇒ 报告载荷漂移',
     { ...input, sources: { ...input.sources, agent: createdMut } }, '载荷形状')

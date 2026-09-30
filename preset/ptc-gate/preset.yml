@@ -1,4 +1,0 @@
-name: PTC Gate Mode
-description: >-
-  PTC main agent + intent-gate discipline; no predefined role subagents —
-  delegation happens on demand.

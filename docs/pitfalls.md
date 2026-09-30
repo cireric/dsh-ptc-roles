@@ -6,30 +6,30 @@
 
 ## A. 生效路径（改完怎么才算生效）
 
-DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里必须是**真目录 + 内部软链**指向本仓库
-（部署清单 = `preset/ptc-roles/` 的全部顶层条目，当前 5 项：`agent.cordis.yml` / `role-presentation.mjs` /
-`intent-gate-watchdog.mjs` / `preset.yml` / `personas`）。**别手工 `ln -s`，用 `make deploy`** ——
-清单由 `scripts/deploy-preset.cjs` 自动发现，`make check` 负责对账（缺项 / 断链 / 指错 / 多余，漂移退 2）。
+**2026-09-29 起（dsh 0.2.0-rc.2）：preset 是一个 bundle，不再是一个目录。**
 
-- **内部条目用软链（本仓库的既定形态）**：`dev_reload_preset` 改写的是部署目录里那份 `agent.cordis.yml`，
-  软链会**透过链接写回本仓库** —— 所以跑完它，`preset/ptc-roles/agent.cordis.yml` 会多出一份 `?v=N` 的 diff，
-  **那是正常的**，别当误改 revert 掉。副本形态**同样能跑**（与官方内置 preset 同形：真目录 + 真文件），
-  但 bump 会落在拷贝上、仓库源**静默**不更新 ⇒ 本仓库统一用软链，别手工改成副本。
-- **整目录做软链会被静默跳过**：发现逻辑按 Dirent 判 `isDirectory()`、不跟随软链（`discovery.ts:303`）⇒
-  部署目录本身是软链时 `make check` 退 2 并点名。
-- 改 `agent.cordis.yml` / `personas/*.md` → **必须有一次真正的重新挂载**（宿主进程重启，或让 preset 重新装配）才生效；
-  persona 在**挂载时**读取，「同一个宿主进程里新开会话」**不算**（判据 = 下一条的三次实测）。
-  ⚠️ 2026-09-23 更正：本行旧措辞是「**开新会话即生效**（每次新会话重读）」—— 那是**错的**，
-  它只对**新进程**成立；旧措辞与下面的实测段并存过一段时间，而且它才是先被读到的那一条。
+- **交付单位 = 本仓库自己**：`package.json` 的 `dsh.bundle.patch` 列出 `preset/<id>/preset.patch.yml`；
+  每个文件是一条 `@deepseek-ai/dsh-agent-preset` 声明行，`config.plugins` 就是该 preset 的 entry 列表。
+- **安装 = `make deploy`**（= `scripts/deploy-preset.cjs`）：写 profile 的 `package.json`（`dependencies` 加
+  `link:<repo>`）+ `dsh.profile.bundles` 追加 + 在 profile 目录 `pnpm install`。`link:` 会在
+  `~/.dsh/profiles/web/node_modules/@cireric/dsh-ptc-roles` 建**指向本仓库的软链** ⇒ 仓库仍是唯一副本。
+- **`~/.dsh/.agent-presets/` 已彻底废弃**：0.2.0 运行时**零读者**（官方 skill 原文 *Nothing reads that
+  directory any more*）。往那儿放目录或软链**都不生效** —— 本机 09-29 就是踩了这个：升级后 ptc-gate 静默消失，
+  而当时的 `make check` 还在对账那条死路径（假绿）。
+- **资产解析基 = profile 目录**（不是 preset 目录、也不是仓库根）：
+  - 插件模块行必须写**包名子路径** `@cireric/dsh-ptc-roles/preset/<id>/x.mjs`
+    （`name: ./x.mjs` 会解析到 `~/.dsh/profiles/web/` 下 ⇒ 404）；
+  - persona 必须用 `createRequire(baseUrl).resolve('@cireric/dsh-ptc-roles/package.json')` 定位包目录再读；
+  - **裸包名子路径不能带 `?v=`**（会被拼进 subpath 去匹配 exports ⇒ `ERR_PACKAGE_PATH_NOT_EXPORTED`）
+    ⇒ 旧的热更新惯用法失效，见 #25。
+- **生效判据：必须有一次真正的重新挂载**（宿主进程重启，或让 preset 重新装配）。
+  同一个宿主进程里新开会话**不算**（判据 = 下一条的三次实测）。
 - **判「这一场载入的是哪一代」要看**最后一条** `system/message` 事件**（2026-09-23 实测）：会话库里
   `system/message` 是**每次挂载写一条** —— 实测 `session-51c3bce8`：创建时一条、重启 resume 后**又一条**
   （两条文本不同，后一条才是新代；事件带 `time` 字段）。⇒ 老会话被 **resume** 会**换上新一代 persona
   却保留旧 `createdAt`**：任何拿 `createdAt` 当「这一场是什么时候挂载的」的判据，都会把 resume 这批整批误判
   （reader 的程序契约段存活断言就踩过这个坑，见 `PROGRAM_CONTRACT_SINCE` 的注释）。
-- 改 `role-presentation.mjs` → 先 `dev_reload_preset preset=ptc-roles`（bump `?v=N` 绕 ESM 缓存），
-  **再开新会话**。⚠️ 该工具只认**不带引号**的 `.mjs` 引用：写成 `'./x.mjs'` 时它回「无相对 .mjs 引用」
-  然后**什么都不做**，主机的 ESM 缓存继续把**旧代**插件发给每个新会话，而你以为热更新过了（已实测）。
-  改完**确认输出含 `x.mjs -> ?v=N`**。
+- ⚠️ 2026-09-23 的旧更正仍然成立：旧措辞「开新会话即生效」是**错的**，它只对**新进程**成立。
 - **改完不重挂就不生效 —— 而「开一个新会话」不等于「重挂」。** 配置（persona / `AGENTS.md` 段 / 插件行）在
   **挂载时**读取，而**同一个宿主进程里新开的会话加入既有挂载、不重读**。三次实测：
   ① 2026-09-18 19:34 一次 **resume**（新进程）⇒ 新配置（`gate: enforce`）当场生效；
@@ -51,9 +51,11 @@ DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里必须是**真目录 + �
    （`agent-loop/src/agent.ts:245` 早于 `:249`），在 pre-step 里改 mode 要下一轮才生效。
 5. **子代理继承父的 preset 组合**（`composeFrom` → `bindScopeParent`）⇒ preset 声明 PTC 时子代理默认也是
    PTC —— 这正是翻转插件要修的东西。
-6. **`run_code` 是保留传输**：`tools.restrict()` 拒绝命名它，任何白名单都删不掉；它跑在宿主进程的 worker
-   里、有 `fs` / `child_process`，**绕过 DSH 文件沙箱** ⇒ PTC 下「只读角色」根本不成立 —— 这是整个
-   native 翻转的动机。
+6. **`run_code` 是保留传输**：`tools.restrict()` 拒绝命名它，任何白名单都删不掉。**它的安全边界随版本变**：
+   ≤0.1.5-rc.2 它跑在宿主进程的 worker 里、有 `fs` / `child_process`、**绕过 DSH 文件沙箱**；
+   ≥0.1.6 改为**受会话常设文件策略约束的独立沙箱进程**（与 Bash 同一个 `ctx.sandbox`，后端缺失即 fail-closed，
+   程序可见 `process.env` 为空）⇒ `read-only` 策略下「PTC 只读角色」**成立**，但**读范围 / 进程 / 网络仍不受策略约束**。
+   完整对照表见 `docs/dsh-v0.1.6-ptc-impact.md` §2.2；0.2.0 的运行时形态见 #31。
 7. **自身层泄漏：`toolFilter` 掩不掉「本 scope 自己注册的」工具。** `view()` 先对**继承面**套限制，再把该
    scope 自身层的注册**原样插入**（`core/tools/src/index.ts:1166-1172`，注释原文 "own registrations last …
    outside the filter above"）—— 所以 `allow` 只能遮蔽继承来的工具，`deny` 也一样。
@@ -511,6 +513,46 @@ DSH 从 `~/.dsh/.agent-presets/ptc-roles/` 读，那里必须是**真目录 + �
       —— 机制未查清；**排障按「省略 provider + model」这条操作规则走**。]
     - **怎么办**：要显式选档就先 `list_subagent_models {provider}` 看允许集；或把**父路由**加进
       `allowedModels`；不要走「删白名单」那条路（丢掉的是发现工具本身）。
+
+31. **0.2.0 起 preset 是一条声明行，不是目录 —— 迁移的四个硬事实。**
+    [读码 + 本机实测] 2026-09-29（dsh 0.2.0-rc.2）：
+    - **旧路径零读者**：`$DSH_HOME/.agent-presets/` 不再被任何代码读取（官方 skill 原文 *Nothing reads that
+      directory any more*）。本机升级后 ptc-gate 静默消失，而当时的 `make check` 仍在对账那条死路径 ⇒ **假绿**。
+    - **解析基变了**：声明行 `config.plugins` 里的相对 `name: ./x.mjs` 与 `!!js` 的 `baseUrl` **都解析到 profile
+      目录**（`app-boot/src/index.ts:994` → `agent-preset-registry/src/index.ts:108` →
+      `loader/config/tree.ts:124`），不是 patch 文件所在目录。⇒ 资产只能走**包名子路径**与
+      `createRequire(baseUrl).resolve('<pkg>/package.json')`。
+      （`anchorInsertedPluginNames`（`app-boot/src/index.ts:345-356`）**只锚 patch 顶层的 `insert` 条目**，
+      预设声明行的 `config` 不是 group ⇒ 子行不经过它。把两者混为一谈会得出相反结论。）
+    - **裸包名子路径不能带 query**：`pkg/…/x.mjs?v=N` 会被拼进 subpath 去匹配 exports ⇒
+      `ERR_PACKAGE_PATH_NOT_EXPORTED`（实测）⇒ 旧热更新惯用法（`dev_reload_preset` 给 `.mjs` 行 bump `?v=N`）
+      **失效**；该工具还硬编码 `.agent-presets` —— 它是外部插件（dsh-super-injector），不在本仓库修。
+    - **生效判据不变**：仍然必须有一次**真正的重新挂载**（宿主重启 / 让 preset 重新装配），A 节那条照样成立。
+    配套：`make deploy` / `make check` / `make verify`（组成契约）已整体改写为 bundle 模型
+    （`scripts/deploy-preset.cjs`）；组成契约新增两条断言 —— **归档 preset 必须 `disabled: true`**、
+    **不得出现 0.2.0 写法残留**（相对 `.mjs` 名 / `new URL('personas/…', baseUrl)` / 已删除的
+    `dsh-workflow-worker-thread`）。
+
+32. **v4 会话格式拒绝 `source.kind = 'plugin'` —— 插件注入的消息必须声明自己的 kind。**
+    [读码 + 真校验器 A/B] 2026-09-29（dsh 0.2.0-rc.2）：
+    - 0.2.0 起会话是 v4：`source.kind` 必须是**生产者自己的**名字。`'plugin'` 是**已退役的 v3 包装**，
+      持久化准入直接抛 `format v4 message requires a producer-owned source kind`
+      （`packages/session/session-format-v3-to-v4/src/message-sources.ts:10`；`packages/llm/llm/src/message.ts`
+      的 `MessageSourceMap` 注释原文：*each producer declares its own kind in its own module; there is no
+      shared catch-all `plugin` kind*）。
+    - **本仓库踩了这个**：`intent-gate-watchdog.mjs` 的 `pluginMessage()` 手抄 `createUserMessage` 时写死了
+      `kind: 'plugin'`。它恰好在**会话首次开轮**注入模式标记 ⇒ 新会话第一句话必挂
+      「This turn failed: format v4 message requires a producer-owned source kind」。
+      0.1.5 的 v3 会话不受影响，所以这个坑在升级前完全隐形（旧会话迁移也不报 —— v3→v4 的转换器会**改写**
+      已落盘的 plugin 包装，只在「新产一条」时暴露）。
+    - 修法：`source: { kind: name, form: 'notice', summary }`（`name` = 插件自己的常量）。
+      ⚠ 还要把**阴性对照 fixture**（`scripts/fixtures/intent-gate-watchdog.naive.mjs`）的同一形状对齐，
+      否则 `--control` 会因为多出一条失败而判「对照不符预期」（判据是集合相等）。
+    - **判据（可复算，不依赖一次性探针）**：直接 import checkout 的
+      `packages/session/session-format-v3-to-v4/lib/types/message-sources.js`，对同一条 `user/message` 行跑
+      `assertV4MessageSources` / `assertV4SourceRowAdmission`（以及 `lib/index.js` 的 `assertV4RowAdmission`）：
+      `kind: 'plugin'` 三处全抛，`kind: 'intent-gate-watchdog'` 三处全过。
+    - 一般规则：**任何自主产消息的插件都必须声明自己的 kind**；照抄 `createUserMessage` 时最容易漏这一条。
 
 ## C. 排障表（症状 → 原因 → 修法）
 

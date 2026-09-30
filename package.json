@@ -1,0 +1,15 @@
+{
+  "name": "@cireric/dsh-ptc-roles",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH agent presets: ptc-gate (PTC main agent + intent gate) and ptc-roles (archived: five role subagents).",
+  "dsh": {
+    "bundle": {
+      "patch": [
+        "./preset/ptc-gate/preset.patch.yml",
+        "./preset/ptc-roles/preset.patch.yml"
+      ]
+    }
+  }
+}

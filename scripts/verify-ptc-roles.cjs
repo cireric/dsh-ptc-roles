@@ -156,7 +156,7 @@ const RESERVED = 'run_code'
  * 正确遮蔽（实测：子代理面里没有它）。
  *
  * 这里**容忍但显式标注**，而不是把它们并进 EXPECTED：并进去等于把泄漏定义成期望，
- * 将来第三个泄漏也会被当成正常。运行时的真正缓解是 agent.cordis.yml 里
+ * 将来第三个泄漏也会被当成正常。运行时的真正缓解是 preset.patch.yml 里
  * tool-subagent 行的 `maxDepth: 1`（堵死深度 1 角色再派孙代）。
  */
 const KNOWN_SELF_LAYER = ['subagent', 'list_subagent_models']
@@ -302,7 +302,7 @@ const GATE_MODE_PREFIX = '[intent-gate-watchdog] mode='
 /** 仓库里两个 preset 的 yml **声明**的门模式（数据面标记要与它对照 —— 配置写错会静默落到 observe）。 */
 const DECLARED_GATE_MODES = new Map(['ptc-roles', 'ptc-gate'].map((id) => {
   try {
-    const text = fs.readFileSync(path.join(__dirname, '..', 'preset', id, 'agent.cordis.yml'), 'utf8')
+    const text = fs.readFileSync(path.join(__dirname, '..', 'preset', id, 'preset.patch.yml'), 'utf8')
     const m = /^\s*gate:\s*(enforce|observe)\s*$/m.exec(text)
     return [id, m === null ? undefined : m[1]]
   } catch { return [id, undefined] }
@@ -317,7 +317,7 @@ function messageText(event) {
 }
 
 /**
- * `user/message` 的来源 kind —— 只有 `'user'` 是真用户，其余（plugin / subagent-settled /
+ * `user/message` 的来源 kind —— 只有 `'user'` 是真用户，其余（生产者自己的 kind / subagent-settled /
  * agent-instructions / skill-catalog / agent-message / skill-invocation …）都是机器写的。
  *
  * 两条路径都读：判据的字面位置是 `data.message.source.kind`（框架/插件看到的是 `UserMessage`，
@@ -1247,7 +1247,7 @@ function userOpenedScopeSelfTest() {
 // ── 角色事实静态检查（ADR 0002 的 E 项） ─────────────────────────────────────
 //
 // 单一源 = preset 的 yml。这里只做**比对**：不生成 EXPECTED、不动挂载路径、不参与运行时判定。
-const PRESET_YML = path.join(__dirname, '..', 'preset', 'ptc-roles', 'agent.cordis.yml')
+const PRESET_YML = path.join(__dirname, '..', 'preset', 'ptc-roles', 'preset.patch.yml')
 const WATCHDOG_PLUGIN = path.join(__dirname, '..', 'preset', 'ptc-roles', 'intent-gate-watchdog.mjs')
 
 /** 抽 `NAME = new Set([ … ])` 里的字符串字面量（按出现顺序）；解析不出返回 undefined（**响亮**，不当成空集）。 */
@@ -1345,6 +1345,17 @@ function allowEntry(text, role, findings) {
  * （`role-presentation` 那个插件行因此被排除）；解析不出任何角色行时**记一条 finding**，
  * 绝不允许静默返回空集 —— 那正是「解析器一歪、结论跟着歪」的形态。
  */
+/**
+ * 0.2.0 起 preset 是一条声明行：原 entry 列表整体缩进到 config.plugins 之下（固定 +10 空格）。
+ * 解析前先剥掉这一层固定前缀，让下面所有**按列锚定**的正则保持原样 —— 结构变了要让它们照样有牙，
+ * 而不是把每条锚点都各改一遍（漏改一处就会静默失配，正是本脚本存在的理由）。
+ */
+const DECLARATION_INDENT = 10
+function dedentDeclaration(text) {
+  const prefix = ' '.repeat(DECLARATION_INDENT)
+  return text.split('\n').map((line) => (line.indexOf(prefix) === 0 ? line.slice(DECLARATION_INDENT) : line)).join('\n')
+}
+
 function parseRoleFacts(text, findings) {
   const blocks = new Map()
   let block = null
@@ -1397,7 +1408,7 @@ function parseReadmeRoles(text) {
 /** 三处事实（yml / EXPECTED / README 角色表）逐项比对，返回漂移清单（空 = 一致）。 */
 function roleFactFindings(ymlText, readmeText, expected) {
   const findings = []
-  const roles = parseRoleFacts(ymlText, findings)
+  const roles = parseRoleFacts(dedentDeclaration(ymlText), findings)
   for (const [name, b] of roles) {
     const want = expected[name]
     if (want === undefined) { findings.push('yml 有角色 ' + name + '，但 EXPECTED 未登记'); continue }
@@ -1598,7 +1609,7 @@ function main() {
   const gatedRecs = []
 
   // 角色事实静态检查**先跑**，且不因「没有会话」被跳过 —— 它只读仓库文件（ADR 0002 的 E 项）。
-  console.log('角色事实静态检查（E —— 单一源 = preset/ptc-roles/agent.cordis.yml；比对 yml / EXPECTED / README 角色表）:')
+  console.log('角色事实静态检查（E —— 单一源 = preset/ptc-roles/preset.patch.yml 的 config.plugins；比对 yml / EXPECTED / README 角色表）:')
   for (const t of roleFactsSelfTest()) {
     if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
     else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
@@ -1752,7 +1763,7 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
       const declaredMode = DECLARED_GATE_MODES.get(r.presetKind)
       if (r.gateMode !== undefined && declaredMode !== undefined && r.gateMode !== declaredMode) {
         failLine('闸门模式与仓库声明不符', '   ✗ FAIL 闸门模式与仓库声明不符：数据面标记=' + r.gateMode
-          + '，而 preset/' + r.presetKind + '/agent.cordis.yml 声明 ' + declaredMode + ' ⇒ 挂载代次落后或配置写错')
+          + '，而 preset/' + r.presetKind + '/preset.patch.yml 声明 ' + declaredMode + ' ⇒ 挂载代次落后或配置写错')
       }
       if (r.ptc) { console.log('   ✓ 主 agent 保持 PTC（预期）'); pass += 1 }
       else { failLine('主 agent 不是 PTC', '   ✗ FAIL 主 agent 不是 PTC —— 检查底座 tool-presentation 行') }
