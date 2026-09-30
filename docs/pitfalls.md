@@ -309,6 +309,22 @@
         闸门**每轮至多拒一次**（ADR 0003 §2），所以被拒 program 的其余派发**照跑** —— 本窗口实测那把 program
         共 6 次派发、其余 5 次全部执行。⇒ **拒绝的代价面 = 1 次派发，不是 1 个程序**；反过来「整个程序连坐被杀」
         只在模型**没包 try/catch** 时出现（python 以外都算，见 #29）。
+
+    - **2026-09-30 追加（verbatim-gate，ADR 0003 第三轮）：marker 判据分层 —— 宽松分子不动，执行判据收紧。**
+      · **插件（执行判据）**：门行 = 消息首行匹配 `/^Intent:\s*(research|implementation|investigation|evaluation|fix|open-ended)\b/i`
+        （大小写不敏感；分隔符 `—`、依据从句、commitment 结构**不校验** —— 机械层只管「桶是不是六个之一」，
+        内容质量仍住 prompt 侧，#16）。实测动机：`Intent: 随便` 在旧子串判据下插件与 reader 双双过闸。
+      · **reader（合规分子）**：宽松分子（首行含 `Intent:`/`意图判定` 子串）**原样保留** —— 口径历史可比性；
+        另并列新增「严格对照 n/m」读数（分子 = 严格①，分母与现役同 = user-opened 行为轮），**只对带 mode
+        标记的会话计算/打印**（旧 token 时代会话严格读数恒 0，混算 = 跨代次汇总故障）。宽严差是有意的：
+        deny 是行为纠正、分子是机制健康检查（ADR 0003 §2 已确立两者可同时为真）。
+      · **拒绝理由三态**：MISSING（没写）/ INVALID（首行 `Intent:` 开头但桶不合法）/ LATE（今天不可达，文案保留）；
+        reader 按拒绝**结果文本**分类（含「桶不合法」→ invalid /「门行晚了」→ late / 其余 → missing），
+        拒绝账按理由分桶打印 —— 三种错误混在一个数里不可归因。
+      · **假拒候选改按严格判据**：`denied && 严格① 合规`（与插件 FALSE_DENY 的 compliant() 同判据）。
+        理由：宽松 declSeq 会被桶无效的首行抢先记上 —— 不换判据，**第一次合法的 INVALID 拒绝**就会误触
+        「假拒候选 n>0 ⇒ 改回 observe」的回滚线。恢复/无门行继续同步换严格 declSeq（INVALID 后改桶重发记为恢复）。
+        插件侧无需改动即自洽：其 compliant() 本就以严格 declSeq 为准。
 20. **纯文本的 assistant 消息会**结束本轮** —— 所以「先单独发一条声明、再动手」在本框架里做不到。**
     `agent.ts:486-488`：`const toolCalls = message.content.filter(block => block.type === 'tool-call');
     if (toolCalls.length === 0) return { kind: 'completed' }` ⇒ 一条**没有工具调用**的助手消息＝本轮到此
@@ -554,6 +570,27 @@
       `kind: 'plugin'` 三处全抛，`kind: 'intent-gate-watchdog'` 三处全过。
     - 一般规则：**任何自主产消息的插件都必须声明自己的 kind**；照抄 `createUserMessage` 时最容易漏这一条。
 
+33. **persona 里写 `$DSH_*` 是**不可执行的模板** —— 那行是**散文**，没有任何东西会去展开它。**
+    [实测 + 读码] 2026-09-30：交接行契约原文是 `session: $DSH_SESSION_ID · …`，从 2026-09-13 起一直如此，
+    而模型**每次**都把这串原样打进回复（本会话日志里 27 处字面命中）。根因不在"模型忘了"：
+
+    - **变量只活在 shell 子进程里。** `DSH_SESSION_ID` 由 `shell-env` 的 `collect()` 逐次执行注入
+      （`packages/shell/shell-env/src/index.ts:156-163`，值 = `execution.agent.session.header.id`），
+      活的是 **bash/pwsh 工具**；**`run_code` 程序里 `process.env` 为空**（PTC 沙箱，实测 `undefined`、
+      `DSH_*` 计数 0）⇒「在程序里读它」这条路封死。
+    - **prompt 插值也拿不到它。** 注册的变量只有 `provider` / `model` / `cwd` 三个
+      （`packages/core/agent-loop/src/index.ts:370-372`）⇒ `{{…}}` 里没有 session id，`{{cwd}}` 只是**前缀像**、不是 id。
+    - **纯文本回复不经 shell。** 唯一能拿到 id 的动作 = 跑一次 shell 的 `echo "$DSH_SESSION_ID"`。
+      ⇒ 契约把「读一次环境变量」写成了「抄一行 shell 文本」，模型只能照抄。
+
+    - **判据（决定性对照，一行就能复算）**：同一条字符串，`bash` 里 `echo "session: $DSH_SESSION_ID"`
+      印出真 id；把它作为**回复文本**写出来，就是字面 `$DSH_SESSION_ID`。⇒ 交付物里的 `$VAR` 一律是**没展开**。
+    - **修法**（已落两份 persona）：模板改成 `session: session-<id> · …`，并**显式说明**三条 —— 不得写字面
+      `$DSH_SESSION_ID`、id 只能靠 shell 读、读不到就写 `(id not read this turn)` 而不是编一个。
+      **不发明新的门禁**：判它没有可靠正则（同 #16 的取舍），且这是契约文本问题，不是可机械核查的行为问题。
+    - 一般规则：**persona 是散文，不是脚本。** 任何要模型产出的"变量"都必须给**可达的取值动作**
+      （跑哪个工具、读哪个字段），不能给 `$VAR`；反过来，persona 里出现 ```` 之外的 shell 语法都要怀疑一次。
+
 ## C. 排障表（症状 → 原因 → 修法）
 
 | 症状 | 原因 | 修法 |
@@ -581,6 +618,7 @@
 | 角色子代理说「目录是空的 / 文件不存在」，但编排器 `ls` 看得见 | 探索类角色对目录条目与 symlink **结构性不可见**（#13③ / #14） | 这类核查派 `implementer` 或编排器自己做；**不要**为它扩 `explorer` 白名单（#14） |
 | 想让 `explorer` 能列目录 / 查 hash | 只读叶子 = 无 shell，这是**刻意取舍**（#14） | 先确认是否真有重复受阻（≥3 次）；升级路径与代价见 #14 |
 | 想问「上个月漏了多少轮门行」 | 会话库是**滚动窗口**，早期会话已被清掉（#15） | 不可考 —— 只能当场测；历史性指标一律做进脚本 |
+| reader 打了「汇总」却**没有** `会话 N 个（工作区 …）` 那一行 | `--cwd` 指向**写错 / 不存在的路径**：扫描按工作区过滤，路径不存在 ⇒ 命中 0 个会话文件。[实测] 2026-09-30：`--cwd /…/__nope__` **退 0**、无会话行、判定行照打 ⇒ 「测试没读到」长得和「测试通过」一模一样 | 传路径前先确认它存在；读输出时把 `会话 N 个` 当**前置断言**（0 个 ⇒ 路径错了，不是"没有会话"）。reader 尚未在 cwd 不存在时响亮失败 —— 属未修缺口 |
 | 合规率 0%、但模型明明很听话 | ①测试/剧本明令禁止输出门行 ②门行被写成了内部记账（插件看不出来）③门行只是被**谈论**过 | 先按证据 ⑪/⑫ 的口径读；**内容质量要人读那一行**（#16），别改判据去凑数 |
 | 只读的 bash 轮次也被要求门行 / 进的合规率分母 | 这是**保守判据**（#17）：`bash` 一律算「会改变行为」，因为只读与否在数据面**不可判**（`tool/result` 只有 stdout） | **不改**。实测至今零误算（30 个 eligible 轮次里 read-only-bash-only = 0）；措辞用「保守判据」，别叫「偏差」 |
 | 想把两个插件里重复的 `resolveDepth()` 合并成一个共享模块 | **不能**：`dev_reload_preset` 只 bump `agent.cordis.yml` 里引用的 `.mjs`，共享兄弟模块的 specifier 恒定 ⇒ 改了**静默不生效**（#18） | 保持两份副本；改一份必改另一份（漂移会让**其中一个**校验脚本的深度断言失败） |
@@ -588,3 +626,5 @@
 | 两个文档里的「合规率」差一个数量级（8% vs 85%） | **口径与窗口都不同**，不是门在崩也不是门很好（#19） | 引用时必须带「口径 + 窗口 + 日期」；唯一登记处是 #19，别在别处复制第二份 |
 | 升级 dsh 本体后 preset 行为变了 / 挂载失败 | 框架契约漂移（深度公式、`presentAs` 语义、`agent/created` / `agent/pre-step` 载荷、包改名）—— 上游 issues 已关闭，只能自兜 | 升级**前后各**跑 `node scripts/verify-harness-contract.cjs --harness <checkout>`：变红的那条直接指出 preset 侧要改哪一处；包改名会给出疑似新名 |
 | `verify-ptc-roles.cjs` 报 `✗ FAIL 不可归属的 tool/ptc-dispatch` | 归因失明 = 行为判据看不见东西（`tool/ptc-dispatch` 回指不到任何 `tool/call`）⇒ 是**未知异常**，不是可容忍的已知现象（#7 那种才是） | 先查 `tool/call` 的 `callId` 与派发的 `rootCallId` 是否还同名同源；**别**把这个数字降回提示。阳性路径的断言在 `scripts/fixtures/attribution-cases.json` |
+| 回复里的交接行印出**字面** `$DSH_SESSION_ID`（没被替换成真 id） | persona 模板写的是 **shell 语法**，而回复是**散文**、不经任何 shell ⇒ 永不展开；id 也不在 prompt 插值变量里（只有 `provider`/`model`/`cwd`）。见 #33 | 契约已改成 `session: session-<id> · …` 并写明"id 只能靠 shell 的 `echo "$DSH_SESSION_ID"` 读、读不到就写 `(id not read this turn)`"。若**重挂后**仍印字面量 ⇒ 挂的是旧代，按 A 节逼一次真正的重新挂载 |
+| persona / 插件契约里出现 `$VAR` 或其它 shell 语法 | 同上一行：#33 的一般规则 —— persona 是散文，不是脚本 | 改成"给取值动作"（跑哪个工具、读哪个字段），别给变量名 |

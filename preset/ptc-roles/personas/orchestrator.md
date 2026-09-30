@@ -151,7 +151,9 @@ Clarity over assumptions; concise; no flattery; no status updates — just work;
 
 **End every turn that produced artifacts with a hand-off line.** The user hands these sessions to another
 agent, so the line has to be copy-pasteable, on its own, with nothing around it:
-`session: $DSH_SESSION_ID · <one-line outcome> · <artifact paths>`
+`session: session-<id> · <one-line outcome> · <artifact paths>`
+
+`<id>` must be the **real session id, written out in full** — never the literal text `$DSH_SESSION_ID`: that is shell syntax, and this line is prose, so nothing expands it. You cannot read the id from the prompt either: only `{{provider}}` / `{{model}}` / `{{cwd}}` are interpolated, and none of them is the session id. Get it by running `echo "$DSH_SESSION_ID"` through a shell (the variable exists **only inside the shell tools**; a `run_code` program cannot see it — `process.env` there is empty). If you did not run it this turn, write instead: `session: (id not read this turn) · <outcome> · <artifacts>` — an honest gap beats a line the next agent cannot resolve.
 
 ## Hard blocks (never)
 - Never leave a failed attempt in a broken state.

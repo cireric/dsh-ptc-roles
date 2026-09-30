@@ -86,7 +86,7 @@ make control   # 两个阴性对照：断言有没有空转
 |---|---|
 | `verify-ptc-roles.cjs` | **行为**（零模型成本，只读 `~/.dsh/sessions`）：用 `request/header.header.tools`（**真正发给模型的**工具面）判定每个会话的角色 / 模型 / 工具面 / 是否仍是 PTC；内含四个自测（角色事实静态 / 行为工具名单一致性 / 归因计数 / 意图门统计）。工作区默认 = 本仓库根（`--cwd <path>` 覆盖）；**没有会话时判定行明说「行为判据本次未验证」**，zstd 缺失退 `2`。preset 身份读 `agent-preset/selected` **事件**（persona 正文只作 legacy 回退）；逐场打印**闸门拒绝**（成对判：行为工具 + `[intent-gate]` 理由）与**假拒候选**；`--arms` 给按 preset 分组的对照读数 |
 | `verify-role-presentation.cjs` | 翻转插件的单元校验（深度判据四层，`docs/pitfalls.md` #10） |
-| `verify-intent-gate-watchdog.cjs` | 看门狗的单元校验 + 契约一致性（插件 token / 六桶 / **存在要求**（门行在承载首个行为动作的那条消息里、且为首行，①）与闸门的四条不变量 ↔ persona 模板） |
+| `verify-intent-gate-watchdog.cjs` | 看门狗的单元校验 + 契约一致性（**verbatim-gate 正则**（插件 ↔ reader 逐字同源）/ 六桶 / **存在要求**（门行在承载首个行为动作的那条消息里、且为首行，①）与闸门的不变量 ↔ persona 模板） |
 | `verify-harness-contract.cjs` | **框架契约门禁** —— 升级 dsh 本体**前后各跑一次**：变红的那条直接指出 preset 侧要改哪一处（`--harness <checkout>`，默认 `~/.dsh/dsh-harness`） |
 
 | `deploy-preset.cjs --compose` | **组成契约**（只读、只查仓库）：manifest 与 `preset/` 一一对应 + 启用/归档态（`ptc-gate` 启用、`ptc-roles` 归档）+ 角色行（`ptc-gate` **不得**有、`ptc-roles` 必须有五个）+ **门插件副本一致性** + **0.2.0 写法残留必须为零**（相对 `.mjs` 名 / `new URL('personas/…', baseUrl)` / 已删除的 `dsh-workflow-worker-thread`） |
@@ -101,7 +101,9 @@ make control   # 两个阴性对照：断言有没有空转
 **意图门合规率（① 存在口径）**与**行为动作覆盖率**：分子分母都只算**会改变行为**的轮次
 （要委派 / 要拒绝 / 要提问 / 要改文件），判据与看门狗插件共享同一份工具名单。① 只要求门行落在
 **承载首个行为动作的那条消息**里、且为该消息首行；②「门行更早」与「可见回复 / 任意文本」只作对照
-（「任意文本」含工具结果，读过插件源码的轮次也会命中，不作合规分子）。口径与历次基线：
+（「任意文本」含工具结果，读过插件源码的轮次也会命中，不作合规分子）。2026-09-30（verbatim-gate）起
+另有**严格对照**读数（首行 = `Intent:` + 六桶之一，桶词+词边界；只对带 mode 标记的会话计算）与拒绝
+理由三态分桶（MISSING/INVALID/LATE）；合规分子保持宽松。口径与历次基线：
 `docs/pitfalls.md` #19（唯一登记处）。
 
 > 改了 `preset/<id>/*.mjs` 或 `personas/*.md` 之后**必须做一次真正的重新挂载**（宿主重启 / preset 重新装配；同一进程里新开会话不算 —— 判据见 `docs/pitfalls.md` A 节）。
@@ -118,3 +120,4 @@ make control   # 两个阴性对照：断言有没有空转
 | `docs/ptc-roles-value-vs-upstream.md` | 官方既能委派，这个 preset 还剩什么价值（上游参数面 / 官方 preset / 本仓角色行的逐行对照） |
 | `docs/decisions/` | 当初为什么这样设计、否决过什么 |
 | `docs/evidence/` | 某个结论的原始输出、复现方法、逐轮验证记录 |
+| `docs/2026-09-30-ptc-gate-real-task-test-plan.md` | 本次优化（verbatim-gate + 语义层 ②③④）**怎么用真实任务测**、测例与执行步骤 |
