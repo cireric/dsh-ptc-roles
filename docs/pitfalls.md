@@ -89,8 +89,11 @@
 11. **yml 里的表达式与白名单有三个坑。**
     - **`!!js` 表达式必须带引号。** 不带引号的 `- !!js a ? 'pwsh' : 'bash'` 是**合法 YAML**，但会解析成
       **复合 mapping key**（实测得到 `{"[object Object]":"bash"}`）—— **不报错**，静默产出一个**非字符串**的
-      allow 项，排障极难。必须写成 `- !!js "…"`，照 `packages/preset/agent-presets/presets/cordis/agent.cordis.yml:260`
-      的引号风格。机制：loader 的 `interpolate()` 对**数组元素**递归求值（`cordis-plugin-loader/lib/index.js`）。
+      allow 项，排障极难。必须写成 `- !!js "…"`，照官方 shipped preset 的引号风格
+      （2026-09-30 更正：旧引用 `packages/preset/agent-presets/presets/cordis/agent.cordis.yml:260` 那条路径
+      **已不存在** —— 0.2.0 起官方 preset 迁到 `packages/bundle/web-app/presets/*.patch.yml`；
+      今天带引号的先例见 `cordis.patch.yml:154` 的 `disabled: !!js "!ctx.get('profileContext')"`）。
+      机制：loader 的 `interpolate()` 对**数组元素**递归求值（`cordis-plugin-loader/lib/index.js`）。
     - **角色 allow-list 不能硬编码 `bash`。** `tool-bash` 在 win32 被禁用（那台机器只有 `pwsh`），而 allow 里的
       **未知名会让角色派发直接失败**（响亮失败是有意设计）⇒ 带 shell 的角色行必须写平台表达式
       `!!js "process.platform === 'win32' ? 'pwsh' : 'bash'"`。JS 侧同口径是验证脚本的 `SHELL` 常量 ——
@@ -98,8 +101,8 @@
     - **加角色只动两处：yml + `EXPECTED`。** 验证脚本原先还把角色名**硬枚举**在角色识别正则里（`EXPECTED`
       之外的**第三处**登记点，且无注释）：加 designer 时实测踩中 —— 漏改会走「认不出角色」WARN，而
       `EXPECTED.designer` **永远查不到**，报错还指向错误方向。现已改成**通用捕获**。再出现第三处枚举就并掉它。
-12. **同一批角色事实有 3 份手工副本，改一处就会漂移。** `agent.cordis.yml` 的 `allow`、验证脚本的
-    `EXPECTED`、README 的角色表是同一批事实的三个副本 —— 本项目已被漂移咬过两次（README 模型档写反、
+12. **同一批角色事实有 3 份手工副本，改一处就会漂移。** `preset/ptc-roles/preset.patch.yml` 的 `allow`、
+    验证脚本的 `EXPECTED`、README 的角色表是同一批事实的三个副本（0.2.0 前该文件叫 `preset/<id>/agent.cordis.yml`） —— 本项目已被漂移咬过两次（README 模型档写反、
     脚本里还藏着**第三处**角色名枚举）。所以两条纪律：①**改白名单必须同步改 `EXPECTED`**
     （漏了会立刻 FAIL，不会静默 —— 这是它可以接受手工同步的原因）；②**persona 的 Specialists 表只写
     路由事实（领域 / 何时委派 / 拓扑 / 只读或可写），绝不写工具名** —— 别再添第 4 份。
@@ -183,9 +186,10 @@
       **2026-09-17 已解**：v3 把合规分子换成「存在」（#19），这条载体耦合从「扣分子」降为「只影响
       ② 对照读数」—— 载体耦合本身仍然存在，只是不再把照章办事判成失败。
 
-18. **`?v=` 只能 bump `agent.cordis.yml` 里引用的 `.mjs` ⇒ 插件**不能**共享兄弟模块。**
+18. **`?v=` 只能 bump preset 组合文件里引用的 `.mjs` ⇒ 插件**不能**共享兄弟模块。**
     `dev_reload_preset` 的匹配式是 `/(name: \.\/[A-Za-z0-9._-]+\.mjs)(\?v=\d+)?/g`，它只改写
-    **yml 里被引用**的那些文件。推论：若两个插件把公共代码放进 `preset/ptc-roles/depth.mjs`
+    **组合文件里被引用**的那些文件（0.2.0 起该惯用法整体失效，见 #31 —— 本条登记的是「为何两份
+    `resolveDepth()` 不能合并」这个**仍然成立**的结论）。推论：若两个插件把公共代码放进 `preset/ptc-roles/depth.mjs`
     并互相 `import`，那个 specifier **永远不会带 `?v`**，宿主 ESM 缓存会一直发旧字节 ——
     修了**等于没修**，而且**静默**（同 #9 的家族：没有回读通道）。
     ⇒ 这就是 `resolveDepth()` 在 `role-presentation.mjs` 与 `intent-gate-watchdog.mjs` 里
@@ -595,7 +599,7 @@
 
 | 症状 | 原因 | 修法 |
 |---|---|---|
-| 选择器里没有 `ptc-roles` | 软链没建；或把**目录**做了软链（被静默跳过）；或缺 `agent.cordis.yml` | 跑 `make check`（退 2 会点名是哪一类）→ `make deploy` |
+| 选择器里没有 `ptc-roles`（或 `ptc-gate`） | 0.2.0 起形态是 bundle：声明的 `disabled: true` 没翻、profile 的 `dependencies`/`bundles` 没写、或包软链断了。（旧目录形态的「软链指到目录 / 缺 `agent.cordis.yml`」**已不适用** —— 那是 `preset/<id>/agent.cordis.yml` 时代的原因） | 跑 `make check`（退 2 会点名是哪一类）→ `make deploy`；确认声明行 `disabled` 与 `~/.dsh/profiles/web/node_modules/@cireric/dsh-ptc-roles` 软链（#31 / A 节） |
 | `make check` 退 2 | 部署与仓库漂移：缺项 / 断链 / 指错 / 目标目录本身是软链 / 多余项 | `make deploy` 重新部署（目标已存在时它会先列差异再问 y/N） |
 | 合规率（v2）几乎全 ✗，但模型每轮都写了门行 | 门行与动作写在**同一条消息**里（同一次生成）⇒ v2 判为未前置；旧「首行」口径会把它记成合规（所以旧读数看着很好）。⚠️ **PTC 下「只读侦察」若走 bash 也算动手** —— bash/pwsh 无条件计入 BEHAVIOR_TOOLS（#17），所以「门行 + shell 侦察」同处一条消息**必然**未前置 | 门行放**开轮那条消息**里，且开轮消息只跑**不改变世界**的工具（read / grep / glob / lsp）；要 shell 侦察就挪到**下一条**消息：#19 / #20 / #17 |
 | 闸门拒了一次只读 `ls` / `git log`，我以为「侦察不算动手」 | `bash`/`pwsh` **无条件**计入 `BEHAVIOR_TOOLS`（#17），PTC 下 `run_code` 是派发的载体 ⇒ 开轮消息里跑 shell 就是动手 | 门行写进**那条消息的首行**；要侦察不欠行就用 `read`/`grep`/`glob`/`lsp` 而不是 shell（#17 / persona Phase 0） |
@@ -604,15 +608,14 @@
 | mount 报错指向 `persona` 行 | `!!js` + `baseUrl` 在 preset 组合里未生效 | 把 persona 文本**内联**进 yml 的 `prefix` / `persona`（literal block），删掉 `!!js` |
 | mount 报错指向 `role-*` 行 | `allow` 里有**未知名**：①工具改名 / MCP server 变更 ②**跨平台**（win32 上 `tool-bash` 被禁用，硬编码 `bash` 的角色行会直接派不出去） | 按 live 工具面核对后改白名单；带 shell 的角色行**必须**用平台表达式且**带引号**（#11）。未知名**响亮失败**是有意设计 |
 | 子代理派出去就报错 | ①model 不在 provider 实时目录 ②模型**不支持**所声明的 `reasoningEffort`（explorer 曾栽在②） | **先读报错原文**：`does not support reasoning effort "X"` ⇒ 删掉该 effort 或换该模型支持的档；`route ... is not allowed for this Session` ⇒ 见 #8 |
-| 脚本报 `✗ FAIL 子代理仍是 PTC` | 插件没生效 —— **本 preset 概率最高的失效模式**：插件行没挂上 / `.mjs` 软链失效 / ESM 缓存未 bump | ①核对 5 个软链在真目录里 ②`dev_reload_preset` 后开新会话 ③**别去查日志**（无落盘通道，#9）—— 脚本输出就是那条信号 |
+| 脚本报 `✗ FAIL 子代理仍是 PTC` | 插件没生效 —— **本 preset 概率最高的失效模式**：插件行没挂上 / 包软链断 / 挂的是旧代 | ①`make check` 点名包软链与组成（0.2.0 起**没有**「5 个内部软链」这回事，见 #31）②**重新挂载**（宿主重启 / preset 重新装配；`dev_reload_preset` 已失效，#31）③**别去查日志**（无落盘通道，#9）—— 脚本输出就是那条信号 |
 | 脚本报 `✗ FAIL 主 agent 未载入 round-5 persona` | persona 在**挂载时**读取：软链断 / 改了但没**重新挂载**（同进程里新开会话不算，见 A 节）/ 该会话早于 `PERSONA_V2_SINCE`（脚本扫全部历史，故有时间锚保护） | ①核对 `personas` 软链指向本仓库 ②逼一次**真正的重新挂载**（宿主进程重启 / preset 重新装配；A 节）③若重挂之后仍报，说明挂的不是这份 —— 比对软链目标里 `orchestrator.md` 是否含 `Delegation contract`。⚠️ 该断言**只证文本被载入**，不证行为改变 |
 | 脚本报 `✗ FAIL 主 agent 载入的 persona 缺程序契约段` | **最新一次挂载**早于 2026-09-23（下界 `PROGRAM_CONTRACT_SINCE` = 段落落盘时刻；锚点是最后一条 `system/message` 的 `time`，不是 `createdAt`，见 A 节）：宿主**没重新挂载**（同进程里新开会话不算），或挂的不是本仓库这一份 | ①阳性判据 = `✓ 主 agent 载入的是**含程序契约段**的那一代 persona`；`⊘ 本场早于程序契约下界` = 历史豁免、**不是**通过 ②逼一次真正的重新挂载 ③仍报 ⇒ `make check` 点名软链。⚠️ 只证文本被载入，不证行为改变（同上一行） |
 | 子代理工具面比白名单**多**（恰是 `subagent` + `list_subagent_models`） | 自身层泄漏（#7） | **掩不掉**：`deny` 与插件式挂载**同样无效**，别花时间。脚本已容忍标注。要彻底消除**只能**置 `modelSelectionSettings: false`（代价＝编排器通用 `subagent` 失去模型侧选择参数） |
 | 只读角色竟然派出了子代理 / 出现「depth-2 + 162 工具 + orchestrator persona」的孙代 | 通用 `subagent` 泄漏到子代理面，且该行**未**显式配 `maxDepth`（默认值是 **3**） | 已修：该行加 `maxDepth: 1`（#7）。若再现，先确认该行没被改回 |
 | oracle 能看到 `implementer` | oracle 的 allow 被改过，或该角色行不在同一 preset | 核对 `role-oracle.config.toolFilter.allow` |
 | 子代理 schema 里有 `sandbox_permissions` / `justification` | **不是缺口**（已结案，详见 `docs/evidence/2026-09-13-sandbox-escalation-closure.json`：子会话 `approval/policy = never` 在**任何 answerer 之前**就拒绝 ⇒ 提权构造上关闭；本机 91 个会话零证据） | **不做 sandbox-strip** —— 那会新增一个能误伤**编排器合法提权**的 pre-execute 监听。保持**检测**：脚本统计提权次数，只有角色子代理**持续非零**才值得做 |
-| 改了 `.mjs` 没变化 | 未 bump `?v=`，ESM 按 URL 缓存 | `dev_reload_preset preset=ptc-roles` 后开新会话（A 节） |
-| `dev_reload_preset` 回「**无相对 .mjs 引用（无需热更新）**」 | yml 里插件引用**被引号包住**，该工具只认裸 `./x.mjs` —— 它静默空转，旧代插件继续被新会话使用 | 去掉引号再跑；确认输出含 `x.mjs -> ?v=N`（A 节） |
+| 改了 `.mjs` / `personas/*.md` 没变化 | **0.2.0 起热更新通道已失效**：插件走**包名子路径**，裸包名子路径不能带 `?v=`（会 `ERR_PACKAGE_PATH_NOT_EXPORTED`）；`dev_reload_preset` 还硬编码已废弃的 `.agent-presets`（#31） | **重新挂载**（宿主重启 / preset 重新装配）——「开一个新会话」不算（A 节）。别再去追 `?v=` |
 | 插件单元校验有 FAIL | 深度判据被改坏：必须同时认 `Math.max(header, options.subagentDepth)` 与 `origin === 'subagent'`，且畸形深度要告警但**仍然**翻转 | 读 `scripts/verify-role-presentation.cjs` 的断言名（#10）；**改回插件而非改断言** |
 | `glob` 对某目录返回 **0 条**，但目录里明明有文件 | 模式基准是**会话 cwd**、不是 `path`；或目标是**软链**（ripgrep 不列出软链） | 改写成 `**/<子目录>/*`，或把该目录当 `path` 再配 `**/*`；先确认它是不是软链（#13①②） |
 | 角色子代理说「目录是空的 / 文件不存在」，但编排器 `ls` 看得见 | 探索类角色对目录条目与 symlink **结构性不可见**（#13③ / #14） | 这类核查派 `implementer` 或编排器自己做；**不要**为它扩 `explorer` 白名单（#14） |
@@ -621,10 +624,11 @@
 | reader 打了「汇总」却**没有** `会话 N 个（工作区 …）` 那一行 | `--cwd` 指向**写错 / 不存在的路径**：扫描按工作区过滤，路径不存在 ⇒ 命中 0 个会话文件。[实测] 2026-09-30：`--cwd /…/__nope__` **退 0**、无会话行、判定行照打 ⇒ 「测试没读到」长得和「测试通过」一模一样 | 传路径前先确认它存在；读输出时把 `会话 N 个` 当**前置断言**（0 个 ⇒ 路径错了，不是"没有会话"）。reader 尚未在 cwd 不存在时响亮失败 —— 属未修缺口 |
 | 合规率 0%、但模型明明很听话 | ①测试/剧本明令禁止输出门行 ②门行被写成了内部记账（插件看不出来）③门行只是被**谈论**过 | 先按证据 ⑪/⑫ 的口径读；**内容质量要人读那一行**（#16），别改判据去凑数 |
 | 只读的 bash 轮次也被要求门行 / 进的合规率分母 | 这是**保守判据**（#17）：`bash` 一律算「会改变行为」，因为只读与否在数据面**不可判**（`tool/result` 只有 stdout） | **不改**。实测至今零误算（30 个 eligible 轮次里 read-only-bash-only = 0）；措辞用「保守判据」，别叫「偏差」 |
-| 想把两个插件里重复的 `resolveDepth()` 合并成一个共享模块 | **不能**：`dev_reload_preset` 只 bump `agent.cordis.yml` 里引用的 `.mjs`，共享兄弟模块的 specifier 恒定 ⇒ 改了**静默不生效**（#18） | 保持两份副本；改一份必改另一份（漂移会让**其中一个**校验脚本的深度断言失败） |
+| 想把两个插件里重复的 `resolveDepth()` 合并成一个共享模块 | **不能**：热更新工具只 bump **组合文件里被引用**的 `.mjs`（旧名 `agent.cordis.yml`），共享兄弟模块的 specifier 恒定 ⇒ 改了**静默不生效**（#18；该惯用法在 0.2.0 已整体失效，但「不能合并」这个结论照旧成立 —— #31） | 保持两份副本；改一份必改另一份（漂移会让**其中一个**校验脚本的深度断言失败） |
 | `verify-intent-gate-watchdog.cjs --control` 报「不符合预期」但 `$?` 是 0 | 退出码契约是「**0 = 本次运行符合预期**」，不是「零失败」 | 看脚本打印的那行判定（`阴性对照符合预期…`）；`$?` 只在「不符合预期」时才非 0 |
 | 两个文档里的「合规率」差一个数量级（8% vs 85%） | **口径与窗口都不同**，不是门在崩也不是门很好（#19） | 引用时必须带「口径 + 窗口 + 日期」；唯一登记处是 #19，别在别处复制第二份 |
 | 升级 dsh 本体后 preset 行为变了 / 挂载失败 | 框架契约漂移（深度公式、`presentAs` 语义、`agent/created` / `agent/pre-step` 载荷、包改名）—— 上游 issues 已关闭，只能自兜 | 升级**前后各**跑 `node scripts/verify-harness-contract.cjs --harness <checkout>`：变红的那条直接指出 preset 侧要改哪一处；包改名会给出疑似新名 |
 | `verify-ptc-roles.cjs` 报 `✗ FAIL 不可归属的 tool/ptc-dispatch` | 归因失明 = 行为判据看不见东西（`tool/ptc-dispatch` 回指不到任何 `tool/call`）⇒ 是**未知异常**，不是可容忍的已知现象（#7 那种才是） | 先查 `tool/call` 的 `callId` 与派发的 `rootCallId` 是否还同名同源；**别**把这个数字降回提示。阳性路径的断言在 `scripts/fixtures/attribution-cases.json` |
 | 回复里的交接行印出**字面** `$DSH_SESSION_ID`（没被替换成真 id） | persona 模板写的是 **shell 语法**，而回复是**散文**、不经任何 shell ⇒ 永不展开；id 也不在 prompt 插值变量里（只有 `provider`/`model`/`cwd`）。见 #33 | 契约已改成 `session: session-<id> · …` 并写明"id 只能靠 shell 的 `echo "$DSH_SESSION_ID"` 读、读不到就写 `(id not read this turn)`"。若**重挂后**仍印字面量 ⇒ 挂的是旧代，按 A 节逼一次真正的重新挂载 |
+| 证据文件里的 `reproduction` 命令**指向 `.tmp/` 探针**，而 `.tmp/` 是 gitignore 的 | 复现链跨在两个寿命不同的存储上：证据文件入库（永久）、探针在 `.tmp/`（可清理）。[实测] 2026-09-30 清理时发现更早一层退化：探针**依赖的实验工作区**（`~/Project/tests/urlnorm` / `ignorecheck` / `miniql`）**已被删除** ⇒ `probe-urlnorm.mjs` 报 `ERR_MODULE_NOT_FOUND`；这不是清理造成的，是**证据文件早就不能复跑了** | 引用读数前先确认那个工作区还在；要真保住复现链，**探针必须随证据一起入库**（`git add -f`）或在证据里内联命令 —— 只把路径写进 `.tmp/` 等于承诺了一件没人守的事 |
 | persona / 插件契约里出现 `$VAR` 或其它 shell 语法 | 同上一行：#33 的一般规则 —— persona 是散文，不是脚本 | 改成"给取值动作"（跑哪个工具、读哪个字段），别给变量名 |

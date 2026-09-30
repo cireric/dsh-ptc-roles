@@ -13,6 +13,19 @@
 本目录的 JSON 都是原始输出（①–⑥ 是 2026-09-13 的探针与冒烟证据，⑦⑧ 是第 4/5 轮的改动记录，⑨ 是 2026-09-14 的**宿主内**结清验证，⑩ 是 2026-09-15 的**新 id + 看门狗**宿主内验证，⑪ 是同日**意图门失败记录与可复现性**，⑫ 是同日**第二代（`?v=4`）宿主内验证**，⑬ 是同日**角色派发补全**（`librarian` / `oracle`），⑭ 是同日**对复审报告 v3 的复核**；**⑯** 是 2026-09-17 的**意图门口径改造（① 存在档）落地实测**，**⑰** 是 2026-09-21 的闸门拒绝读数与模式标记，**⑱** 是 2026-09-23 的**闸门账**），**只读证据**，不需要重跑就能复用结论。**⑮ 例外**：`2026-09-17-review-v4.md` 是代码评审快照
 （Markdown，非探针 JSON），结论附可复跑命令。
 
+> ⚠️ **复现链状态（2026-09-30 实测，索引层登记）**：下列 5 份 JSON 的 `reproduction` 命令**已不可复跑** ——
+> 它们引用 `.tmp/` 下的探针（该目录被 `.gitignore` 覆盖、永不入库），而探针依赖的实验工作区
+> （`~/Project/tests/{urlnorm,urlnorm-gate,urlnorm-ptc,miniql,ignorecheck}`）**已被删除**。
+> 每份文件的**首个键** `reproductionStatus` 记了原因与影响；**结论照旧有效**（当时的当场读数），
+> 但**不得**声称它们可复跑：
+>
+> `2026-09-20-miniql-v2-arm1.json` · `2026-09-21-urlnorm-arms-comparison.json` ·
+> `2026-09-21-urlnorm-gate-rerun.json` · `2026-09-21-urlnorm-gate-third-arm.json` ·
+> `2026-09-21-urlnorm-v3-arm1.json`
+>
+> 今后要保住复现链：探针**随证据一起入库**（`git add -f`），或在证据里内联命令。
+> 口径与边界见 `docs/pitfalls.md` C 节排障表末两条。
+
 ## 1. `2026-09-13-restrict-scope-and-presentAs.json`
 
 **它证明了什么**：`toolFilter`（即 `ctx.tools.restrict()`）在 **agent 作用域** 上按 allow 语义精确生效；未知名会响亮抛错；disposer 能还原。

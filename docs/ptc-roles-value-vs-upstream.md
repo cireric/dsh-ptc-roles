@@ -11,6 +11,13 @@
 
 - 日期：**2026-09-18**
 - 分析基线：上游 `@deepseek-ai/dsh` **0.1.5-rc.2**（checkout `/Users/eric/Project/tests/deepseek-harness`，记为 `$DSH`；`git describe` = `dsh-v0.1.5-rc.2-139-gc291e7961a`）。本文所有 `file:line` 指该工作区。
+
+> ⚠️ **§2 / §7 的路径与行号已失效（2026-09-30 实测）**：本文基线之后上游已到 **`0.2.0-rc.2`**，
+> 官方 preset 从 `packages/preset/agent-presets/presets/<id>/agent.cordis.yml` 迁到
+> **`packages/bundle/web-app/presets/<id>.patch.yml`**（`agent-presets/` 这个目录**已不存在**）。
+> 按本文 §7 原样跑 `sed` 会全部报 `No such file or directory`。**§0–§5 的结论不受影响**（它们论证的是
+> 「参数面在上游、预设不发」这个结构性事实，上面 §1 的 `tool-subagent` README 表已在 0.2.0 上逐条复核，
+> 行仍然对得上）；**§2/§3 的行号只作历史记录读**，今天要定位请用下面更正过的命令。
 - 证据分级：**【C】** 代码验证（读了源文件，附 `file:line`）· **【D】** 官方文档 / 生成目录 · **【实测】** 本机当场测量（附命令）· **【?】** 未验证，勿当结论
 
 ## 0. 结论
@@ -54,7 +61,10 @@
 
 ## 2. 官方 shipped preset：能力在，没有用【C】
 
-`$DSH/packages/preset/agent-presets/presets/{standard,ptc}/agent.cordis.yml`：
+> **2026-09-30 更正**：下表行号取自 **0.1.5-rc.2** 基线的 `packages/preset/agent-presets/presets/{standard,ptc}/agent.cordis.yml`。
+> 该路径在 0.2.0 上**已不存在**，等价文件是 `$DSH/packages/bundle/web-app/presets/{standard,ptc}.patch.yml`；
+> 在两份新文件里同两行分别位于**约 `:90-96` 与 `:97-102`**，内容不变（`provider: spawn` / `toolName: subagent` /
+> `modelSelectionSettings: true` / `backgroundMode: continuable`，且**均无** `persona` / `toolFilter` / `maxDepth` / `agentOptions`）。
 
 | 行 | 内容 |
 |---|---|
@@ -123,18 +133,19 @@ ADR 0002 的价值腿表里，「上游是否提供」一栏把**发出去的配
 ## 7. 复现方法
 
 ```bash
-# 上游参数面（本文 §1）
+# 上游参数面（本文 §1）—— 路径在 0.2.0 上仍然有效
 sed -n '1,60p'  $DSH/packages/subagent/tool-subagent/README.md
 
-# 官方 preset 的两处通用委派行（本文 §2）
-sed -n '181,205p' $DSH/packages/preset/agent-presets/presets/standard/agent.cordis.yml
-sed -n '188,205p' $DSH/packages/preset/agent-presets/presets/ptc/agent.cordis.yml
+# 官方 preset 的两处通用委派行（本文 §2）—— 0.2.0 起的新路径
+sed -n '84,102p' $DSH/packages/bundle/web-app/presets/standard.patch.yml
+sed -n '84,102p' $DSH/packages/bundle/web-app/presets/ptc.patch.yml
 
-# 本仓角色行（本文 §3）
-grep -n 'toolName:\|maxDepth:\|backgroundMode:\|toolFilter:\|persona:' preset/ptc-roles/agent.cordis.yml
+# 本仓角色行（本文 §3）—— 0.2.0 起是 preset.patch.yml，不是 agent.cordis.yml（pitfalls #31）
+grep -n 'toolName:\|maxDepth:\|backgroundMode:\|toolFilter:\|persona:' preset/ptc-roles/preset.patch.yml
 
 # 本 preset 的角色配置在运行时真的如此（判据是各脚本打印的判定行，不是条数）
 make verify
 ```
 
-（`$DSH` = 上游 checkout 根，本次为 `/Users/eric/Project/tests/deepseek-harness`。§2 / §3 的行号绑定上面那个基线；本仓 `agent.cordis.yml` 一旦增删角色行，那些行号就会漂 —— 所以第三条命令给的是**模式**，不是行号。）
+（`$DSH` = 上游 checkout 根，本次为 `/Users/eric/Project/tests/deepseek-harness`。§2 / §3 的行号绑定
+**0.1.5-rc.2** 那个基线，**不能按原样复跑**；第三条命令给的是**模式**，不是行号 —— 本仓文件一旦增删方案行，行号就会漂。）

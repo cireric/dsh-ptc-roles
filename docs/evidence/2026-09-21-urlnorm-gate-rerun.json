@@ -1,4 +1,11 @@
 {
+  "reproductionStatus": {
+    "status": "unreproducible",
+    "markedAt": "2026-09-30",
+    "why": "本文件的 reproduction 命令依赖 .tmp/ 下的探针（该目录被 .gitignore 覆盖，永不入库），而探针依赖的实验工作区（~/Project/tests/urlnorm* / miniql / ignorecheck）已被删除。实测 probe-urlnorm.mjs 报 ERR_MODULE_NOT_FOUND。",
+    "impact": "结论本身仍有效（当时的当场读数），但**复现链已断** —— 不得声称本文件可复跑。口径与边界见 docs/pitfalls.md 排障表末两条。",
+    "rule": "今后要保住复现链：探针必须随证据一起入库（git add -f），或在证据里内联命令。"
+  },
   "probe": "2026-09-21-urlnorm-gate-rerun",
   "task": "urlnorm v3 冻结任务的第四场：同一 preset（ptc-gate）重跑（第二样本）",
   "session": "session-6d1da13f-5a40-4bb3-9f50-2d967c89340e",

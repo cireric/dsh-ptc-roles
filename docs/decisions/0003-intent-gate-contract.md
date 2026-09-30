@@ -25,7 +25,7 @@
    单测只钉可达的那一支。
 3. **模式进数据面**：`config.gate` 写错会静默落到 observe（fail-safe），而本部署没有日志通道（#9）
    ⇒ 插件每**会话**注入一行 `[intent-gate-watchdog] mode=enforce|observe`；reader 拿它与
-   `preset/<id>/agent.cordis.yml` 的**声明**对照，不一致 ⇒ ✗ FAIL（缺席只作观察：本会话可能挂载于
+   `preset/<id>/preset.patch.yml` 的**声明**对照（0.2.0 前的文件名 `agent.cordis.yml`），不一致 ⇒ ✗ FAIL（缺席只作观察：本会话可能挂载于
    标记引入之前，判据见 #A 节的「重新挂载」）。
 4. **回滚条件（唯一登记处 = 本文）**：观察期判据曾是「注入通道里出现过 `RACE_REPORT`」，但 enforce
    之后 `wouldDeny && !denied` 恒不成立 ⇒ 那条报告**永不注入**。改判为它的镜像：

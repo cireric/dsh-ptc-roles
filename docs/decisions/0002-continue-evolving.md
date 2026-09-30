@@ -196,6 +196,8 @@
    - **删除**：① 五行角色实例及其 `toolFilter.allow` 白名单与 `maxDepth`（yml 约 130 行）；② `role-presentation.mjs`（它的存在只为把**角色**子代理翻成 native）；
      ③ 五份角色 persona（共 33 行）；④ orchestrator persona 里的角色机器（Specialists 表 · Delegation contract · Anti-duplication · Orchestration discipline · Phase 0.5 的 Ownership 部分，约 55 行）。
    - **规模**：`agent.cordis.yml` 486 → 约 350 行；插件 2 → 1；persona 6 → 1；部署项 5 → 3。
+     （**0.2.0 后该文件已不存在** —— 两个 preset 各是一条 `preset/<id>/preset.patch.yml` 声明行，见 pitfalls #31；
+     本条记的是当时的形态。）
    - **改性质保留的两条**：**每角色模型档**是本项目里**唯一从未被测量过**的押注（2026-09-17 已标注不可测）⇒ 薄版本保留为**档位**（便宜档 / 强档），不再假装它是角色；
      **独立评审**在 v3 确实抓到过阻断项与规范 bug ⇒ 需求真实，但薄版本把它变成**按需临时委派**，而不是默认常驻成本。
    - **第二样本（2026-09-21 重跑，`session-6d1da13f`）**：成本 **11,681,008（1.65×）**，与首轮 1.69× 一致 ⇒ **成本比值稳定**；但**质量出现真实抽样方差** ——

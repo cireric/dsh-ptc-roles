@@ -1,4 +1,11 @@
 {
+  "reproductionStatus": {
+    "status": "unreproducible",
+    "markedAt": "2026-09-30",
+    "why": "本文件的 reproduction 命令依赖 .tmp/ 下的探针（该目录被 .gitignore 覆盖，永不入库），而探针依赖的实验工作区（~/Project/tests/urlnorm* / miniql / ignorecheck）已被删除。实测 probe-urlnorm.mjs 报 ERR_MODULE_NOT_FOUND。",
+    "impact": "结论本身仍有效（当时的当场读数），但**复现链已断** —— 不得声称本文件可复跑。口径与边界见 docs/pitfalls.md 排障表末两条。",
+    "rule": "今后要保住复现链：探针必须随证据一起入库（git add -f），或在证据里内联命令。"
+  },
   "probe": "2026-09-21-urlnorm-v3-arm1",
   "task": "urlnorm v3：手写 URL 拆分器（冻结 legacy + 39 条冻结清单）→ WHATWG 一致 + 迁移报告",
   "question": "任务里嵌入四类活（本地取证 / 外部规范 / 实现 / 评审）之后，角色会不会各自上场？成本如何？",
