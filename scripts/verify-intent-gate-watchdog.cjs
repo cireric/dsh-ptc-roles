@@ -85,6 +85,7 @@ const REQUIRED_CONTROL_FAILURES = [
   'gate denies an invalid-bucket gate line with the INVALID wording (six buckets named)',
   'gate is case-insensitive: lowercase token and uppercase bucket still count as declared',
   'a gate line off the first line denies with the MISSING wording, not INVALID',
+  'a Chinese-token gate line denies with MISSING wording that names the ASCII-token requirement',
 ]
 
 let checks = 0
@@ -807,6 +808,20 @@ async function main() {
     const d = await h.preExec('write')
     check('a gate line off the first line denies with the MISSING wording, not INVALID',
       d?.kind === 'deny' && !d.reason.includes('桶不合法') && d.reason.includes('本轮还没有出现过'),
+      JSON.stringify(d))
+  }
+
+  // 34 — 中文变体（2026-10-01 现场实测的错法）：首行「意图：…」⇒ MISSING 拒，且话术必须**点名这个错**
+  //（「中文变体不算数 / token 逐字符 ASCII 的 Intent:」）—— #19：纠正话术要瞄准真实犯的错。
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    h.observe('s1', 1, '意图：implementation —「继续推进」。')
+    const d = await h.preExec('bash')
+    check('a Chinese-token gate line denies with MISSING wording that names the ASCII-token requirement',
+      d?.kind === 'deny' && d.reason.includes('意图：') && d.reason.includes('Intent:')
+        && !d.reason.includes('桶不合法'),
       JSON.stringify(d))
   }
 
