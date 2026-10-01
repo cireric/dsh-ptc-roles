@@ -837,6 +837,17 @@ async function main() {
     } catch (e) {
       check('preset 插件可读（' + path.basename(path.dirname(PLUGIN)) + '）', false, String((e && e.message) || e))
     }
+    // 两份**插件**副本的同一性（2026-10-01）：本机部署跑的是 ptc-gate 那份（scripts/deploy-preset.cjs:48），
+    // 而 PLUGIN 默认指向 ptc-roles 那份 ⇒ 正在运行的那份此前零静态覆盖，改一份而另一份静默漂移
+    // 完全看不见。这与 2026-09-23 修的 persona 同一个病（见上）。组成契约另有独立一份对账。
+    try {
+      const sibling = path.join(__dirname, '..', 'preset', 'ptc-gate', 'intent-gate-watchdog.mjs')
+      check('两份 intent-gate-watchdog.mjs 逐字一致（ptc-gate 是本机运行的那份）',
+        fs.readFileSync(PLUGIN).equals(fs.readFileSync(sibling)),
+        '两份插件副本已漂移：本文件的断言钉 ptc-roles 那份，部署跑 ptc-gate 那份')
+    } catch (e) {
+      check('两份 intent-gate-watchdog.mjs 可读', false, String((e && e.message) || e))
+    }
     let readerSrcText
     try {
       readerSrcText = fs.readFileSync(READER_PATH, 'utf8')
