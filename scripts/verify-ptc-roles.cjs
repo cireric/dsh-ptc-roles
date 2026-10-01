@@ -266,8 +266,204 @@ const BEHAVIOR_TOOLS = new Set([
   'ask_user_question',
 ])
 
+/**
+ * R-A 母表的两个输入面（ADR 0003 第四轮第 10 项；口径登记在 pitfalls #19）。
+ *
+ * 桶清单**从 STRICT_GATE_RE 派生**，不写第二份字面量 —— 桶集合只允许有一个来源（#12 的副本病）。
+ * 动作类别是现役 BEHAVIOR_TOOLS 的一个**划分**（写 2 / 委派 10 / 其余 3），零新工具名；
+ * 漏掉一个名字 ⇒ 那一类轮次**静默少算** ⇒ `raSelfTest` 有覆盖率守卫，当场报 FAIL。
+ */
+const GATE_BUCKETS = STRICT_GATE_RE.source
+  .slice(STRICT_GATE_RE.source.indexOf('(') + 1, STRICT_GATE_RE.source.lastIndexOf(')'))
+  .split('|')
+const ACTION_CLASS = new Map([
+  ...['write', 'edit'].map((n) => [n, 'write']),
+  ...['explorer', 'librarian', 'oracle', 'implementer', 'designer', 'subagent', 'subagent_fork',
+    'subagent_codex', 'subagent_claude_code', 'ralph'].map((n) => [n, 'delegate']),
+  ...['bash', 'pwsh', 'ask_user_question'].map((n) => [n, 'other']),
+])
+/** 两条轴关心的工具名（固定集合，不需要维护「外部来源」那类手工清单 —— ADR 0003 第四轮第 12 项）。 */
+const AXIS_TOOLS = new Set(['write', 'edit', 'ask_user_question'])
+/**
+ * 「产出持久化工件」的路径判据（ADR 0003 第四轮第 12 项；口径 pitfalls #19）：
+ *   · `tmp`      = 落在 `.tmp/` 下（AGENTS.md 规则 9 的探针例外 ⇒ **不算产出**）
+ *   · `artifact` = 落在工作区里、但不在 `.tmp/` 下 ⇒ 算产出
+ *   · `outside`  = 绝对路径在工作区外 ⇒ 不算产出（但**也不是** unknown）
+ *   · `unknown`  = 参数缺失 / 路径形状认不出 / 工作区根未知 ⇒ 显式记未知，**不按 0 算**
+ * 相对路径由 fs 后端解析到工作区根 ⇒ 无需 cwd 即可判（`.tmp/` 前缀除外）。
+ */
+function artifactClassOf(filePath, cwd) {
+  if (typeof filePath !== 'string' || filePath === '') return 'unknown'
+  const p = filePath.split('\\').join('/')
+  const inTmp = (q) => /(^|\/)\.tmp(\/|$)/.test(q)
+  const isAbs = p.startsWith('/') || /^[A-Za-z]:\//.test(p)
+  if (!isAbs) return inTmp(p.replace(/^\.\//, '')) ? 'tmp' : 'artifact'
+  if (typeof cwd !== 'string' || cwd === '') return 'unknown'
+  const root = cwd.split('\\').join('/').replace(/\/+$/, '')
+  if (!p.startsWith(root + '/')) return 'outside'
+  return inTmp(p.slice(root.length + 1)) ? 'tmp' : 'artifact'
+}
+/**
+ * R-A 重审结论（ADR 0003 第四轮第 12 项）：对每条「不可区分」的组问两条轴能不能把它分开。
+ * 判据 = 组内成员在**任一条轴**上的命中率不**精确相等**（复用 raFrac 的有理数比较）⇒ 可分。
+ */
+function raSeparation(groups, rows) {
+  const byBucket = new Map(rows.map((r) => [r.bucket, r]))
+  return groups.map((g) => {
+    const prod = new Set(), asked = new Set()
+    let prodSeen = false, askedSeen = false
+    for (const b of g) {
+      const r = byBucket.get(b)
+      if (r === undefined) return { group: g, verdict: 'unknown', by: null }
+      prod.add(raFrac(r.prod, r.n))
+      asked.add(raFrac(r.asked, r.n))
+      if (r.prod > 0) prodSeen = true
+      if (r.asked > 0) askedSeen = true
+    }
+    if (prod.size > 1) return { group: g, verdict: 'separable', by: '产出轴' }
+    if (asked.size > 1) return { group: g, verdict: 'separable', by: '问人轴' }
+    // 相等，但必须区分「两边都没出现过该行为」与「都出现过、率相同」—— 前者是**轴在本窗口未观测**，
+    // 零变化率的「相等」分不开任何东西，不能当「不可分」的证据（2026-10-01 首读当场暴露）。
+    if (prodSeen || askedSeen) return { group: g, verdict: 'indistinguishable', by: null }
+    // 全 0：先看到期线 —— 分母是**该组自己的轮数**（成员桶 n 之和），不是全窗口 n。
+    const groupN = g.reduce((a, b) => a + ((byBucket.get(b) || {}).n || 0), 0)
+    if (groupN >= RA_UNOBSERVED_EXPIRY) return { group: g, verdict: 'not-applicable', by: null, n: groupN }
+    return { group: g, verdict: 'unobserved', by: null, n: groupN }
+  })
+}
+/** 两条轴的稳定字面量（夹具断言用）：只列 n>0 的桶，顺序 = GATE_BUCKETS。 */
+function raAxisLabel(s) {
+  return GATE_BUCKETS.filter((b) => (s.raBuckets.get(b) || 0) > 0)
+    .map((b) => b + ':' + (s.raProd.get(b) || 0) + '/' + s.raBuckets.get(b) + ',' + (s.raAsked.get(b) || 0) + '/' + s.raBuckets.get(b)
+      + ((s.raUnknown.get(b) || 0) > 0 ? ',u' + s.raUnknown.get(b) : ''))
+    .join('|')
+}
+/** 重审结论的稳定字面量（夹具断言用）。 */
+function raSeparationLabel(s) {
+  return raSeparation(raRedundantGroups(raRows(s)), raRows(s))
+    .map((x) => x.group.join('/') + '=' + (x.verdict === 'separable' ? '可分(' + x.by + ')'
+      : x.verdict === 'indistinguishable' ? '不可分' : x.verdict === 'not-applicable' ? '不适用'
+        : x.verdict === 'unknown' ? '不可判' : '无结论')).join('|')
+}
+/** 矛盾计数只认这三个「读向」桶（ADR 0003 第四轮第 10 项；它们是六桶的子集，守卫见 raSelfTest）。 */
+const RA_READ_BUCKETS = ['research', 'investigation', 'evaluation']
+/**
+ * R-A 判死线（ADR 0003 第四轮第 10 项）——**纯函数**，两个数都在那里登记，理由不复述：
+ * 上限 = `open-ended` 占比 ≥ 1/2；下限 = 行为轮数 ≥ 2 × 桶数（每桶平均 ≥2 个样本）才允许判死。
+ */
+/**
+ * 「无结论」的**到期线**（ADR 0003 第四轮第 12 项）：该组自己的行为轮数（成员桶 n 之和）达到它就判
+ * 「两轴对该组不适用」并结案。推导 = ⌈ln(0.05)/ln(0.9)⌉ = 29（真实发生率低到 10% 时把「漏观测」压到 5%），
+ * 取 36 = 3 × 12 的保守侧（推导假设轮间独立，而同场轮高度相关）。
+ * **与 RA_MIN_TURNS 是两个不同的数**：那个管「桶分布可否判死」，这个管「轴可否判不适用」。
+ */
+const RA_UNOBSERVED_EXPIRY = 36
+const RA_DEATH_SHARE = 1 / 2
+const RA_MIN_TURNS = 2 * 6
+function raVerdict(openEnded, n) {
+  if (n < RA_MIN_TURNS) return 'selfcheck'   // n 不足 ⇒ 只作第 0 阶协议自检，不判死
+  return openEnded / n >= RA_DEATH_SHARE ? 'death' : 'ok'
+}
+
 /** 命中率格式化：0 轮时给 '—'，避免出现 NaN%。 */
 function rate(hit, total) { return total === 0 ? '—' : Math.round((hit / total) * 100) + '%' }
+
+/** R-A 母表格子的稳定字面量（夹具断言用）—— 键排序，Map 迭代顺序不影响判定。 */
+function raCellLabel(s) {
+  return [...s.raCells.entries()].map(([k, c]) => k + '=' + c).sort().join(',')
+}
+
+/** R-A 母表的合并（Map 必须逐键相加，不能整体覆盖）。本场 → ptc-roles 合计 / R-A 跨 preset 合计共用。 */
+function raAdd(target, src) {
+  target.raTurns += src.raTurns
+  target.raOpenEnded += src.raOpenEnded
+  target.raContradiction += src.raContradiction
+  target.raHedge += src.raHedge
+  for (const [b, c] of src.raBuckets) target.raBuckets.set(b, (target.raBuckets.get(b) || 0) + c)
+  for (const [k, c] of src.raCells) target.raCells.set(k, (target.raCells.get(k) || 0) + c)
+  for (const key of ['raProd', 'raAsked', 'raUnknown']) {
+    for (const [b, c] of src[key]) target[key].set(b, (target[key].get(b) || 0) + c)
+  }
+}
+
+/**
+ * R-A 第二条线（ADR 0003 第四轮第 11 项）：桶间「动作分布无差异」。
+ *
+ * 判据 = 存在两个桶，**各自 n ≥ RA_MIN_ROW_TURNS**，且两者的**动作命中率三元组精确相等**
+ * （有理数相等，无容差、无统计检验）。n < 2 的桶不参与 —— 一行只有 1 个样本时它和任何一行都
+ * 「相等」，那是样本不足，不是无差异。
+ * 代价（有意接受）：只作**下界/证伪** —— 率略有差异的真退化会被漏掉（宁漏不误判）。
+ */
+const RA_MIN_ROW_TURNS = 2
+function raGcd(a, b) { return b === 0 ? a : raGcd(b, a % b) }
+/**
+ * 约分后的分数 —— 有理数相等的**正确**判据。`5/5` 与 `3/3` 是同一个率，字面量比较会把它们判成不同
+ * （2026-10-01 实测 bug：第一版直接拼 `c + '/' + n`，两条自测当场红 ⇒ 边界自测确实有牙）。
+ */
+function raFrac(c, n) {
+  if (c === 0) return '0/1'
+  const g = raGcd(c, n)
+  return (c / g) + '/' + (n / g)
+}
+/** 一行母表的命中率三元组（约分后的精确有理数，不四舍五入）。 */
+function raRateKey(row) {
+  return [row.w, row.d, row.o].map((c) => raFrac(c, row.n)).join('|')
+}
+/** 命中率三元组精确相等的组（每组 ≥2 个桶）；输入 = [{bucket,n,w,d,o}]。 */
+function raRedundantGroups(rows) {
+  const byKey = new Map()
+  for (const r of rows) {
+    if (r.n < RA_MIN_ROW_TURNS) continue
+    const k = raRateKey(r)
+    if (!byKey.has(k)) byKey.set(k, [])
+    byKey.get(k).push(r.bucket)
+  }
+  return [...byKey.values()].filter((g) => g.length >= 2)
+}
+/** 从统计抽出母表的行（顺序 = GATE_BUCKETS ⇒ 打印与判定同源，不各写一份）。 */
+function raRows(s) {
+  return GATE_BUCKETS.map((b) => ({
+    bucket: b, n: s.raBuckets.get(b) || 0,
+    w: s.raCells.get(b + '|write') || 0, d: s.raCells.get(b + '|delegate') || 0, o: s.raCells.get(b + '|other') || 0,
+    prod: s.raProd.get(b) || 0, asked: s.raAsked.get(b) || 0, unknown: s.raUnknown.get(b) || 0,
+  }))
+}
+
+/**
+ * R-A 母表的渲染（ADR 0003 第四轮第 10 项；口径 pitfalls #19）—— 本场 / ptc-roles 合计 /
+ * R-A 跨 preset 合计**共用这一份**，不复制（#12 的副本病）。返回不带缩进的字符串数组。
+ */
+function raLines(s, label) {
+  const out = [label + ':']
+  const rows = raRows(s)
+  for (const r of rows) {
+    out.push('     ' + r.bucket.padEnd(15) + ' n=' + r.n + ' ｜ 写 ' + r.w + ' / 委派 ' + r.d + ' / 其余 ' + r.o
+      + ' ｜ 产出 ' + r.prod + ' / 问人 ' + r.asked + (r.unknown > 0 ? ' / **参数未知 ' + r.unknown + '**' : ''))
+  }
+  const v = raVerdict(s.raOpenEnded, s.raTurns)
+  out.push('     ⇒ open-ended 占比 ' + s.raOpenEnded + '/' + s.raTurns + ' (' + rate(s.raOpenEnded, s.raTurns)
+    + ') ｜ 判死线（ADR 0003 第四轮第 10 项）: ' + (v === 'selfcheck'
+      ? 'n < ' + RA_MIN_TURNS + ' ⇒ 只作第 0 阶协议自检，不判死'
+      : v === 'death' ? '**命中** ⇒ 该重审六桶契约本身（乃至撤销门行）' : '未命中')
+    + ' ｜ 派生: 矛盾 ' + s.raContradiction + ' / hedge ' + s.raHedge)
+  const groups = raRedundantGroups(rows)
+  out.push('     ⇒ 桶间无区分线（ADR 0003 第四轮第 11 项）: ' + (groups.length === 0
+    ? '未命中（没有两个 n ≥ ' + RA_MIN_ROW_TURNS + ' 的桶三元组精确相等）'
+    : '**命中** ⇒ 该组在动作面上不可区分，重审该组（合并 / 删除组内至少一个桶）: '
+      + groups.map((g) => g.join(' = ')).join(' ｜ '))
+    + (s.axesUnattributed > 0 ? ' ｜ ⚠ 归不回轮的轴调用 ' + s.axesUnattributed + ' 次' : ''))
+  for (const sep of raSeparation(groups, rows)) {
+    out.push('     ⇒ 重审该组（ADR 0003 第四轮第 12 项）: ' + sep.group.join(' / ') + ' ⇒ ' + (sep.verdict === 'separable'
+      ? '**可分**（' + sep.by + '命中率不等）⇒ 结论是观测面太粗，桶不必合并'
+      : sep.verdict === 'indistinguishable'
+        ? '不可分（两条轴都有变化、而命中率精确相等）⇒ 这才够格谈合并'
+        : sep.verdict === 'not-applicable'
+          ? '**两轴对该组不适用（到期：该组 n=' + sep.n + ' ≥ ' + RA_UNOBSERVED_EXPIRY + '）** ⇒ 结案：不合并该组，' +
+            '登记 R-A 在动作面上的能力上限'
+          : '**无结论**（两条轴都没观测到该行为 —— 零变化率的「相等」不是证据；到期线 = 该组 n ≥ ' + RA_UNOBSERVED_EXPIRY + '）'))
+  }
+  return out
+}
 
 /**
  * 闸门拒绝（`tools/pre-execute` 的 deny）在数据面上的**落点** —— 2026-09-21 实测，更正 pitfalls #23：
@@ -453,6 +649,8 @@ function analyze(raw) {
     presetIds: [],
     /** 闸门拒绝（成对判，见 GATE_DENY_MARK）与每会话的模式标记；`deniesUnattributed` 见 post-loop。 */
     denies: [], gateModes: [], deniesUnattributed: 0,
+    /** R-A 两条轴里**归不回轮**的写/问调用数（同 deniesUnattributed 的取舍：失败必须可见）。 */
+    axesUnattributed: 0,
     /** rootCallId → 该 program 内每个派发**完成**事件的 seq。闸门账用它数「同 program 其余派发」。 */
     dispatchSeqs: new Map(),
     // ── 每会话常备读数（2026-09-20）─────────────────────────────────────────
@@ -477,6 +675,10 @@ function analyze(raw) {
     if (rec === undefined) {
       rec = { any: false, reply: false, first: false, seenText: false, acting: false,
         declSeq: undefined, strictDeclSeq: undefined, firstActCarrier: undefined, carriers: [],
+        // R-A 母表（ADR 0003 第四轮第 10 项）：严格合法的**桶值**与该轮命中的**动作类别**。
+        strictBucket: undefined, actKinds: new Set(),
+        // R-A 第三条读数（ADR 0003 第四轮第 12 项）：产出轴 / 问人轴 + **参数未落盘的显式计数**。
+        prod: false, asked: false, argUnknown: 0,
         // 轮次资格（user-opened）用：轮起点 seq 与该轮首个 assistant/message 的 seq。
         originSeq: undefined, firstAsstSeq: undefined }
       result.intentTurns.set(t, rec)
@@ -489,7 +691,24 @@ function analyze(raw) {
     const rec = recFor(t)
     rec.acting = true
     rec.carriers.push(carrier)
+    const kind = ACTION_CLASS.get(name)   // 划分完整性由 raSelfTest 守卫（漏格 = 静默少算）
+    if (kind !== undefined) rec.actKinds.add(kind)
     if (rec.firstActCarrier === undefined) { rec.firstActCarrier = carrier; rec.firstActName = name }
+  }
+  /**
+   * R-A 第三条读数（ADR 0003 第四轮第 12 项）：两条轴 + **参数未落盘就显式记未知**。
+   * `arguments` 在 native 的 `tool/call` 上是 JSON 字符串、在 PTC 的 `tool/ptc-dispatch` 上是对象
+   * （形状差异与上方沙箱提权探针同源）。路径认不出 / 工作区根未知 ⇒ 记 `argUnknown`，**绝不静默按 0 算**。
+   */
+  const noteAxis = (rec, name, rawArgs) => {
+    if (name === 'ask_user_question') { rec.asked = true; return }
+    let args = rawArgs
+    if (typeof args === 'string') { try { args = JSON.parse(args) } catch { args = undefined } }
+    const fp = args !== null && typeof args === 'object' ? args.file_path : undefined
+    if (typeof fp !== 'string' || fp === '') { rec.argUnknown += 1; return }
+    const cls = artifactClassOf(fp, result.header && result.header.cwd)
+    if (cls === 'unknown') { rec.argUnknown += 1; return }
+    if (cls === 'artifact') rec.prod = true
   }
   for (const line of raw.split('\n')) {
     if (!line.startsWith('{')) continue
@@ -508,6 +727,7 @@ function analyze(raw) {
         if (typeof toolName === 'string') callNames.set(callId, toolName)
       }
       if (BEHAVIOR_TOOLS.has(toolName)) noteAction(turn, lastMsgSeq, toolName)
+      if (AXIS_TOOLS.has(toolName)) noteAxis(recFor(turn), toolName, event.data && event.data.arguments)
     } else if (event.type === 'tool/ptc-dispatch') {
       // 只计**完成**事件：同一派发会同时出 `-start` 与完成两个事件，而两者的 `owner.carrier` 完全相同
       // （载体来自外层 `tool/call` 的映射）⇒ 计两次只会让 `carriers` 翻倍，即覆盖率的分母凭空翻倍
@@ -527,6 +747,12 @@ function analyze(raw) {
         // 按事件计数会把数字凭空翻倍）。插件 intent-gate-watchdog.mjs 在同情形 warn；
         // 这里没有 warn 通道（pitfalls #9），所以它必须进**数据面**：计数并进汇总行。
         else result.unattributable.add(typeof rootCallId === 'string' ? rootCallId : '<no rootCallId>')
+      }
+      // R-A 两条轴（ADR 0003 第四轮第 12 项）走同一条 rootCallId 归因路径；归不回轮的**计数**，不静默。
+      if (AXIS_TOOLS.has(toolName)) {
+        const owner = callTurns.get(rootCallId)
+        if (owner === undefined) result.axesUnattributed += 1
+        else noteAxis(recFor(owner.turn), toolName, event.data && event.data.arguments)
       }
     }
     if (typeof turn === 'number') {
@@ -548,7 +774,12 @@ function analyze(raw) {
           if (rec.declSeq === undefined && hasFirstLineMarker(text)) rec.declSeq = msgSeq
           // verbatim-gate（ADR 0003 追加段）：严格 declSeq —— 首行 = `Intent:` + 六桶之一。
           // 桶无效的首行只记宽松 declSeq、不记这里（严格对照与拒绝账的判据面）。
-          if (rec.strictDeclSeq === undefined && STRICT_GATE_RE.test(text.split('\n')[0])) rec.strictDeclSeq = msgSeq
+          // R-A（第四轮第 10 项）：同一个捕获组顺带把**桶值**留下 —— 此前它只被当 boolean 用，
+          // 桶值从未落过盘（2026-10-01 现场证据：15 轮合法桶，reader 一行桶分布都打不出来）。
+          if (rec.strictDeclSeq === undefined) {
+            const m = STRICT_GATE_RE.exec(text.split('\n')[0])
+            if (m !== null) { rec.strictDeclSeq = msgSeq; rec.strictBucket = m[1].toLowerCase() }
+          }
         }
         // token 折叠（pitfalls #22②）：同一 (turn, step) 是**替换** ⇒ Map 后写覆盖先写（取最后一条）。
         const u = usageOf(event)
@@ -885,8 +1116,14 @@ function intentGateStats(r) {
     // 严格对照读数（分母 = user-opened 行为轮，与现役分子同分母；分子 = 严格①）。
     // 「只对带 mode 标记的会话计算」落在打印与合计并入处（gateLines / main），采集本身无条件。
     userOpenedEligibleStrict: 0, userOpenedDeclaredStrict: 0,
-    /** 合计专用：带 mode 标记的会话数（>0 时合计行才打印严格对照）。 */
+    /** 合计专用：带 mode 标记的会话数（>0 时合计行才打印严格对照/母表）。 */
     strictSessions: 0,
+    // ── R-A 母表（ADR 0003 第四轮第 10 项；口径 pitfalls #19）────────────────────
+    // 六桶 × 三类动作，分母与严格对照同（user-opened 且会改变行为的轮）；桶不合法的轮不进母表。
+    raTurns: 0, raBuckets: new Map(), raCells: new Map(), raOpenEnded: 0,
+    raContradiction: 0, raHedge: 0,
+    // 两条轴（ADR 0003 第四轮第 12 项）：桶 → 命中数；raUnknown = 参数/路径未落的**显式**计数。
+    raProd: new Map(), raAsked: new Map(), raUnknown: new Map(), axesUnattributed: 0,
     // 拒绝理由三态分桶（按拒绝结果文本分类，denyReasonOf）。
     denyReasonMissing: 0, denyReasonInvalid: 0, denyReasonLate: 0,
   }
@@ -908,6 +1145,20 @@ function intentGateStats(r) {
         // 严格对照（ADR 0003 追加段 §3）：同一分母，分子 = 严格①（桶词+词边界）。
         s.userOpenedEligibleStrict += 1
         if (strictDeclared(rec)) s.userOpenedDeclaredStrict += 1
+        // R-A 母表（ADR 0003 第四轮第 10 项）：桶不合法的轮不进母表（它们由严格对照读数负责）。
+        if (rec.strictBucket !== undefined) {
+          const b = rec.strictBucket
+          s.raTurns += 1
+          s.raBuckets.set(b, (s.raBuckets.get(b) || 0) + 1)
+          for (const k of rec.actKinds) s.raCells.set(b + '|' + k, (s.raCells.get(b + '|' + k) || 0) + 1)
+          // 派生两行（口径 pitfalls #19）：分母已保证「动过手」⇒ hedge = 桶就是 open-ended。
+          // raOpenEnded 同时是判死线的分子（占比 = raOpenEnded / raTurns）。
+          if (b === 'open-ended') { s.raOpenEnded += 1; s.raHedge += 1 }
+          else if (RA_READ_BUCKETS.includes(b) && rec.actKinds.has('write')) s.raContradiction += 1
+          if (rec.prod) s.raProd.set(b, (s.raProd.get(b) || 0) + 1)
+          if (rec.asked) s.raAsked.set(b, (s.raAsked.get(b) || 0) + 1)
+          if (rec.argUnknown > 0) s.raUnknown.set(b, (s.raUnknown.get(b) || 0) + rec.argUnknown)
+        }
       }
       if (rec.first) s.eligibleFirst += 1
       if (declared(rec)) s.eligibleDeclared += 1
@@ -946,6 +1197,7 @@ function intentGateStats(r) {
   s.deniedResumedWithoutLine = denied.filter((d) => d.resumedWithoutLine).length
   s.falseDeny = denied.filter((d) => d.falseDeny).length
   s.deniesUnattributed = r.deniesUnattributed || 0
+  s.axesUnattributed = r.axesUnattributed || 0
   s.gateMode = r.gateMode
   // 闸门账（2026-09-23）：被拒工具名 + 被拒 program 的其余派发数 + **拒绝率**的分子分母。
   // 分母 = user-opened 且**会改变行为**的轮次（现役合规率用的同一个分母，不新造第二个）。
@@ -992,6 +1244,13 @@ function gateLines(s, labelPrefix, indent) {
       + ' (' + rate(s.userOpenedDeclaredStrict, s.userOpenedEligibleStrict) + ')')
   } else {
     lines.push(indent + '严格对照（桶词+词边界）: —（无 mode 标记 ⇒ 不计算，ADR 0003 追加段 §3）')
+  }
+  // R-A 母表（ADR 0003 第四轮第 10 项；口径 pitfalls #19）—— 与严格对照同一纪律：只对带 mode 标记的
+  // 会话计算。渲染（raLines）与合并（raAdd）在模块级：本场 / ptc-roles 合计 / R-A 跨 preset 合计共用。
+  if (s.gateMode !== undefined) {
+    for (const l of raLines(s, 'R-A 母表（六桶 × 动作类别；一轮可命中多类 ⇒ 列各自可加、列和可 > n。口径 pitfalls #19）')) lines.push(indent + l)
+  } else if (s.strictSessions > 0) {
+    for (const l of raLines(s, 'R-A 母表（仅计入带 mode 标记的 ' + s.strictSessions + ' 场）')) lines.push(indent + l)
   }
   lines.push(indent + '对照口径（每轮制，旧读数）: ① 存在 ' + s.eligibleDeclared + '/' + s.eligible
     + ' (' + rate(s.eligibleDeclared, s.eligible) + ') | ② 前置 ' + s.contrastEligible + '/' + s.eligible
@@ -1556,6 +1815,79 @@ function roleFactsSelfTest() {
  */
 const GATE_FIXTURE = path.join(__dirname, 'fixtures', 'intent-gate-cases.json')
 
+/**
+ * R-A 的两个输入面守卫（ADR 0003 第四轮第 10 项）：
+ *  ① 动作类别必须是现役 BEHAVIOR_TOOLS 的**完整划分**（漏一个名字 ⇒ 那一类轮次静默少算）；
+ *  ② 判死线是**数**（≥1/2、n ≥ 2×桶数），边界必须被内存用例钉住（形状同 mountControlSelfTest：
+ *     不落盘、不随时间腐坏）。
+ */
+function raSelfTest() {
+  const out = []
+  const missing = [...BEHAVIOR_TOOLS].filter((t) => !ACTION_CLASS.has(t))
+  const extra = [...ACTION_CLASS.keys()].filter((t) => !BEHAVIOR_TOOLS.has(t))
+  out.push({ name: '动作三格是 BEHAVIOR_TOOLS 的完整划分（' + ACTION_CLASS.size + ' 项 = 现役 ' + BEHAVIOR_TOOLS.size + ' 项）',
+    ok: missing.length === 0 && extra.length === 0,
+    detail: '未归类 [' + missing.join(',') + '] / 多余 [' + extra.join(',') + ']' })
+  const badRead = RA_READ_BUCKETS.filter((b) => !GATE_BUCKETS.includes(b))
+  out.push({ name: '六桶从 STRICT_GATE_RE 派生 = ' + GATE_BUCKETS.length + ' 个，且矛盾的三个读向桶在其内',
+    ok: GATE_BUCKETS.length === 6 && badRead.length === 0, detail: '不在六桶里: ' + badRead.join(',') })
+  for (const c of [
+    { name: '判死线边界：n=16 / open-ended 8 ⇒ 恰好 1/2 ⇒ 命中', openEnded: 8, n: 16, want: 'death' },
+    { name: '判死线边界：n=16 / open-ended 7 ⇒ 低于 1/2 ⇒ 未命中', openEnded: 7, n: 16, want: 'ok' },
+    { name: '判死线下限：n=' + (RA_MIN_TURNS - 1) + ' / open-ended 9 ⇒ n 不足 ⇒ 只作协议自检', openEnded: 9, n: RA_MIN_TURNS - 1, want: 'selfcheck' },
+    { name: '空场（n=0）⇒ 协议自检，不判死', openEnded: 0, n: 0, want: 'selfcheck' },
+  ]) {
+    const got = raVerdict(c.openEnded, c.n)
+    out.push({ name: c.name, ok: got === c.want, detail: '期望 ' + c.want + '，实得 ' + got })
+  }
+  // 第二条线（ADR 0003 第四轮第 11 项）：桶间「动作分布无差异」的边界。
+  const mk = (spec) => spec.map(([bucket, n, w, d, o]) => ({ bucket, n, w, d, o }))
+  for (const c of [
+    { name: '桶间无区分：两个 n≥2 的桶三元组精确相等 ⇒ 命中 1 组',
+      rows: mk([['investigation', 5, 0, 0, 5], ['evaluation', 3, 0, 0, 3]]), want: 1 },
+    { name: '桶间无区分：n=1 的桶不参与（样本不足 ≠ 无差异）',
+      rows: mk([['evaluation', 3, 0, 0, 3], ['open-ended', 1, 0, 0, 1]]), want: 0 },
+    { name: '桶间无区分：率有差异（写 5/5 vs 4/5）⇒ 不命中',
+      rows: mk([['research', 5, 5, 0, 5], ['implementation', 5, 4, 0, 5]]), want: 0 },
+    { name: '桶间无区分：三桶同组 ⇒ 只报 1 组',
+      rows: mk([['investigation', 5, 0, 0, 5], ['evaluation', 3, 0, 0, 3], ['open-ended', 2, 0, 0, 2]]), want: 1 },
+  ]) {
+    const got = raRedundantGroups(c.rows).length
+    out.push({ name: c.name, ok: got === c.want, detail: '期望 ' + c.want + ' 组，实得 ' + got })
+  }
+  // 第三条读数（ADRn 0003 第四轮第 12 项）：路径分类器。
+  for (const c of [
+    { name: '路径分类：相对路径 docs/x.md ⇒ artifact（相对路径由 fs 后端解析到工作区）', a: ['docs/x.md', '/ws'], want: 'artifact' },
+    { name: '路径分类：.tmp/probe.mjs ⇒ tmp（规则 9 的探针例外，不算产出）', a: ['.tmp/probe.mjs', '/ws'], want: 'tmp' },
+    { name: '路径分类：/ws/docs/.tmp/a 且 cwd=/ws ⇒ tmp（绝对路径下的 .tmp 段）', a: ['/ws/docs/.tmp/a', '/ws'], want: 'tmp' },
+    { name: '路径分类：/other/x.md 且 cwd=/ws ⇒ outside', a: ['/other/x.md', '/ws'], want: 'outside' },
+    { name: '路径分类：绝对路径但工作区根未知 ⇒ unknown（不按 0 算）', a: ['/ws/docs/x.md', undefined], want: 'unknown' },
+    { name: '路径分类：参数缺失 ⇒ unknown', a: [undefined, '/ws'], want: 'unknown' },
+    { name: '路径分类：.tmpx/a 不是 .tmp 目录 ⇒ artifact（前缀不误判）', a: ['.tmpx/a.md', '/ws'], want: 'artifact' },
+  ]) {
+    const got = artifactClassOf(c.a[0], c.a[1])
+    out.push({ name: c.name, ok: got === c.want, detail: '期望 ' + c.want + '，实得 ' + got })
+  }
+  // 第三条读数：两条轴能不能把「无差异组」分开（纯函数）。
+  const mk2 = (spec) => spec.map(([bucket, n, prod, asked]) => ({ bucket, n, w: 0, d: 0, o: n, prod, asked, unknown: 0 }))
+  for (const c of [
+    { name: '重审：两条轴全 0 ⇒ 无结论（轴未观测，不是「不可分」）', rows: mk2([['investigation', 4, 0, 0], ['evaluation', 4, 0, 0]]), want: '无结论' },
+    { name: '重审到期线边界：该组 n = 18+17 = 35 < 36 ⇒ 仍是无结论', rows: mk2([['investigation', 18, 0, 0], ['evaluation', 17, 0, 0]]), want: '无结论' },
+    { name: '重审到期线：该组 n = 18+18 = 36 ⇒ 判「两轴对该组不适用」', rows: mk2([['investigation', 18, 0, 0], ['evaluation', 18, 0, 0]]), want: '不适用' },
+    { name: '重审：两条轴都有变化且率精确相等（1/4 与 1/4）⇒ 不可分', rows: mk2([['investigation', 4, 1, 0], ['evaluation', 4, 1, 0]]), want: '不可分' },
+    { name: '重审：产出轴不等（0/4 vs 1/4）⇒ 可分(产出轴)', rows: mk2([['investigation', 4, 0, 0], ['evaluation', 4, 1, 0]]), want: '可分(产出轴)' },
+    { name: '重审：产出轴相等、问人轴不等（0/4 vs 1/4）⇒ 可分(问人轴)', rows: mk2([['investigation', 4, 1, 0], ['evaluation', 4, 1, 1]]), want: '可分(问人轴)' },
+  ]) {
+    const g = raRedundantGroups(c.rows)
+    const sep = g.length === 0 ? undefined : raSeparation(g, c.rows)[0]
+    const got = sep === undefined ? '（没成组）' : (sep.verdict === 'separable' ? '可分(' + sep.by + ')'
+      : sep.verdict === 'indistinguishable' ? '不可分' : sep.verdict === 'not-applicable' ? '不适用'
+        : sep.verdict === 'unknown' ? '不可判' : '无结论')
+    out.push({ name: c.name, ok: got === c.want, detail: '期望 ' + c.want + '，实得 ' + got })
+  }
+  return out
+}
+
 function gateSelfTest() {
   let spec
   try { spec = JSON.parse(fs.readFileSync(GATE_FIXTURE, 'utf8')) } catch (e) {
@@ -1594,6 +1926,14 @@ function gateSelfTest() {
       && (want.denyReasonInvalid === undefined || s.denyReasonInvalid === want.denyReasonInvalid)
       && (want.denyReasonMissing === undefined || s.denyReasonMissing === want.denyReasonMissing)
       && (want.denyReasonLate === undefined || s.denyReasonLate === want.denyReasonLate)
+      // R-A 母表（ADR 0003 第四轮第 10 项）：同样只在夹具显式给出时期望。
+      && (want.raTurns === undefined
+        || (s.raTurns === want.raTurns && s.raOpenEnded === want.raOpenEnded
+          && s.raContradiction === want.raContradiction && s.raHedge === want.raHedge
+          && raCellLabel(s) === want.raCells
+          && (want.raRedundant === undefined || raRedundantGroups(raRows(s)).length === want.raRedundant)
+          && (want.raAxes === undefined || raAxisLabel(s) === want.raAxes)
+          && (want.raSeparation === undefined || raSeparationLabel(s) === want.raSeparation)))
     return { name: c.name, ok, detail: '期望 ' + JSON.stringify(want) + '，实得 eligible=' + s.eligible
       + ' eligibleDeclared=' + s.eligibleDeclared + ' contrastEligible=' + s.contrastEligible
       + ' acts=' + s.acts + ' actsCovered=' + s.actsCovered + ' actsUserOpened=' + s.actsUserOpened
@@ -1605,6 +1945,10 @@ function gateSelfTest() {
         + ' denyProgramOthers=' + s.denyProgramOthers + ' denyProgramSiblingsAfter=' + s.denyProgramSiblingsAfter
         + ' deniedUserOpened=' + s.deniedUserOpened)
       + (want.strictEligible === undefined ? '' : ' strict=' + s.userOpenedDeclaredStrict + '/' + s.userOpenedEligibleStrict)
+      + (want.raTurns === undefined ? '' : ' ra=' + raCellLabel(s) + ' n=' + s.raTurns
+        + ' openEnded=' + s.raOpenEnded + ' 矛盾=' + s.raContradiction + ' hedge=' + s.raHedge
+        + (want.raRedundant === undefined ? '' : ' 无区分组=' + (raRedundantGroups(raRows(s)).map((x) => x.join('=')).join('|') || '无'))
+        + (want.raAxes === undefined ? '' : ' 轴=' + raAxisLabel(s) + ' 重审=' + (raSeparationLabel(s) || '无组')))
       + (want.denyReasonInvalid === undefined ? '' : ' denyReasons=missing ' + s.denyReasonMissing
         + ' / invalid ' + s.denyReasonInvalid) }
   })
@@ -1819,6 +2163,8 @@ function main() {
     denyNames: new Map(), denyProgramOthers: 0, denyProgramSiblingsAfter: 0, deniedUserOpened: 0,
     denyReasonMissing: 0, denyReasonInvalid: 0, denyReasonLate: 0,
     userOpenedEligibleStrict: 0, userOpenedDeclaredStrict: 0, strictSessions: 0,
+    raTurns: 0, raBuckets: new Map(), raCells: new Map(), raOpenEnded: 0, raContradiction: 0, raHedge: 0,
+    raProd: new Map(), raAsked: new Map(), raUnknown: new Map(),
     gateMode: undefined,
     userOpened: 0, machineOpened: 0, unknownOrigin: 0, userOpenedEligible: 0, userOpenedDeclared: 0,
     machineOpenedActing: 0, batchUserNotFirst: 0, midTurnUserOnly: 0 }
@@ -1845,6 +2191,14 @@ function main() {
   }
   /** 进了上面的合计的那些轮次记录 —— 下方成因分类 / 拆读数必须只看这一批，否则与合计行对不上。 */
   const gatedRecs = []
+
+  /**
+   * R-A 合计（ADR 0003 第四轮第 10 项）—— **跨 preset**：那里的窗口写的是「本工作区全部带 mode 标记
+   * 的会话」。所以它**不**跟着「ptc-gate 不并入 ptc-roles 合计」那条走 —— 那一条管的是合规率的
+   * 代次可比性（#19），而 R-A 问的是「门行有没有信息量」，两份 preset 的门插件由组成契约强制逐字一致。
+   */
+  const raTotal = { sessions: 0, raTurns: 0, raBuckets: new Map(), raCells: new Map(), raOpenEnded: 0, raContradiction: 0, raHedge: 0,
+    raProd: new Map(), raAsked: new Map(), raUnknown: new Map() }
 
   // 角色事实静态检查**先跑**，且不因「没有会话」被跳过 —— 它只读仓库文件（ADR 0002 的 E 项）。
   console.log('角色事实静态检查（E —— 单一源 = preset/ptc-roles/preset.patch.yml 的 config.plugins；比对 yml / EXPECTED / README 角色表）:')
@@ -1881,6 +2235,11 @@ function main() {
     if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
     else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
   }
+console.log('\nR-A 母表输入面 + 判死线边界（ADR 0003 第四轮第 10 项）:')
+for (const t of raSelfTest()) {
+  if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
+  else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
+}
   console.log('\n轮次资格自测（合成日志 fixture scripts/fixtures/user-opened-cases.json —— 新分母的阳性/阴性路径）:')
   for (const t of userOpenedSelfTest()) {
     if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
@@ -2065,6 +2424,8 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
               gate.strictSessions += 1
               gate.userOpenedEligibleStrict += g.userOpenedEligibleStrict
               gate.userOpenedDeclaredStrict += g.userOpenedDeclaredStrict
+              // R-A 母表（ADR 0003 第四轮第 10 项）：与严格对照同一并入规则（只并 mode 标记会话）。
+              raAdd(gate, g)
             }
             for (const [n, c] of g.denyNames) gate.denyNames.set(n, (gate.denyNames.get(n) || 0) + c)
             for (const t of g.turns) {
@@ -2074,6 +2435,7 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
           } else {
             console.log('   ⊘ 本会话是 ' + r.presetKind + '：逐场读数照打，**不并入 ptc-roles 合计**（跨代次不可汇总，pitfalls #19）')
           }
+          if (g.gateMode !== undefined) { raTotal.sessions += 1; raAdd(raTotal, g) }
           for (const line of gateLines(g, '', '   ')) console.log(line)
           console.log('   逐轮（资格 + ① 存在口径）: ' + g.turns.map((t) => 'T' + t
             + (g.originByTurn.get(t) === 'user' ? '[user]' : g.originByTurn.get(t) === 'unknown' ? '[?]' : '[机器]')
@@ -2113,6 +2475,11 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
               strict: { declared: g.userOpenedDeclaredStrict, eligible: g.userOpenedEligibleStrict },
             },
             观察项: { 整场静默_每轮制: gateSilent(g), 整场静默_userOpened: gateSilentUserOpened(g), 同消息: g.sameMsg },
+              母表: {
+                n: g.raTurns, openEnded: g.raOpenEnded, contradiction: g.raContradiction, hedge: g.raHedge,
+                verdict: raVerdict(g.raOpenEnded, g.raTurns), cells: raCellLabel(g),
+                redundant: raRedundantGroups(raRows(g)).map((x) => x.join('=')),
+              },
           })
         }
       }
@@ -2129,6 +2496,11 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
     else { failLine('角色白名单不符', '   ✗ FAIL 白名单不符 | 多出: ' + (d.extra.join(', ') || '无') + ' | 缺失: ' + (d.missing.join(', ') || '无') + note) }
     if (rawOut) console.log('   工具面: ' + tools.join(', '))
   }
+  if (raTotal.sessions > 0) {
+    console.log('\nR-A 合计（' + raTotal.sessions + ' 场带 mode 标记的会话，**跨 preset** —— ADR 0003 第四轮第 10 项）:')
+    for (const l of raLines(raTotal, '本工作区全部带 mode 标记会话（判死线的唯一适用面）')) console.log('  ' + l)
+  }
+
   if (gate.turns > 0) {
     console.log('\n意图门合规率（合计 ' + gate.sessions + ' 个主 agent 会话 / ' + gate.turns + ' 轮，其中会改变行为 ' + gate.eligible + ' 轮）')
     for (const line of gateLines(gate, '', '  ')) console.log(line)
@@ -2196,6 +2568,20 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
       denyReasons: { missing: gate.denyReasonMissing, invalid: gate.denyReasonInvalid, late: gate.denyReasonLate },
       strict: { declared: gate.userOpenedDeclaredStrict, eligible: gate.userOpenedEligibleStrict, strictSessions: gate.strictSessions },
       denyNames: denyNamesLabel(gate), deniedUserOpened: gate.deniedUserOpened,
+    }
+    // R-A 的第二条线是**合计级**事实（跨 preset），逐场快照承载不了它 ⇒ 单独一段（否则证据文件
+    // 支持不了「命中」这个结论）。
+    if (raTotal.sessions > 0) {
+      snapshot['R-A合计'] = {
+        场数: raTotal.sessions,
+        口径: '本工作区全部带 mode 标记会话（跨 preset）；口径登记在 docs/pitfalls.md #19',
+        n: raTotal.raTurns, openEnded: raTotal.raOpenEnded,
+        contradiction: raTotal.raContradiction, hedge: raTotal.raHedge,
+        cells: raCellLabel(raTotal),
+        verdict: raVerdict(raTotal.raOpenEnded, raTotal.raTurns),
+        redundant: raRedundantGroups(raRows(raTotal)).map((x) => x.join('=')),
+        separation: raSeparation(raRedundantGroups(raRows(raTotal)), raRows(raTotal)),
+      }
     }
     snapshot.本次运行的判定 = { pass, fail, warn, 整场静默_每轮制: silentSessions, 整场静默_userOpened: silentUserOpenedSessions }
     fs.writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2) + '\n')

@@ -1,0 +1,285 @@
+{
+  "tool": "verify-ptc-roles.cjs",
+  "口径": {
+    "userOpenedScope": "user-opened turns",
+    "合规分子": "① 存在：门行所在消息序号 ≤ 承载首个行为动作的载体消息序号（同一条消息算数）",
+    "闸门拒绝": "成对判：name ∈ BEHAVIOR_TOOLS ∧ 结果文本含 [intent-gate]（PTC 落 tool/ptc-dispatch+isError，native 落 tool/result）；理由按结果文本分桶（missing/invalid/late，ADR 0003 追加段 §2）",
+    "严格对照": "桶词+词边界（^Intent:\\s*(六桶)\\b/i，与插件 GATE_LINE_RE 同源）；分子 = 严格①，分母 = user-opened 行为轮；只对带 mode 标记的会话计算/并入合计（ADR 0003 追加段 §3）",
+    "假拒候选": "denied && 严格①合规（与插件 FALSE_DENY 同判据）；宽松合规但桶无效的拒绝是有意宽严差，不触发",
+    "拒绝率": "分子 = 被拒的 user-opened 行为轮；分母 = user-opened 且会改变行为的轮",
+    "登记处": "docs/pitfalls.md #19（口径）· docs/decisions/0003（预登记弱线：**阈值以该文件为准**，此处不复制 —— #12 的病）"
+  },
+  "generatedAt": "2026-10-01T14:31:45.511Z",
+  "sessionsRoot": "/Users/eric/.dsh/sessions",
+  "scope": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+  "会话": [
+    {
+      "id": "session-978b76bd-148f-49fc-8f1c-d7336e44ab8e",
+      "createdAt": "2026-10-01T06:39:55.932Z",
+      "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+      "preset": "ptc-gate",
+      "presetSource": "persona",
+      "role": "orchestrator(未识别)",
+      "ptc": true,
+      "gateMode": "enforce",
+      "轮次": {
+        "total": 15,
+        "userOpened": 15,
+        "machineOpened": 0,
+        "unknownOrigin": 0,
+        "machineOpenedActing": 0,
+        "userOpenedEligible": 8,
+        "userOpenedDeclared": 7
+      },
+      "闸门": {
+        "denies": 1,
+        "deniedTurns": 1,
+        "recovered": 1,
+        "resumedWithoutLine": 1,
+        "falseDeny": 0,
+        "denyReasons": {
+          "missing": 1,
+          "invalid": 0,
+          "late": 0
+        },
+        "denyNames": "bash×1",
+        "deniedUserOpened": 1,
+        "programOthers": 0,
+        "programSiblingsAfter": 0,
+        "strict": {
+          "declared": 7,
+          "eligible": 8
+        }
+      },
+      "观察项": {
+        "整场静默_每轮制": false,
+        "整场静默_userOpened": false,
+        "同消息": 7
+      },
+      "母表": {
+        "n": 8,
+        "openEnded": 1,
+        "contradiction": 0,
+        "hedge": 1,
+        "verdict": "selfcheck",
+        "cells": "evaluation|other=2,implementation|other=4,implementation|write=4,investigation|other=1,open-ended|other=1",
+        "redundant": []
+      }
+    },
+    {
+      "id": "session-7bb9b054-d3bd-4e2e-978c-ee9d314dbda3",
+      "createdAt": "2026-10-01T09:22:27.378Z",
+      "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+      "preset": "ptc-gate",
+      "presetSource": "persona",
+      "role": "orchestrator(未识别)",
+      "ptc": true,
+      "gateMode": "enforce",
+      "轮次": {
+        "total": 7,
+        "userOpened": 7,
+        "machineOpened": 0,
+        "unknownOrigin": 0,
+        "machineOpenedActing": 0,
+        "userOpenedEligible": 7,
+        "userOpenedDeclared": 7
+      },
+      "闸门": {
+        "denies": 0,
+        "deniedTurns": 0,
+        "recovered": 0,
+        "resumedWithoutLine": 0,
+        "falseDeny": 0,
+        "denyReasons": {
+          "missing": 0,
+          "invalid": 0,
+          "late": 0
+        },
+        "denyNames": "—",
+        "deniedUserOpened": 0,
+        "programOthers": 0,
+        "programSiblingsAfter": 0,
+        "strict": {
+          "declared": 7,
+          "eligible": 7
+        }
+      },
+      "观察项": {
+        "整场静默_每轮制": false,
+        "整场静默_userOpened": false,
+        "同消息": 5
+      },
+      "母表": {
+        "n": 7,
+        "openEnded": 0,
+        "contradiction": 0,
+        "hedge": 0,
+        "verdict": "selfcheck",
+        "cells": "implementation|other=3,implementation|write=3,investigation|other=4",
+        "redundant": []
+      }
+    },
+    {
+      "id": "session-56e90667-a3a6-49b9-abaf-13110540384c",
+      "createdAt": "2026-10-01T13:34:34.215Z",
+      "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+      "preset": "ptc-gate",
+      "presetSource": "persona",
+      "role": "orchestrator(未识别)",
+      "ptc": true,
+      "gateMode": "enforce",
+      "轮次": {
+        "total": 12,
+        "userOpened": 12,
+        "machineOpened": 0,
+        "unknownOrigin": 0,
+        "machineOpenedActing": 0,
+        "userOpenedEligible": 6,
+        "userOpenedDeclared": 6
+      },
+      "闸门": {
+        "denies": 0,
+        "deniedTurns": 0,
+        "recovered": 0,
+        "resumedWithoutLine": 0,
+        "falseDeny": 0,
+        "denyReasons": {
+          "missing": 0,
+          "invalid": 0,
+          "late": 0
+        },
+        "denyNames": "—",
+        "deniedUserOpened": 0,
+        "programOthers": 0,
+        "programSiblingsAfter": 0,
+        "strict": {
+          "declared": 6,
+          "eligible": 6
+        }
+      },
+      "观察项": {
+        "整场静默_每轮制": false,
+        "整场静默_userOpened": false,
+        "同消息": 3
+      },
+      "母表": {
+        "n": 6,
+        "openEnded": 0,
+        "contradiction": 0,
+        "hedge": 0,
+        "verdict": "selfcheck",
+        "cells": "evaluation|other=1,implementation|other=4,implementation|write=5",
+        "redundant": []
+      }
+    },
+    {
+      "id": "session-aef3cd0c-edf6-4730-a7b0-9ca0d71832b9",
+      "createdAt": "2026-10-01T13:59:00.409Z",
+      "cwd": "/Users/eric/Project/tests/dsh-plugins/cireric-dsh-ptc-roles",
+      "preset": "ptc-gate",
+      "presetSource": "persona",
+      "role": "orchestrator(未识别)",
+      "ptc": true,
+      "gateMode": "enforce",
+      "轮次": {
+        "total": 5,
+        "userOpened": 2,
+        "machineOpened": 3,
+        "unknownOrigin": 0,
+        "machineOpenedActing": 1,
+        "userOpenedEligible": 2,
+        "userOpenedDeclared": 1
+      },
+      "闸门": {
+        "denies": 1,
+        "deniedTurns": 1,
+        "recovered": 0,
+        "resumedWithoutLine": 0,
+        "falseDeny": 0,
+        "denyReasons": {
+          "missing": 1,
+          "invalid": 0,
+          "late": 0
+        },
+        "denyNames": "bash×1",
+        "deniedUserOpened": 1,
+        "programOthers": 1,
+        "programSiblingsAfter": 0,
+        "strict": {
+          "declared": 1,
+          "eligible": 2
+        }
+      },
+      "观察项": {
+        "整场静默_每轮制": false,
+        "整场静默_userOpened": false,
+        "同消息": 1
+      },
+      "母表": {
+        "n": 1,
+        "openEnded": 0,
+        "contradiction": 0,
+        "hedge": 0,
+        "verdict": "selfcheck",
+        "cells": "research|delegate=1,research|other=1",
+        "redundant": []
+      }
+    }
+  ],
+  "合计": {
+    "人口": "ptc-roles only —— ptc-gate 逐场照打、不并入合计（跨代次不可汇总，pitfalls #19）",
+    "sessions": 0,
+    "turns": 0,
+    "eligible": 0,
+    "userOpenedEligible": 0,
+    "userOpenedDeclared": 0,
+    "denies": 0,
+    "deniedTurns": 0,
+    "deniedRecovered": 0,
+    "deniedResumedWithoutLine": 0,
+    "falseDeny": 0,
+    "denyReasons": {
+      "missing": 0,
+      "invalid": 0,
+      "late": 0
+    },
+    "strict": {
+      "declared": 0,
+      "eligible": 0,
+      "strictSessions": 0
+    },
+    "denyNames": "—",
+    "deniedUserOpened": 0
+  },
+  "R-A合计": {
+    "场数": 4,
+    "口径": "本工作区全部带 mode 标记会话（跨 preset）；口径登记在 docs/pitfalls.md #19",
+    "n": 22,
+    "openEnded": 1,
+    "contradiction": 0,
+    "hedge": 1,
+    "cells": "evaluation|other=3,implementation|other=11,implementation|write=12,investigation|other=5,open-ended|other=1,research|delegate=1,research|other=1",
+    "verdict": "ok",
+    "redundant": [
+      "investigation=evaluation"
+    ],
+    "separation": [
+      {
+        "group": [
+          "investigation",
+          "evaluation"
+        ],
+        "verdict": "unobserved",
+        "by": null,
+        "n": 8
+      }
+    ]
+  },
+  "本次运行的判定": {
+    "pass": 93,
+    "fail": 0,
+    "warn": 0,
+    "整场静默_每轮制": 0,
+    "整场静默_userOpened": 0
+  }
+}

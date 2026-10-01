@@ -683,6 +683,312 @@
         {"type": "assistant/message", "seq": 3, "data": {"turn": 1, "message": {"role": "assistant", "content": [{"type": "text", "text": "Intent: fix — 修这个。"}]}}},
         {"type": "tool/call", "seq": 4, "data": {"turn": 1, "step": 1, "callId": "c1", "name": "write", "arguments": "{}"}}
       ]
+    },
+    {
+      "name": "R-A 母表（ADR 0003 第四轮第 10 项）：桶值落盘 + 动作归类 + 派生两行（读向桶 + write ⇒ 矛盾；open-ended ⇒ hedge）",
+      "expect": {"eligible": 2, "eligibleDeclared": 2, "contrastEligible": 0, "acts": 2, "actsCovered": 2, "silent": false,
+        "strictEligible": 2, "strictDeclared": 2,
+        "raTurns": 2, "raOpenEnded": 1, "raContradiction": 1, "raHedge": 1,
+        "raCells": "open-ended|other=1,research|write=1", "raRedundant": 0,
+        "raAxes": "research:0/1,0/1,u1|open-ended:0/1,0/1",
+        "raSeparation": ""},
+      "events": [
+        {"type": "turn/start", "seq": 1, "data": {"turn": 1}},
+        {"type": "user/message", "seq": 2, "data": {"id": "u1", "role": "user", "source": {"kind": "user"}, "content": [{"type": "text", "text": "查一下上游文档"}]}},
+        {"type": "assistant/message", "seq": 3, "data": {"turn": 1, "message": {"role": "assistant", "content": [{"type": "text", "text": "Intent: research — 你要的是外部文档（依据：你点名了上游）；我先查。"}]}}},
+        {"type": "tool/call", "seq": 4, "data": {"turn": 1, "step": 1, "callId": "c1", "name": "write", "arguments": "{}"}},
+        {"type": "turn/start", "seq": 5, "data": {"turn": 2}},
+        {"type": "user/message", "seq": 6, "data": {"id": "u2", "role": "user", "source": {"kind": "user"}, "content": [{"type": "text", "text": "顺手收拾一下"}]}},
+        {"type": "assistant/message", "seq": 7, "data": {"turn": 2, "message": {"role": "assistant", "content": [{"type": "text", "text": "Intent: open-ended — 你要的是收拾（依据：顺手收拾一下）；我先看再动。"}]}}},
+        {"type": "tool/call", "seq": 8, "data": {"turn": 2, "step": 1, "callId": "c2", "name": "bash", "arguments": "{}"}}
+      ]
+    },
+    {
+      "name": "R-A 第二条线（ADR 0003 第四轮第 11 项）：两个 n=2 的桶三元组精确相等 ⇒ 报 1 组（阳性路径）",
+      "expect": {"eligible": 4, "eligibleDeclared": 4, "contrastEligible": 0, "acts": 4, "actsCovered": 4, "silent": false,
+        "strictEligible": 4, "strictDeclared": 4,
+        "raTurns": 4, "raOpenEnded": 0, "raContradiction": 0, "raHedge": 0,
+        "raCells": "evaluation|other=2,investigation|other=2", "raRedundant": 1},
+      "events": [
+        {"type": "turn/start", "seq": 1, "data": {"turn": 1}},
+        {"type": "user/message", "seq": 2, "data": {"id": "u1", "role": "user", "source": {"kind": "user"}, "content": [{"type": "text", "text": "第 1 轮"}]}},
+        {"type": "assistant/message", "seq": 3, "data": {"turn": 1, "message": {"role": "assistant", "content": [{"type": "text", "text": "Intent: investigation — 第 1 轮（依据：第 1 轮）；我先看。"}]}}},
+        {"type": "tool/call", "seq": 4, "data": {"turn": 1, "step": 1, "callId": "c1", "name": "bash", "arguments": "{}"}},
+        {"type": "turn/start", "seq": 5, "data": {"turn": 2}},
+        {"type": "user/message", "seq": 6, "data": {"id": "u2", "role": "user", "source": {"kind": "user"}, "content": [{"type": "text", "text": "第 2 轮"}]}},
+        {"type": "assistant/message", "seq": 7, "data": {"turn": 2, "message": {"role": "assistant", "content": [{"type": "text", "text": "Intent: investigation — 第 2 轮（依据：第 2 轮）；我先看。"}]}}},
+        {"type": "tool/call", "seq": 8, "data": {"turn": 2, "step": 1, "callId": "c2", "name": "bash", "arguments": "{}"}},
+        {"type": "turn/start", "seq": 9, "data": {"turn": 3}},
+        {"type": "user/message", "seq": 10, "data": {"id": "u3", "role": "user", "source": {"kind": "user"}, "content": [{"type": "text", "text": "第 3 轮"}]}},
+        {"type": "assistant/message", "seq": 11, "data": {"turn": 3, "message": {"role": "assistant", "content": [{"type": "text", "text": "Intent: evaluation — 第 3 轮（依据：第 3 轮）；我先看。"}]}}},
+        {"type": "tool/call", "seq": 12, "data": {"turn": 3, "step": 1, "callId": "c3", "name": "bash", "arguments": "{}"}},
+        {"type": "turn/start", "seq": 13, "data": {"turn": 4}},
+        {"type": "user/message", "seq": 14, "data": {"id": "u4", "role": "user", "source": {"kind": "user"}, "content": [{"type": "text", "text": "第 4 轮"}]}},
+        {"type": "assistant/message", "seq": 15, "data": {"turn": 4, "message": {"role": "assistant", "content": [{"type": "text", "text": "Intent: evaluation — 第 4 轮（依据：第 4 轮）；我先看。"}]}}},
+        {"type": "tool/call", "seq": 16, "data": {"turn": 4, "step": 1, "callId": "c4", "name": "bash", "arguments": "{}"}}
+      ]
+    },
+    {
+      "name": "R-A 重审该组（ADR 0003 第四轮第 12 项）：三元组相等但产出轴不等 ⇒ 可分(产出轴)；.tmp 探针不算产出",
+      "expect": {
+        "eligible": 4,
+        "eligibleDeclared": 4,
+        "contrastEligible": 0,
+        "acts": 7,
+        "actsCovered": 7,
+        "silent": false,
+        "actsUserOpened": 7,
+        "actsCoveredUserOpened": 7,
+        "strictEligible": 4,
+        "strictDeclared": 4,
+        "raTurns": 4,
+        "raOpenEnded": 0,
+        "raContradiction": 2,
+        "raHedge": 0,
+        "raCells": "evaluation|other=2,evaluation|write=1,investigation|other=2,investigation|write=1",
+        "raRedundant": 1,
+        "raAxes": "investigation:0/2,0/2|evaluation:1/2,1/2",
+        "raSeparation": "investigation/evaluation=可分(产出轴)"
+      },
+      "events": [
+        {
+          "type": "turn/start",
+          "seq": 1,
+          "data": {
+            "turn": 1
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 2,
+          "data": {
+            "id": "u1",
+            "role": "user",
+            "source": {
+              "kind": "user"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "第 1 轮"
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "seq": 3,
+          "data": {
+            "turn": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: investigation — 第 1 轮（依据：第 1 轮）；我先看。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 4,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1a",
+            "name": "bash",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 5,
+          "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "c1b",
+            "name": "write",
+            "arguments": "{\"file_path\":\".tmp/probe.mjs\"}"
+          }
+        },
+        {
+          "type": "turn/start",
+          "seq": 6,
+          "data": {
+            "turn": 2
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 7,
+          "data": {
+            "id": "u2",
+            "role": "user",
+            "source": {
+              "kind": "user"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "第 2 轮"
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "seq": 8,
+          "data": {
+            "turn": 2,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: investigation — 第 2 轮（依据：第 2 轮）；我先看。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 9,
+          "data": {
+            "turn": 2,
+            "step": 1,
+            "callId": "c2",
+            "name": "bash",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "turn/start",
+          "seq": 10,
+          "data": {
+            "turn": 3
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 11,
+          "data": {
+            "id": "u3",
+            "role": "user",
+            "source": {
+              "kind": "user"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "第 3 轮"
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "seq": 12,
+          "data": {
+            "turn": 3,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: evaluation — 第 3 轮（依据：第 3 轮）；我先看。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 13,
+          "data": {
+            "turn": 3,
+            "step": 1,
+            "callId": "c3a",
+            "name": "bash",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 14,
+          "data": {
+            "turn": 3,
+            "step": 1,
+            "callId": "c3b",
+            "name": "write",
+            "arguments": "{\"file_path\":\"docs/x.md\"}"
+          }
+        },
+        {
+          "type": "turn/start",
+          "seq": 15,
+          "data": {
+            "turn": 4
+          }
+        },
+        {
+          "type": "user/message",
+          "seq": 16,
+          "data": {
+            "id": "u4",
+            "role": "user",
+            "source": {
+              "kind": "user"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "第 4 轮"
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant/message",
+          "seq": 17,
+          "data": {
+            "turn": 4,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Intent: evaluation — 第 4 轮（依据：第 4 轮）；我先看。"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 18,
+          "data": {
+            "turn": 4,
+            "step": 1,
+            "callId": "c4a",
+            "name": "bash",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "tool/call",
+          "seq": 19,
+          "data": {
+            "turn": 4,
+            "step": 1,
+            "callId": "c4b",
+            "name": "ask_user_question",
+            "arguments": "{}"
+          }
+        }
+      ]
     }
   ]
 }
