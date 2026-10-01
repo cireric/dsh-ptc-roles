@@ -1621,6 +1621,142 @@ function compare(tools, expected) {
   }
 }
 
+// ── 挂载代次对账（R4；ADR 0003 第四轮 §2 登记）──────────────────────────────────────
+// 它回答的问题：**我改的这一代，跑着的会话到底载入了没有**。`make check` 只比磁盘上的两份文件，
+// 从不看运行态；而「改完没真重新挂载」在本仓是**有记录且仍然活着**的静默失败面（pitfalls A 节三次
+// 实测 + 2026-09-29 升级后 ptc-gate 静默消失、而当时的 check 还在对账一条死路径）。
+// 判据 = 会话库里**最后一条** `system/message` 的 `time`（**不是** header.createdAt：resume 会换上
+// 新一代 persona 却保留旧 createdAt，锚 createdAt 恰好在最要紧的那类场景上瞎）。
+// 落点在**唯一 reader** 里、不另起脚本 —— AGENTS.md 规则 9：会话数据的解析只允许有一份
+// （第二个 parser = 第二套读数，正是 #24 那类翻车的来源）。
+const PRESET_FORM_PARTS = ['preset', 'package.json']
+
+/** 仓库「当前形态」= preset/ 与 package.json 里最新的 mtimeMs。
+ *  ⚠️ 口径：这是 **mtime**，不是提交时间 —— `git checkout` / `clone` 会把整树刷成同一时刻，
+ *  那种情况下本读数会偏「未生效」。所以它是提示「去做一次真正的重新挂载」的**读数**，不是断言。 */
+function repoFormTime() {
+  let newest
+  const consider = (p) => {
+    try {
+      const st = fs.statSync(p)
+      if (newest === undefined || st.mtimeMs > newest) newest = st.mtimeMs
+    } catch { /* 读不到就当它不存在；上层按 unknown 响亮处理，不静默退 0 */ }
+  }
+  const walk = (p) => {
+    let st
+    try { st = fs.statSync(p) } catch { return }
+    if (!st.isDirectory()) { consider(p); return }
+    let entries
+    try { entries = fs.readdirSync(p, { withFileTypes: true }) } catch { return }
+    for (const e of entries) walk(path.join(p, e.name))
+  }
+  for (const part of PRESET_FORM_PARTS) walk(path.join(__dirname, '..', part))
+  return newest
+}
+
+/** 默认比较器：仓库形态**晚于**某场载入 ⇒ 那场跑的是旧代。抽成参数只为阴性对照能塞一个错的进来。 */
+const mountCompare = (repoTime, loadTime) => repoTime > loadTime
+
+/** 纯函数：仓库形态时间 + 各场载入时间 ⇒ 判定。loads = [{ id, time }]，time 缺省 = 该场没有 system/message。 */
+function mountVerdict(repoTime, loads, compare = mountCompare) {
+  if (typeof repoTime !== 'number') return { kind: 'unknown', loads, repoTime }
+  const known = loads.filter((l) => typeof l.time === 'number')
+  if (known.length === 0) return { kind: 'unloaded', loads, repoTime, known }
+  let latest = known[0]
+  for (const l of known) if (l.time > latest.time) latest = l
+  // 判定 = 「**存在**一场的载入不早于仓库形态」才叫已生效；否则改完还没有任何会话载入过。
+  const stale = compare(repoTime, latest.time)
+  return { kind: stale ? 'stale' : 'fresh', loads, repoTime, known, latest }
+}
+
+/** 只取每场最后一条 system/message 的 time —— 这条读数不欠其余事件。 */
+function scanSessionLoads(files, projectCwd, all) {
+  const loads = []
+  for (const file of files) {
+    // 会话 id = **父目录名**（布局：sessions/<工作区>/<session-id>/session[.vN].jsonl[.zstd]）。
+    // 目录名有两种形状、按前缀筛会让旧目录静默退化成文件名 —— 坑与判据见 docs/pitfalls.md #34。
+    const parent = path.basename(path.dirname(file))
+    const id = parent.startsWith('--') ? path.basename(file).replace(/\.(zstd|jsonl)$/, '') : parent
+    const text = decode(file)
+    if (text === undefined) { loads.push({ id, file, time: undefined, cwd: undefined }); continue }
+    let last
+    let cwd
+    for (const raw of text.split('\n')) {
+      if (raw === '') continue
+      let ev
+      try { ev = JSON.parse(raw) } catch { continue }
+      if (ev === null || typeof ev !== 'object') continue
+      if (ev.type === 'system/message' && typeof ev.time === 'number'
+        && (last === undefined || ev.time > last)) last = ev.time
+      // 作用域判据与行为那支**同一条**（sameCwd + session 事件上的 cwd）：默认只看本工作区。
+      else if (cwd === undefined && ev.type === 'session') {
+        cwd = typeof ev.cwd === 'string' ? ev.cwd
+          : (ev.data && ev.data.header && typeof ev.data.header.cwd === 'string' ? ev.data.header.cwd : undefined)
+      }
+    }
+    if (!all && !sameCwd(cwd, projectCwd)) continue
+    loads.push({ id, file, time: last, cwd })
+  }
+  return loads
+}
+
+const fmtStamp = (ms) => new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + 'Z'
+
+/** 判定行的读者是维护者：先给结论，再给可核对的输入。 */
+function printMountReport(report, fileCount, scopeLabel) {
+  console.log('\n挂载代次对账（R4）: 判据 = 每场**最后一条** `system/message` 的 time（不是 createdAt）')
+  console.log('  作用域: ' + scopeLabel + '；会话文件 ' + fileCount + ' 个（' + SESSIONS_ROOT + '）')
+  console.log('  仓库形态: ' + (typeof report.repoTime === 'number' ? fmtStamp(report.repoTime) : '**读不到**（preset/ 或 package.json 缺失）'))
+  if (report.kind === 'unknown') {
+    console.log('  ✗ 判定不可得：读不到仓库形态时间 —— 本脚本拒绝在这种状态下报「符合预期」')
+    return
+  }
+  if (report.kind === 'unloaded') {
+    console.log('  ! 本次未验证：本作用域里没有任何会话带 system/message 载入时间（新装还没跑过会话，或会话库为空；--all 可放开作用域）')
+    return
+  }
+  const known = report.known.slice().sort((a, b) => b.time - a.time)
+  const MOUNT_LIST_LIMIT = 8
+  for (const l of known.slice(0, MOUNT_LIST_LIMIT)) console.log('    ' + l.id + '  载入 ' + fmtStamp(l.time))
+  if (known.length > MOUNT_LIST_LIMIT) {
+    console.log('    …（只列最新 ' + MOUNT_LIST_LIMIT + ' 场：本作用域共 ' + report.loads.length
+      + ' 场，其中 ' + known.length + ' 场带 system/message、' + (report.loads.length - known.length) + ' 场没有）')
+  }
+  if (report.kind === 'fresh') {
+    console.log('  ✓ 已生效：最近一次载入（' + report.latest.id + '，' + fmtStamp(report.latest.time) + '）不早于仓库当前形态')
+  } else {
+    console.log('  ✗ 未生效：仓库形态晚于**所有**会话的最近载入（' + report.latest.id + '，' + fmtStamp(report.latest.time) + '）')
+    console.log('    ⇒ 需要一次**真正的重新挂载**（宿主重启 / preset 重新装配）；同一进程里新开会话不算（pitfalls A 节）')
+  }
+}
+
+/** 阴性对照：同一组用例喂一个**方向写错**的比较器，必须有期望落空 —— 否则用例本身是空转。 */
+function mountControlSelfTest() {
+  const mutant = (repoTime, loadTime) => repoTime < loadTime
+  const cases = [
+    { name: '载入晚于仓库形态 ⇒ fresh', repo: 1000, loads: [{ id: 'a', time: 2000 }], want: 'fresh' },
+    { name: '载入早于仓库形态 ⇒ stale', repo: 3000, loads: [{ id: 'a', time: 2000 }], want: 'stale' },
+    { name: '多场里有一场是新代 ⇒ fresh', repo: 3000, loads: [{ id: 'a', time: 1000 }, { id: 'b', time: 3000 }], want: 'fresh' },
+    { name: '同一时刻算 fresh（边界）', repo: 3000, loads: [{ id: 'a', time: 3000 }], want: 'fresh' },
+    { name: '该场没有 system/message ⇒ unloaded', repo: 3000, loads: [{ id: 'a', time: undefined }], want: 'unloaded' },
+    { name: '读不到仓库形态 ⇒ unknown', repo: undefined, loads: [{ id: 'a', time: 1000 }], want: 'unknown' },
+  ]
+  console.log('挂载代次对账 · 阴性对照（内存用例，不落盘、不随时间腐坏）:')
+  let bad = 0
+  let caught = 0
+  for (const c of cases) {
+    const real = mountVerdict(c.repo, c.loads)
+    const ok = real.kind === c.want
+    const wrong = mountVerdict(c.repo, c.loads, mutant).kind !== c.want
+    if (wrong) caught += 1
+    if (!ok) bad += 1
+    console.log('   ' + (ok ? '✓' : '✗ FAIL') + ' ' + c.name + '（real=' + real.kind + ' want=' + c.want + (wrong ? '；变异被抓' : '；**变异没被抓**') + '）')
+  }
+  console.log('   判据：真实比较器必须全对；方向写错的比较器至少让一条期望落空（否则用例空转）。'
+    + ' 实得：全对 ' + (cases.length - bad) + '/' + cases.length + '、变异被抓 ' + caught + '/' + cases.length)
+  return bad === 0 && caught > 0
+}
+
 function main() {
   const args = process.argv.slice(2)
   const all = args.includes('--all')
@@ -1634,6 +1770,27 @@ function main() {
   const projectCwd = cwdFlag >= 0 && args[cwdFlag + 1] !== undefined
     ? path.resolve(args[cwdFlag + 1])
     : (CONTROL_SESSIONS ? FIXTURE_CWD : DEFAULT_PROJECT_CWD)
+
+  // `--mount`（R4；ADR 0003 第四轮 §2）：只跑「挂载代次对账」然后退出 —— 它回答的是**部署**问题、
+  // 不是行为问题，所以默认模式一个字都不打印（`--control-sessions` 的期望失败集合因此不受影响）。
+  // 退出码：0 = 已生效；1 = 未生效（需一次真正的重新挂载）；2 = 判定不可得（响亮失败，不静默退 0）。
+  if (args.includes('--mount')) {
+    if (args.includes('--control')) {
+      process.exitCode = mountControlSelfTest() ? 0 : 1
+      return
+    }
+    const mountFiles = findSessionFiles()
+    if (mountFiles.some((f) => f.endsWith('.zstd')) && !zstdAvailable()) {
+      console.log('✗ FAIL 找不到 zstd —— 有 ' + mountFiles.length + ' 个会话文件却一个都解不开：挂载代次**本次未验证**。')
+      console.log('  ⇒ 装上 zstd（或让它进 PATH）后重跑。')
+      process.exitCode = 2
+      return
+    }
+    const mountReport = mountVerdict(repoFormTime(), scanSessionLoads(mountFiles, projectCwd, all))
+    printMountReport(mountReport, mountFiles.length, all ? 'ALL' : projectCwd)
+    process.exitCode = mountReport.kind === 'fresh' ? 0 : (mountReport.kind === 'stale' ? 1 : 2)
+    return
+  }
   const rawOut = args.includes('--raw')
   // `--snapshot <path>`（2026-09-23）：把**判定读数**落一个 JSON。会话库是滚动窗口（pitfalls #15），
   // 已经吃掉 #19 与 #26 引用的两条基线 ⇒ 「本次运行的读数」需要一个便宜的留档方式。

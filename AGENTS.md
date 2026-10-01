@@ -20,11 +20,13 @@ DSH agent preset：orchestrator 主 agent（PTC）+ `explorer`/`librarian`/`orac
 **条件触发**
 
 7. **改完 preset 必须自验**：`make verify`（四支脚本：行为 / 插件单元 / 看门狗 / 框架契约 **+ 组成契约 `deploy-preset.cjs --compose`**），
-   并用 `make control` 跑两个阴性对照。**判据是各脚本自己打印的判定行** —— 不是退出码，也不是任何文档里的
-   断言条数（条数随改动变，抄进文档必漂）。四支脚本 + 组成契约统一「0 = 本次运行符合预期」，`--control` 在预期失败数上
-   同样退 0；`--control` 的预期失败集合由脚本内的 `REQUIRED_CONTROL_FAILURES` / 断言表定义，**多一条也是异常**
-   （判据是集合相等，不是包含）。部署与对账走 `make deploy` / `make check`（漂移退 2）。
-   改了 `.mjs` 还要 `dev_reload_preset`（输出须含 `x.mjs -> ?v=N`）并开新会话。
+   并用 `make control` 跑阴性对照。**判据是各脚本自己打印的判定行** —— 不是退出码，也不是任何文档里的
+   断言条数或对照条数（条数随改动变，抄进文档必漂；现役条数以 `Makefile` 为准）。各脚本统一「0 = 本次运行符合预期」，
+   `--control` 在预期失败数上同样退 0；`--control` 的预期失败集合由脚本内的 `REQUIRED_CONTROL_FAILURES` /
+   断言表定义，**多一条也是异常**（判据是集合相等，不是包含）。部署与对账走 `make deploy` / `make check`（漂移退 2）。
+   改了**会被挂载读到的文件**（`preset/**`、`package.json`）之后，**必须有一次真正的重新挂载**（宿主进程重启 /
+   preset 重新装配）才算生效 —— 同一进程里新开会话**不算**；`make fresh` 回答「我改的这一代生效了没有」。
+   旧热更惯用法已失效（`dev_reload_preset`、裸包名子路径的 `?v=`），机制与判据见 `docs/pitfalls.md` A 节。
 8. **改 preset、或排障之前，先读 `docs/pitfalls.md`** —— 机制与坑的唯一知识源。
 9. **会话数据的结论必须由唯一 reader 复核**：任何关于会话 / 轮次 / 角色 / 合规 / 用量的数字，只能出自
    `scripts/verify-ptc-roles.cjs`（读别的工作区加 `--cwd <path>`）。临时的 `grep` / 一次性脚本**只准提假设**，

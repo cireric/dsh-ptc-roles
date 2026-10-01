@@ -79,8 +79,14 @@ make check     # 对账：**已安装**的那一份 vs 仓库（依赖规格 / b
 
 ```bash
 make verify    # 四个脚本（行为 / 插件单元 / 看门狗 / 框架契约）+ 组成契约
-make control   # 两个阴性对照：断言有没有空转
+make control   # 阴性对照：断言有没有空转
+make fresh     # 挂载代次对账：我改的这一代生效了没有（只读；0 = 已生效 / 1 = 未生效 / 2 = 判定不可得）
 ```
+
+`make fresh` 的判据 = 每场会话**最后一条** `system/message` 的 `time`（不是会话 `createdAt` —— resume 会换上新一代
+却保留旧时间），与 `preset/` + `package.json` 的最新 mtime 对账；默认只看本工作区（`--all` 放开）。⚠️ 判据用的是 **mtime**：
+`git checkout` / `clone` 会把整树刷成同一时刻，那时读数会偏「未生效」—— 所以它是**提示**（提示去做一次真正的重新挂载），
+不是断言，也不接 `make verify`。决策与口径：`docs/decisions/0003-intent-gate-contract.md` 第四轮追加段。
 
 | 脚本 | 它证明什么 |
 |---|---|
@@ -120,4 +126,5 @@ make control   # 两个阴性对照：断言有没有空转
 | `docs/ptc-roles-value-vs-upstream.md` | 官方既能委派，这个 preset 还剩什么价值（上游参数面 / 官方 preset / 本仓角色行的逐行对照） |
 | `docs/decisions/` | 当初为什么这样设计、否决过什么 |
 | `docs/evidence/` | 某个结论的原始输出、复现方法、逐轮验证记录 |
+| `docs/2026-10-01-ptc-gate-vs-ptc-value-probe.md` | 相对上游 `ptc`，门行是被消费的功能还是仪式 —— 怎么跑这次 A/B 探针、跑完谁判 |
 | `docs/2026-09-30-ptc-gate-real-task-test-plan.md` | 本次优化（verbatim-gate + 语义层 ②③④）**怎么用真实任务测**、测例与执行步骤 |
