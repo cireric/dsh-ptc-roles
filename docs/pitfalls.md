@@ -329,6 +329,14 @@
         理由：宽松 declSeq 会被桶无效的首行抢先记上 —— 不换判据，**第一次合法的 INVALID 拒绝**就会误触
         「假拒候选 n>0 ⇒ 改回 observe」的回滚线。恢复/无门行继续同步换严格 declSeq（INVALID 后改桶重发记为恢复）。
         插件侧无需改动即自洽：其 compliant() 本就以严格 declSeq 为准。
+
+    - **2026-10-01 追加（第四轮：两条读数预登记 —— reader 尚未实现；决策与判死线在 `docs/decisions/0003`）**：
+      本条只管口径。两条**并列读数**（实现后由 reader 逐场打印）：
+      · **矛盾计数**：user-opened 且会改变行为的轮次里，门行桶 ∈ {research, investigation, evaluation}
+        而该轮出现 `write` / `edit`（桶取自门行首行，与插件 `GATE_LINE_RE` 同源）。
+      · **hedge 计数**：桶 = `open-ended` 且该轮动过手。
+      两者**与现役合规分子同分母**（user-opened 且会改变行为的轮），**合规分子与分母一字不动**；
+      只作观察，不接退出码、不进任何阈值判定。执行判据（`tools/pre-execute` 闸门）与 persona **均不改**。
 20. **纯文本的 assistant 消息会**结束本轮** —— 所以「先单独发一条声明、再动手」在本框架里做不到。**
     `agent.ts:486-488`：`const toolCalls = message.content.filter(block => block.type === 'tool-call');
     if (toolCalls.length === 0) return { kind: 'completed' }` ⇒ 一条**没有工具调用**的助手消息＝本轮到此
@@ -594,6 +602,13 @@
       **不发明新的门禁**：判它没有可靠正则（同 #16 的取舍），且这是契约文本问题，不是可机械核查的行为问题。
     - 一般规则：**persona 是散文，不是脚本。** 任何要模型产出的"变量"都必须给**可达的取值动作**
       （跑哪个工具、读哪个字段），不能给 `$VAR`；反过来，persona 里出现 ```` 之外的 shell 语法都要怀疑一次。
+
+34. **会话目录名两种形状：`session-<uuid>`（新）与**裸 `<uuid>`**（旧）—— 按前缀筛会把旧目录整批退化成文件名。**
+    2026-10-01 实测（本仓库工作区 9 场 = 2 个 `session-<uuid>` + 7 个裸 `<uuid>`）。任何「读会话目录取 id」的
+    代码只要写成 `dir.startsWith('session-')`，旧目录就静默落到兜底分支、id 变成 `session.v4.jsonl` ——
+    **读数看起来很整齐，其实每一场都认不出是哪一场**，正是 #24 那类「很像结论的错数」。
+    权威判据：`session*.jsonl[.zstd]` 的**直接父目录名 = session id**；工作区目录长成 `--<绝对路径>--`
+    （只有文件直接躺在工作区目录下时才退回文件名）。落点：`verify-ptc-roles.cjs --mount` 的 `scanSessionLoads`。
 
 ## C. 排障表（症状 → 原因 → 修法）
 
