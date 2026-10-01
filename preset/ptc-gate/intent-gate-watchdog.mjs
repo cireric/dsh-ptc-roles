@@ -204,8 +204,26 @@ const RACE_REPORT = [
  */
 const FALSE_DENY = [
   '[intent-gate-watchdog] enforce 取证：闸门拒了一次，而该轮最终仍判为合规（门行就在承载首次动手的那条消息里）—— 假拒候选（事件时序竞态）。',
-  '⇒ 这是开闸后的回滚证据（docs/decisions/0003），别删。',
 ].join('\n')
+
+/**
+ * 拒绝理由的第一行：**点名被拒的工具**，并区分「模型直呼」与「run_code 内层派发」。
+ * 为什么（2026-10-01 实测 session-bc1983d7 seq 981）：理由只写「这一次调用没有门行垫底」时，
+ * PTC 会把 deny 包成 program 级异常（code run failed (exception): ToolCallError: …），模型遂把
+ * 拒绝归因给 run_code 载体，推出「门对载体生效、只读也欠门行」，并把这句错误机制写进了给用户的
+ * 回答。闸门的落点其实是**内层派发**（tool/ptc-dispatch-start{name} 先于 ordered prepare，
+ * 见 pitfalls #17 追加段）—— 不点名工具，这条误读就会复现。
+ * 三态文案（GATE_REASON_*）一字不动：reader 按结果文本分桶，这里只是**前置**一行。
+ * @param toolName - exec.name，被拒的那次调用的工具名。
+ * @param inner - 该调用是不是 run_code 程序里的内层派发（exec.parent 存在即内层）。
+ */
+const denyHeader = (toolName, inner) => '被拒的是'
+  + (inner ? ' run_code 程序里的内层 ' : ' ')
+  + '**' + toolName + '** 调用'
+  + (toolName === 'bash' || toolName === 'pwsh'
+    ? '（shell 一律算动手 —— 闸门判**工具名**，不解析命令，只读命令也算）'
+    : '')
+  + '。\n'
 
 /**
  * Per-session mode marker (2026-09-21). `config.gate` is read once in apply(); anything but the
@@ -429,7 +447,9 @@ export function apply(ctx, config) {
       const reason = rec.declSeq !== undefined ? GATE_REASON_LATE
         : rec.gateishSeq !== undefined ? GATE_REASON_INVALID
         : GATE_REASON_MISSING
-      return { kind: 'deny', reason }
+      // 首行点名工具与派发层级：exec.parent 存在即 PTC 内层派发（harness core/tools/src/index.ts:341-346）。
+      // 三态文案不动，只前置 —— reader 的 denyReasonOf 与 #19 的历史读法都不受影响。
+      return { kind: 'deny', reason: denyHeader(toolName, exec?.parent !== undefined) + reason }
     } catch (err) {
       warn('could not evaluate the intent gate: ' + String(err))
       return decision

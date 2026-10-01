@@ -86,6 +86,9 @@ const REQUIRED_CONTROL_FAILURES = [
   'gate is case-insensitive: lowercase token and uppercase bucket still count as declared',
   'a gate line off the first line denies with the MISSING wording, not INVALID',
   'a Chinese-token gate line denies with MISSING wording that names the ASCII-token requirement',
+  // 2026-10-01 误归因防线：对照版是单一 GATE_REASON（不点名工具、不标派发层级）⇒ 两条都必须失败。
+  'deny reason names the denied tool and says the shell is judged by tool name',
+  'deny reason marks a PTC inner dispatch as an inner dispatch',
 ]
 
 let checks = 0
@@ -150,8 +153,10 @@ async function open(config) {
   const preStep = (payload, decision = { kind: 'enter', messages: userMessages }) =>
     state.preStepHandler(payload, async () => decision)
   /** One `tools/pre-execute` call: the fake exec the gate inspects + the downstream decision it must await. */
-  const preExec = (name, { id = 's1', decision = { kind: 'allow' } } = {}) => state.preExecuteHandler(
-    { callId: 'call_gate', name, arguments: {}, agent: agent({ id }) },
+  const preExec = (name, { id = 's1', decision = { kind: 'allow' }, parent } = {}) => state.preExecuteHandler(
+    // `parent` 存在即 PTC 内层派发（harness core/tools/src/index.ts:341-346 的 token 语义）——
+    // 拒绝理由要能区分它，所以要能在测试里造出来。
+    { callId: 'call_gate', name, arguments: {}, agent: agent({ id }), ...(parent === undefined ? {} : { parent }) },
     async () => decision,
   )
   return { state, session, observe, turnStart, agent, userMessages, preStep, preExec, call, dispatch, act, actPtc }
@@ -822,6 +827,34 @@ async function main() {
     check('a Chinese-token gate line denies with MISSING wording that names the ASCII-token requirement',
       d?.kind === 'deny' && d.reason.includes('意图：') && d.reason.includes('Intent:')
         && !d.reason.includes('桶不合法'),
+      JSON.stringify(d))
+  }
+
+  // 35 — 误归因防线（2026-10-01 实测 session-bc1983d7 seq 981）：理由只说「没有门行」时，PTC 把 deny
+  // 包成 program 级异常，模型据此把拒绝归因给 run_code 载体，并推出「只读也欠门行」。理由首行必须
+  // **点名被拒的工具**，且对 shell 说明「判工具名、不解析命令」（pitfalls #17 追加段）。
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    h.observe('s1', 1, '这次没有门行，直接动手。')
+    const d = await h.preExec('bash')
+    check('deny reason names the denied tool and says the shell is judged by tool name',
+      d?.kind === 'deny' && d.reason.includes('bash') && d.reason.includes('不解析命令')
+        && d.reason.includes('本轮还没有出现过'),
+      JSON.stringify(d))
+  }
+
+  // 36 — 同一个理由还要**标出派发层级**：PTC 内层派发（exec.parent 存在）≠ 模型直呼，否则
+  // 「门挂在 run_code 载体上」这条误读仍可复现。
+  {
+    const h = await open({ gate: 'enforce' })
+    h.turnStart('s1', 1)
+    await h.preStep({ agent: h.agent(), messages: h.userMessages, turn: 1, step: 1 })
+    h.observe('s1', 1, '这次没有门行，直接动手。')
+    const d = await h.preExec('bash', { parent: Symbol('ptc-subcall') })
+    check('deny reason marks a PTC inner dispatch as an inner dispatch',
+      d?.kind === 'deny' && d.reason.includes('内层') && d.reason.includes('bash'),
       JSON.stringify(d))
   }
 

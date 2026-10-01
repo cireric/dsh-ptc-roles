@@ -186,6 +186,23 @@
       **2026-09-17 已解**：v3 把合规分子换成「存在」（#19），这条载体耦合从「扣分子」降为「只影响
       ② 对照读数」—— 载体耦合本身仍然存在，只是不再把照章办事判成失败。
 
+    - **2026-10-01 追加（PTC 下 deny 的误归因 —— 本条第一个「理由写错对象」的实测故障）**：
+      会话 `bc1983d7` 实录：一条 `run_code` program 里 **3 次 `grep` 只读派发全部放行**，第 4 次
+      `bash`（命令只读：`git ls-files` / `ls -la` / `grep -c`）在 `tools/pre-execute` 被拒；PTC 把这次
+      deny 包成 **program 级异常**（`code run failed (exception): ToolCallError: …`），而理由只说
+      「这一次调用没有门行垫底」、**不点名工具** ⇒ 模型在推理里写下「the gate IS enforced on `run_code`
+      calls … including read-only ones」，并把这句错误机制写进了给用户的回答 —— 用户转述的那句话就是它。
+      两条事实：① 闸门的落点是**内层派发**（`ptc.ts` 的 `start()` 先 append
+      `tool/ptc-dispatch-start{name}`，再走 ordered `scheduler.prepare`）⇒ **只读豁免在 PTC 下是兑现的**，
+      被拒的从来不是 `run_code` 载体，豁免缺口只发生在 shell 上；② 真实误报面只有 shell（工具名判不出
+      命令是否只读，见本条前半段），而闸门的牙齿绝大多数咬在它身上 —— 读数是 reader 逐场打印的
+      **闸门账**（被拒工具名 + 同 program 其余派发），别抄数字，去看那行。
+      ⇒ 修法 = **拒绝理由首行点名 `exec.name` 与派发层级**（`exec.parent` 存在即内层派发），三态文案
+      一字不动（reader 按结果文本分桶，前置不改变分类）。判据 = 单测两条：理由必须含工具名与
+      「不解析命令」；内层派发必须被标成内层。
+      **deny 侧判定不改**（C 保持）：复审线 = 累计拒绝达 40 次时再看；形态比例在 reader 长出「被拒命令」
+      一列之前不作任何读数。
+
 18. **`?v=` 只能 bump preset 组合文件里引用的 `.mjs` ⇒ 插件**不能**共享兄弟模块。**
     `dev_reload_preset` 的匹配式是 `/(name: \.\/[A-Za-z0-9._-]+\.mjs)(\?v=\d+)?/g`，它只改写
     **组合文件里被引用**的那些文件（0.2.0 起该惯用法整体失效，见 #31 —— 本条登记的是「为何两份
