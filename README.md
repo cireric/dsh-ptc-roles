@@ -17,8 +17,10 @@
 ## 两个 preset 怎么选
 
 **本机默认选 `ptc-gate`**（前提：bundle 已 `make deploy` 且它处于启用态）。只有当任务**同时**满足
-下面 ≥3 条时，才改用 `ptc-roles` —— 它现在是**归档**态：把 `preset/ptc-roles/preset.patch.yml` 里声明行的
-`disabled: true` 改成 `false`，跑 `make deploy`，再做一次真正的重新挂载。
+下面 ≥3 条时，才改用 `ptc-roles` —— 它现在是**归档**态（留在仓库里，但**不列入** `dsh.bundle.patch`，
+连 patch 层都不叠加）。启用它要动**两处**：`package.json` 的 `dsh.bundle.patch` 写成两个文件的数组，
+并把 `preset/ptc-roles/preset.patch.yml` 声明行的 `disabled: true` 改成 `false`，再跑 `make deploy`
+与一次真正的重新挂载。⚠️ 回到数组后，插件市场会重新把它误判成 broken 标红（机制见 `docs/pitfalls.md` #35）。
 
 | 条件 | 判据 |
 |---|---|
@@ -46,7 +48,8 @@
 ## 安装
 
 **0.2.0 起 preset 是一个 bundle，不再是一个目录**（机制见 `docs/pitfalls.md` A 节 / #31）：
-本仓库自己就是那个 bundle —— `package.json` 的 `dsh.bundle.patch` 列出 `preset/<id>/preset.patch.yml`，
+本仓库自己就是那个 bundle —— `package.json` 的 `dsh.bundle.patch` 列出**已启用** preset 的
+`preset/<id>/preset.patch.yml`（归档的那个不列，见下），
 每个文件是一条 `@deepseek-ai/dsh-agent-preset` 声明行。安装 = 在 profile 里建一条指向本仓库的软链：
 
 ```bash
@@ -56,9 +59,9 @@ make check     # 对账：**已安装**的那一份 vs 仓库（依赖规格 / b
                # **未安装记 ⓘ、不算漂移**（「该不该装」是人的意图，检查器猜不到）
 ```
 
-`make deploy` **不再接受 preset id**：一次装整个 bundle。要动个体，改对应声明行本身 ——
-`ptc-gate` 启用、`ptc-roles` 归档（`disabled: true`）；把 `disabled` 改成 `false` 再 `make deploy`
-就是「启用归档 preset」的全部动作。
+`make deploy` **不再接受 preset id**：一次装整个 bundle。要动个体，改**两处** —— `dsh.bundle.patch`
+（声明哪些 preset 叠加 patch 层）+ 对应声明行的 `disabled`：`ptc-gate` 启用（声明 + `disabled: false`）、
+`ptc-roles` 归档（不声明 + `disabled: true`）。`make verify` 的组成契约会把两处不一致拦下来。
 
 **资产引用**：声明行里的相对 `name: ./x.mjs` 与 `!!js` 的 `baseUrl` **都解析到 profile 目录**（不是本仓库），
 所以资产一律走包名子路径（`@cireric/dsh-ptc-roles/preset/<id>/x.mjs`）与

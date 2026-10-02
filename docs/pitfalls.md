@@ -8,8 +8,10 @@
 
 **2026-09-29 起（dsh 0.2.0-rc.2）：preset 是一个 bundle，不再是一个目录。**
 
-- **交付单位 = 本仓库自己**：`package.json` 的 `dsh.bundle.patch` 列出 `preset/<id>/preset.patch.yml`；
-  每个文件是一条 `@deepseek-ai/dsh-agent-preset` 声明行，`config.plugins` 就是该 preset 的 entry 列表。
+- **交付单位 = 本仓库自己**：`package.json` 的 `dsh.bundle.patch` 列出**已启用** preset 的
+  `preset/<id>/preset.patch.yml`；每个文件是一条 `@deepseek-ai/dsh-agent-preset` 声明行，
+  `config.plugins` 就是该 preset 的 entry 列表。**归档 preset 不列入**（2026-10-02 起，见 #35）：
+  它留在 `preset/` 下、不叠加 patch 层，manifest 因此只写**一个**文件 ⇒ 用字符串，不用数组。
 - **安装 = `make deploy`**（= `scripts/deploy-preset.cjs`）：写 profile 的 `package.json`（`dependencies` 加
   `link:<repo>`）+ `dsh.profile.bundles` 追加 + 在 profile 目录 `pnpm install`。`link:` 会在
   `~/.dsh/profiles/web/node_modules/@cireric/dsh-ptc-roles` 建**指向本仓库的软链** ⇒ 仓库仍是唯一副本。
@@ -600,9 +602,10 @@
       **失效**；该工具还硬编码 `.agent-presets` —— 它是外部插件（dsh-super-injector），不在本仓库修。
     - **生效判据不变**：仍然必须有一次**真正的重新挂载**（宿主重启 / 让 preset 重新装配），A 节那条照样成立。
     配套：`make deploy` / `make check` / `make verify`（组成契约）已整体改写为 bundle 模型
-    （`scripts/deploy-preset.cjs`）；组成契约新增两条断言 —— **归档 preset 必须 `disabled: true`**、
-    **不得出现 0.2.0 写法残留**（相对 `.mjs` 名 / `new URL('personas/…', baseUrl)` / 已删除的
-    `dsh-workflow-worker-thread`）。
+    （`scripts/deploy-preset.cjs`）；组成契约两条断言 —— **不得出现 0.2.0 写法残留**（相对 `.mjs` 名 /
+    `new URL('personas/…', baseUrl)` / 已删除的 `dsh-workflow-worker-thread`）与**归档 preset 的两处一致性**
+    （2026-10-02 改判：归档 = **不列入 manifest** + 声明行保持 `disabled: true`，见 #35；旧口径
+    「归档 preset 必须 `disabled: true` 且仍在 manifest 里」已废）。
 
 32. **v4 会话格式拒绝 `source.kind = 'plugin'` —— 插件注入的消息必须声明自己的 kind。**
     [读码 + 真校验器 A/B] 2026-09-29（dsh 0.2.0-rc.2）：
@@ -653,6 +656,29 @@
     权威判据：`session*.jsonl[.zstd]` 的**直接父目录名 = session id**；工作区目录长成 `--<绝对路径>--`
     （只有文件直接躺在工作区目录下时才退回文件名）。落点：`verify-ptc-roles.cjs --mount` 的 `scanSessionLoads`。
 
+35. **插件市场对「合法但没见过的 manifest 形状」会静默判 broken —— `dsh.bundle.patch` 只要是数组，市场就看不到任何 patch 行。**
+    [实测] 2026-10-02（dshmarket 1.66.8 / dsh 0.2.0 线）：
+    - **症状**：Settings → Plugin Market 里本插件标红「已安装，校验未通过 / Installed, verification failed」，
+      而同卡片的开关是绿的 Enabled；插件本身**完全正常**（会话就跑在 ptc-gate preset 上）。
+    - **取数**：运行中的 market 路由 `GET /dsh-market/installed` 的 `activation['@cireric/dsh-ptc-roles']` =
+      `{state: 'broken', reasons: [声明的入口产物缺失…], bundle: true, hot: false}`；判词落点在市场自己的
+      `src/verify.ts:377`（`!loaderLive && !hasLoadableEntry && !patchLoads`）。
+    - **根因**：市场的 `declaredBundlePatchFile`（`dshmarket/src/profile.ts:860-871`）**只接受字符串**
+      （`typeof declared !== 'string' ⇒ null`），而宿主契约是 **`string | string[]`**
+      （`deepseek-harness/packages/boot/app-boot/src/profile.ts` 的 `bundlePatchFiles`，两者皆非即抛错）
+      ⇒ 数组声明的 bundle 在市场侧 `bundlePatchTargets` / `bundlePatchInsertedIds` **双双为 `[]`**，
+      靠它们判定的 `hasLoadableEntry`（无 main/exports 的 carrier 全靠它）随即为假。对照实验：把两个 patch
+      文件手工解析后，`@deepseek-ai/dsh-persona` 等 target 在 `<profiles>/node_modules` 下确实存在
+      ⇒ **只要市场支持数组，判词立即为真**（不是本插件缺产物）。
+    - **不止红字**：同一条假阴性还落在 `install.ts:460`（`validateAddedPlugins` 的 #18 fake-success guard ⇒
+      经市场安装会被判 `removedBroken` **当场卸载**）、`routes.ts:4430/1071/4213`（更新后回滚）、
+      `hot.ts:707`（热挂载读不到 patch）。代码路径已读、谓词取值已实测；「安装即被卸载」**未实跑**。
+    - **怎么办（本仓已采用）**：manifest 只声明**已启用**的那个 preset ⇒ `dsh.bundle.patch` 是**字符串**
+      （`./preset/ptc-gate/preset.patch.yml`），归档的 `ptc-roles` 留在 `preset/` 下但不列入。
+      代价：**一个 bundle 只能有一个 patch 文件**（要两个文件就得回到数组，那条红字会复现）。
+    - **边界**：上游 npm 最新 = 已装版本 1.66.8（未修）；本机是 `make deploy` 的 `link:` 装的，没走市场
+      安装流程，所以插件还在。若市场改成支持数组，本条的「怎么办」可退回单文件约束。
+
 ## C. 排障表（症状 → 原因 → 修法）
 
 | 症状 | 原因 | 修法 |
@@ -690,3 +716,4 @@
 | 回复里的交接行印出**字面** `$DSH_SESSION_ID`（没被替换成真 id） | persona 模板写的是 **shell 语法**，而回复是**散文**、不经任何 shell ⇒ 永不展开；id 也不在 prompt 插值变量里（只有 `provider`/`model`/`cwd`）。见 #33 | 契约已改成 `session: session-<id> · …` 并写明"id 只能靠 shell 的 `echo "$DSH_SESSION_ID"` 读、读不到就写 `(id not read this turn)`"。若**重挂后**仍印字面量 ⇒ 挂的是旧代，按 A 节逼一次真正的重新挂载 |
 | 证据文件里的 `reproduction` 命令**指向 `.tmp/` 探针**，而 `.tmp/` 是 gitignore 的 | 复现链跨在两个寿命不同的存储上：证据文件入库（永久）、探针在 `.tmp/`（可清理）。[实测] 2026-09-30 清理时发现更早一层退化：探针**依赖的实验工作区**（`~/Project/tests/urlnorm` / `ignorecheck` / `miniql`）**已被删除** ⇒ `probe-urlnorm.mjs` 报 `ERR_MODULE_NOT_FOUND`；这不是清理造成的，是**证据文件早就不能复跑了** | 引用读数前先确认那个工作区还在；要真保住复现链，**探针必须随证据一起入库**（`git add -f`）或在证据里内联命令 —— 只把路径写进 `.tmp/` 等于承诺了一件没人守的事 |
 | persona / 插件契约里出现 `$VAR` 或其它 shell 语法 | 同上一行：#33 的一般规则 —— persona 是散文，不是脚本 | 改成"给取值动作"（跑哪个工具、读哪个字段），别给变量名 |
+| 插件市场里本插件标红「已安装，校验未通过 / Installed, verification failed」，但开关是绿的 | market 的 `declaredBundlePatchFile` **只认字符串**形式的 `dsh.bundle.patch`，manifest 是数组时它读不到任何 patch 行 ⇒ `hasLoadableEntry` 假 ⇒ 判 broken（#35） | manifest 只声明一个 patch 文件（字符串形式）；要两个文件先等上游修（#35） |

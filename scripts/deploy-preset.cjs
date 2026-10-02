@@ -3,8 +3,10 @@
 
 // deploy-preset.cjs — 0.2.0 起 preset 的交付形态变了（机制见 docs/pitfalls.md A 节）：
 //   · 旧路径 $DSH_HOME/.agent-presets/ 已彻底废弃（运行时零读者）⇒ 往那儿放任何东西都不生效。
-//   · 交付单位 = 本仓库自己（一个 npm 包 = 一个 bundle）：package.json 的 dsh.bundle.patch
-//     列出 preset/<id>/preset.patch.yml；每个文件是一条 @deepseek-ai/dsh-agent-preset 声明行。
+//   · 交付单位 = 本仓库自己（一个 npm 包 = 一个 bundle）：package.json 的 dsh.bundle.patch 列出
+//     **已启用** preset 的 preset/<id>/preset.patch.yml；每个文件是一条 @deepseek-ai/dsh-agent-preset 声明行。
+//   · 归档 preset（如 ptc-roles）留在 preset/ 下但**不列入 manifest** ⇒ 不叠加 patch 层；manifest 只写
+//     一个文件 ⇒ 用字符串（不能是数组）—— 理由见 docs/pitfalls.md #35。
 //   · 安装 = profile 的 package.json（dependencies 加 link:<repo>）+ dsh.profile.bundles 追加
 //     + 在 profile 目录 pnpm install（link: 会在 node_modules 下建指向本仓库的软链）。
 //   · 资产解析基 = profile 目录 ⇒ 声明行里 name: ./x.mjs 与 !!js 的 baseUrl 都会落到 profile 下，
@@ -47,10 +49,11 @@ const USAGE = [
 const EXPECTED_COMPOSITION = {
   'ptc-gate': { active: true, roles: [], plugins: ['intent-gate-watchdog'], label: '本机启用的那一个' },
   'ptc-roles': {
+    archived: true,
     active: false,
     roles: ['role-explorer', 'role-librarian', 'role-oracle', 'role-implementer', 'role-designer'],
     plugins: ['role-presentation', 'intent-gate-watchdog'],
-    label: '归档：随包分发但不激活（声明行 disabled: true）',
+    label: '归档：留在 preset/ 下但不列入 manifest（声明行保持 disabled: true）',
   },
 }
 
@@ -175,8 +178,10 @@ function composeFindings(ids, manifest) {
     if (!fs.existsSync(path.join(REPO_ROOT, file))) findings.push('manifest 声明的 patch 不存在：' + file)
   }
   const listed = manifest.files.map((file) => path.basename(path.dirname(file))).sort()
-  if (listed.join(',') !== ids.join(',')) {
-    findings.push('manifest 的 patch 列表（' + listed.join(', ') + '）与 preset/ 目录（' + ids.join(', ') + '）不是一一对应')
+  // 声明 ⊆ preset 目录（不再一一对应）：未声明的 preset 是**归档**态 —— 留在仓库里，但不叠加 patch 层。
+  // manifest 只声明已启用的那一个 ⇒ 可以是字符串（2026-10-02 起，理由见 docs/pitfalls.md #35）。
+  for (const id of listed) {
+    if (ids.indexOf(id) < 0) findings.push('manifest 声明的 patch 不在 preset/ 下：' + id + '（preset/ 现有 ' + ids.join(', ') + '）')
   }
   for (const id of ids) {
     const spec = EXPECTED_COMPOSITION[id]
@@ -186,7 +191,12 @@ function composeFindings(ids, manifest) {
     const slice = declarationSlice(text, id)
     if (slice === undefined) { findings.push(id + '：找不到声明行 "- id: preset-' + id + '"'); continue }
     const disabled = declaredDisabled(slice)
-    if (disabled === spec.active) {
+    if (spec.archived === true) {
+      // 归档 preset：留在 preset/ 下、不列入 manifest ⇒ 不叠加 patch 层（2026-10-02 起，见 docs/pitfalls.md #35）。
+      // 两处必须一致：不声明 + 声明行保持 disabled: true。
+      if (listed.indexOf(id) >= 0) findings.push(id + '：已登记为归档 preset，却又出现在 manifest 的 patch 列表里（归档形态 = 不声明）')
+      if (!disabled) findings.push(id + '：归档 preset 的声明行必须保持 disabled: true（否则「改了 disabled 却没加回 manifest」是个静默的半途状态）')
+    } else if (disabled === spec.active) {
       findings.push(id + '：启用态不符（声明 disabled=' + disabled + '，期望 active=' + spec.active + '；' + spec.label + '）')
     }
     const rowIds = patchRowIds(text)
@@ -305,7 +315,9 @@ function main() {
       for (const finding of own) console.log('  ✗ ' + finding)
     }
     for (const finding of findings) {
-      if (finding.indexOf(id) === 0) continue
+      // 这里 `id` 已出作用域：旧写法 `finding.indexOf(id)` 让**只要有任何 finding** 就抛 ReferenceError，
+      // 把失败路径的其余 finding 全吞掉（阳性对照实测 m1/m3）。按 preset 前缀归属即可。
+      if (ids.some((presetId) => finding.indexOf(presetId) === 0)) continue
       console.log('· ' + finding)
     }
     if (findings.length === 0) { console.log('✓ 组成契约通过：' + ids.length + ' 个 preset（含门插件副本一致性与 0.2.0 写法残留）'); return EXIT_OK }

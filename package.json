@@ -6,10 +6,7 @@
   "description": "DSH agent presets: ptc-gate (PTC main agent + intent gate) and ptc-roles (archived: five role subagents).",
   "dsh": {
     "bundle": {
-      "patch": [
-        "./preset/ptc-gate/preset.patch.yml",
-        "./preset/ptc-roles/preset.patch.yml"
-      ]
+      "patch": "./preset/ptc-gate/preset.patch.yml"
     }
   }
 }

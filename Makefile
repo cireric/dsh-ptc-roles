@@ -44,7 +44,7 @@ clean: ## 清理项目内临时文件（只删 .gitignore 覆盖的产物，逐�
 	@find . -maxdepth 1 -name '*.log' -print -delete
 	@echo "⇒ clean 完成（以上即全部删除项）"
 
-# deploy 不再接受 preset id：一次装整个 bundle，归档 preset 由声明行的 disabled 控制。
+# deploy 不再接受 preset id：一次装整个 bundle；归档 preset 留在 preset/ 下但不列入 manifest。
 # 未知目标一律响亮失败，绝不静默空转（拼错 make deply 也要看得见）。
 .DEFAULT:
 	@echo "✗ 未知目标：$@（make help 看可用目标；deploy 自 0.2.0 起不接受 preset id）" >&2; exit 1
