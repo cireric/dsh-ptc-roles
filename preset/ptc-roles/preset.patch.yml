@@ -160,7 +160,7 @@
                 name: '@deepseek-ai/dsh-plan-mode'
                 config:
                   section: |
-                        You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+                        You are in plan mode. Stay in plan mode until the user approves your plan through exit_plan_mode or switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
                         Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
 
@@ -222,9 +222,9 @@
             config:
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
-
-              - id: tool-subagent-list-agents
-                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+                # 0.2.2 起 `./list-agents` 子路径 export 已移除（主包自己注册该组工具，
+                # 上游 4df09d37d5 / 38c7a9fbf4）。旧行会 ERR_PACKAGE_PATH_NOT_EXPORTED。
+                # 本 preset 归档不挂载，但组成契约要求两份声明行一致，同步删除。
 
               # ptc-roles PATCH — the only divergence from the verbatim base preset.
               # A child scope re-mounts this row into its OWN layer, so the leaked
@@ -240,8 +240,8 @@
                   provider: spawn
                   toolName: subagent
                   maxDepth: 1
-                  modelSelectionSettings: true
-                  backgroundMode: continuable
+                  modelSelection: true
+                  modelDiscovery: true
 
               # Fork omits model selection so provider/model stay equal to the parent and
               # the inherited history remains eligible for KV Cache reuse. This preset
@@ -252,7 +252,6 @@
                 config:
                   provider: fork
                   toolName: subagent_fork
-                  backgroundMode: continuable
 
               # Production dsh does not install these optional providers. Install the
               # matching Bundle in this Profile and restart the Host, then copy this
@@ -264,7 +263,6 @@
                 config:
                   provider: codex
                   toolName: subagent_codex
-                  backgroundMode: one-shot
                   maxDepth: provider-managed
 
               - id: tool-subagent-claude-code
@@ -273,7 +271,6 @@
                 config:
                   provider: claude-code
                   toolName: subagent_claude_code
-                  backgroundMode: one-shot
                   maxDepth: provider-managed
 
               - id: workflow-ptc
@@ -316,10 +313,11 @@
           # PTC mode for this agent alone. The row waits for the host's `codeRuntime`
           # rather than assuming it: a deployment that composes no TypeScript runtime
           # fails this preset at mount, naming this id, instead of at the first request.
-          - id: tool-presentation
-            name: '@deepseek-ai/dsh-agent-tool-presentation'
-            config:
-              mode: ptc
+          # 0.2.2 起官方写法 = 直挂 executor（tier-1 同步，2026-11-16）：旧的
+          # agent-tool-presentation（mode: ptc）兼容层已标 @deprecated。压制语义不变：
+          # tools.setExecutor() 近层 scope 优先，preset 层的 PtcExecutor 覆盖 base 的 native。
+          - id: tool-executor-ptc
+            name: '@deepseek-ai/dsh-tool-executor-ptc'
 
           - id: present
             name: '@deepseek-ai/dsh-tool-present'
@@ -394,7 +392,6 @@
             config:
               provider: spawn
               toolName: explorer
-              backgroundMode: continuable
               maxDepth: 2
               agentOptions:
                 provider: commandcode
@@ -417,7 +414,6 @@
             config:
               provider: spawn
               toolName: librarian
-              backgroundMode: continuable
               maxDepth: 2
               agentOptions:
                 provider: commandcode
@@ -443,7 +439,6 @@
             config:
               provider: spawn
               toolName: oracle
-              backgroundMode: continuable
               maxDepth: 1
               agentOptions:
                 provider: commandcode
@@ -464,7 +459,6 @@
             config:
               provider: spawn
               toolName: implementer
-              backgroundMode: continuable
               maxDepth: 1
               agentOptions:
                 provider: commandcode
@@ -492,7 +486,6 @@
             config:
               provider: spawn
               toolName: designer
-              backgroundMode: continuable
               # Leaf role: only the orchestrator (depth 0) may call it, and its allow-list
               # names no role tool, so it cannot delegate further.
               maxDepth: 1

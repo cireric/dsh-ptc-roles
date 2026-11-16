@@ -33,8 +33,13 @@ const os = require('node:os')
 const path = require('node:path')
 
 const REPO = path.join(__dirname, '..')
-// 0.2.0 起 preset 是一条声明行：单一源 = preset/<id>/preset.patch.yml（旧 agent.cordis.yml 已废）。
-const PRESET_YML = path.join(REPO, 'preset', 'ptc-roles', 'preset.patch.yml')
+// 0.2.0 起 preset 是一条声明行。契约面 = **两份**声明行：ptc-gate（manifest 实际挂载的那份，
+// pitfalls #35）+ ptc-roles（归档、组成契约要求声明行一致）。只读归档那份会漏掉实挂那份的
+// 漂移 —— 2026-11-16 实测 list-agents 行两份同坏，被归档副本兜住纯属巧合，不是设计。
+const PRESET_YMLS = {
+  'ptc-gate': path.join(REPO, 'preset', 'ptc-gate', 'preset.patch.yml'),
+  'ptc-roles': path.join(REPO, 'preset', 'ptc-roles', 'preset.patch.yml'),
+}
 const PLUGIN_FILES = {
   'role-presentation.mjs': path.join(REPO, 'preset', 'ptc-roles', 'role-presentation.mjs'),
   'intent-gate-watchdog.mjs': path.join(REPO, 'preset', 'ptc-roles', 'intent-gate-watchdog.mjs'),
@@ -122,6 +127,62 @@ function presetPackageRefs(ymlText) {
   return [...out].sort()
 }
 
+/** preset 里引用的 @deepseek-ai/* **子路径导出**（≥3 段的完整 specifier，如 …/list-agents）。
+ *  「包在、export 没了」是包存在性检查看不见的断法（2026-11-16 实测：0.2.2 移除
+ *  ./list-agents export 后 ptc-gate 整体挂载 broken，而本脚本当时全绿）。 */
+function presetSubpathRefs(ymlText) {
+  const out = new Set()
+  const re = /name:\s*'?(@deepseek-ai\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)'?/g
+  let m
+  while ((m = re.exec(ymlText)) !== null) {
+    if (m[1].split('/').length > 2) out.add(m[1])
+  }
+  return [...out].sort()
+}
+
+/** 枚举目标 checkout 下每个包的 exports 原值（name → exports 字段，缺省 undefined）。 */
+function collectPackageExports(harness) {
+  const out = new Map()
+  const walk = (dir, depth) => {
+    if (depth > 6) return
+    let entries
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (!e.isDirectory()) {
+        if (e.name === 'package.json') {
+          try {
+            const pkg = JSON.parse(fs.readFileSync(path.join(dir, e.name), 'utf8'))
+            if (typeof pkg.name === 'string') out.set(pkg.name, pkg.exports)
+          } catch { /* 坏的 package.json 不该让门禁崩 */ }
+        }
+        continue
+      }
+      if (e.name === 'node_modules' || e.name === 'dist' || e.name === '.git') continue
+      walk(path.join(dir, e.name), depth + 1)
+    }
+  }
+  walk(path.join(harness, 'packages'), 0)
+  return out
+}
+
+/** 子路径导出能否被目标包的 exports 字段解析（Node 解析规则的收窄近似，专断本 preset 的 specifier）。 */
+function subpathExported(exportsField, subpath) {
+  if (exportsField === undefined || exportsField === null) return true   // 无 exports ⇒ 旧语义，全部子路径可走
+  if (typeof exportsField === 'string') return subpath === '.'
+  if (Array.isArray(exportsField)) return exportsField.some((e) => subpathExported(e, subpath))
+  if (typeof exportsField === 'object') {
+    for (const [key, value] of Object.entries(exportsField)) {
+      if (key === subpath) return true
+      if (key.endsWith('*')) {
+        const base = key.slice(0, key.indexOf('*'))     // './src/*' → './src/'
+        if (base.length > 0 && subpath.startsWith(base)) return true
+      }
+    }
+    return false
+  }
+  return false
+}
+
 /** 缺包时给个方向：同 token 的候选名（升级改名的典型场景）。 */
 function candidatesFor(name, pkgNames) {
   const tokens = name.replace('@deepseek-ai/', '').split('-').filter((t) => t.length > 3)
@@ -134,7 +195,7 @@ const has = (text, needle) => typeof text === 'string' && text.includes(needle)
 
 /** 全部契约断言。入参收成对象，是为了让阴性对照能在内存里替换任意一处文本。 */
 function contractChecks(input) {
-  const { sources: s, plugins, pkgNames, refs } = input
+  const { sources: s, plugins, pkgNames, refs, subpathRefs, pkgExports } = input
   const checks = []
   const check = (name, conds) => {
     const bad = conds.filter((c) => !c[1]).map((c) => c[0])
@@ -200,6 +261,20 @@ function contractChecks(input) {
     }).join('、') || '无'), missingPkgs.length === 0],
   ])
 
+  // 子路径导出断言（2026-11-16 补）：包在 ≠ export 在。0.2.2 移除 ./list-agents export
+  // 后整份 preset 挂载 broken（ERR_PACKAGE_PATH_NOT_EXPORTED ⇒ "never started"），而
+  // 上面的包存在性检查全绿 —— 这条就是那次漏检的缺口。
+  const deadSubpaths = subpathRefs.filter((ref) => {
+    const slash = ref.indexOf('/', '@deepseek-ai/'.length)
+    const pkg = ref.slice(0, slash)
+    const sub = ref.slice(slash)                                    // '/list-agents'
+    const exportsField = pkgExports.get(pkg)
+    return !subpathExported(exportsField, '.' + sub)
+  })
+  check('preset 引用的 @deepseek-ai/* 子路径导出在目标 checkout 里都能解析（export 移除会在这里断）', [
+    ['export 已不存在：' + (deadSubpaths.join('、') || '无'), deadSubpaths.length === 0],
+  ])
+
   return checks
 }
 
@@ -247,6 +322,15 @@ function contractControls(input) {
   pkgs.delete('@deepseek-ai/dsh-tool-bash')
   control('对照⑤：抽掉一个包名 ⇒ 报告缺包（升级改名的典型现场）', { ...input, pkgNames: pkgs }, 'dsh-tool-bash')
 
+  // 对照⑥（2026-11-16 补）：把 exports 字段抽掉 ⇒ 子路径导出断言必须红。
+  // 变异目标文本不在盘上（是 JSON 字段不是源码文本），所以在内存里改 pkgExports。
+  const noExports = new Map(input.pkgExports)
+  const bashExports = noExports.get('@deepseek-ai/dsh-tool-subagent-control')
+  noExports.set('@deepseek-ai/dsh-tool-subagent-control', bashExports === undefined ? undefined : { '.': bashExports['.'] })   // 只留 "." ⇒ 子路径全死
+  const deadRef = '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+  const withDeadRef = input.subpathRefs.includes(deadRef) ? input.subpathRefs : [...input.subpathRefs, deadRef]
+  control('对照⑥：抽掉一个子路径 export ⇒ 报告 export 缺失', { ...input, subpathRefs: withDeadRef, pkgExports: noExports }, 'export 已不存在')
+
   return out
 }
 
@@ -264,8 +348,13 @@ function main() {
   const flag = argv.indexOf('--harness')
   const harness = path.resolve(flag >= 0 && argv[flag + 1] !== undefined ? argv[flag + 1] : (process.env.DSH_CHECKOUT || DEFAULT_HARNESS))
 
-  const yml = readIf(PRESET_YML)
-  if (yml === undefined) { console.error('✗ 读不到 preset yml：' + PRESET_YML); process.exitCode = 2; return }
+  const ymlTexts = {}
+  for (const [id, file] of Object.entries(PRESET_YMLS)) {
+    const text = readIf(file)
+    if (text === undefined) { console.error('✗ 读不到 preset yml：' + file); process.exitCode = 2; return }
+    ymlTexts[id] = text
+  }
+  const yml = Object.values(ymlTexts).join('\n')
   const sources = {}
   const missingFiles = []
   for (const [key, rel] of Object.entries(SOURCES)) {
@@ -290,11 +379,13 @@ function main() {
     plugins[name] = text
   }
   const pkgNames = collectPackageNames(harness)
+  const pkgExports = collectPackageExports(harness)
   const refs = presetPackageRefs(yml)
+  const subpathRefs = presetSubpathRefs(yml)
   if (pkgNames.size === 0) { console.error('✗ 目标 checkout 里没扫到任何 package.json（路径不对？）'); process.exitCode = 2; return }
 
-  const input = { sources, plugins, pkgNames, refs }
-  console.log('preset 引用 ' + refs.length + ' 个 @deepseek-ai/* 包；目标 checkout 扫到 ' + pkgNames.size + ' 个包名\n')
+  const input = { sources, plugins, pkgNames, refs, subpathRefs, pkgExports }
+  console.log('preset 引用 ' + refs.length + ' 个 @deepseek-ai/* 包、' + subpathRefs.length + ' 个子路径导出；目标 checkout 扫到 ' + pkgNames.size + ' 个包名\n')
 
   let pass = 0
   let fail = 0

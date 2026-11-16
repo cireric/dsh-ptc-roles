@@ -156,7 +156,7 @@
                 name: '@deepseek-ai/dsh-plan-mode'
                 config:
                   section: |
-                        You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+                        You are in plan mode. Stay in plan mode until the user approves your plan through exit_plan_mode or switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
                         Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
 
@@ -218,9 +218,16 @@
             config:
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
-
-              - id: tool-subagent-list-agents
-                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+                # 0.2.2 起该包自己注册 list_agents / send_message / interrupt_agent 一组
+                # shared control tools（上游 4df09d37d5），`./list-agents` 子路径 export 已移除
+                # （38c7a9fbf4）。旧行 `name: …/list-agents` 会 ERR_PACKAGE_PATH_NOT_EXPORTED
+                # ⇒ 整个 preset 挂载 broken（2026-11-16 实测：registry diagnostic 报
+                # "never started"，GUI 选 ptc-gate 即死）。官方 ptc.patch.yml 也只剩主包一行。
+                # ⚠️ 有意偏离（tier-1 裁定 2026-11-16）：官方 ptc 设 `interrupt: false`，
+                # 本 preset **不设**（默认 true）—— interrupt_agent 是 pitfalls #25 僵死子代理
+                # 恢复配方的唯一手段（后台委派形态下 send_message 收尾依赖它兜底），关掉等于
+                # 砍恢复路径。全库实测：interrupt_agent 真调用集中在 ptc 会话（13 次），
+                # ptc-gate 为 0 但保留成本为零。**别在 tier 同步时"顺手"对齐这一条。**
 
               # PRESET PATCH（两个 preset 都带这一行）—— 与逐字复制的底座之间**唯一**的偏离。
               # A child scope re-mounts this row into its OWN layer, so the leaked
@@ -230,37 +237,47 @@
               # tools and the orchestrator persona. `maxDepth: 1` keeps generic
               # delegation for the orchestrator (depth 0 -> child 1 <= 1) while a
               # depth-1 child's attempt computes 2 > 1 and throws SubagentDepthError.
+              # 0.2.2 事实（2026-11-16 tier-1 同步）：①`modelSelectionSettings` 键已死
+              # （0.2.1 语义 = 采样宿主白名单；本机白名单 enabled:false ⇒ 从未生效）——
+              # schemastery 对未知键**静默残留不报错**，换成官方现役的
+              # `modelSelection`（显式 provider/model 参数）+ `modelDiscovery`
+              # （list_subagent_models 发现工具）。②泄漏面收敛：0.2.2 自身层实例绑定
+              # 同一 config（request 带 maxDepth），旧版「无界通用注册」已不存在，
+              # maxDepth: 1 继续防孙代。③`backgroundMode` 键在 0.2.1 已从 schema 消失，
+              # 续跑行为落回框架默认 —— 删除。
               - id: tool-subagent
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: spawn
                   toolName: subagent
                   maxDepth: 1
-                  modelSelectionSettings: true
-                  backgroundMode: continuable
+                  modelSelection: true
+                  modelDiscovery: true
 
               # Fork omits model selection so provider/model stay equal to the parent and
               # the inherited history remains eligible for KV Cache reuse. This preset
               # keeps fork continuable; parent and child inherit the same messaging tool,
               # while the parent id and return guidance follow the inherited history.
+              # `backgroundMode` 键已随 0.2.1 schema 移除（fork provider 自带
+              # prepareContinuable ⇒ 续跑语义由 provider 决定，见 subagent-fork-in-process）。
               - id: tool-subagent-fork
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: fork
                   toolName: subagent_fork
-                  backgroundMode: continuable
 
               # Production dsh does not install these optional providers. Install the
               # matching Bundle in this Profile and restart the Host, then copy this
               # preset and remove `disabled` from the matching tool row. Host availability
-              # alone grants no tool.
+              # alone grants no tool. 官方 0.2.2 的 ptc.patch.yml 已把这两行**整个删除**
+              #（外部 provider 靠 bundle 另装，preset 不再留 disabled 占位）；本仓保留
+              # 是为了沿用「取消 disabled 即启用」的既有注释契约 —— 升级时按官方形态再裁。
               - id: tool-subagent-codex
                 name: '@deepseek-ai/dsh-tool-subagent'
                 disabled: true
                 config:
                   provider: codex
                   toolName: subagent_codex
-                  backgroundMode: one-shot
                   maxDepth: provider-managed
 
               - id: tool-subagent-claude-code
@@ -269,7 +286,6 @@
                 config:
                   provider: claude-code
                   toolName: subagent_claude_code
-                  backgroundMode: one-shot
                   maxDepth: provider-managed
 
               - id: workflow-ptc
@@ -312,10 +328,15 @@
           # PTC mode for this agent alone. The row waits for the host's `codeRuntime`
           # rather than assuming it: a deployment that composes no TypeScript runtime
           # fails this preset at mount, naming this id, instead of at the first request.
-          - id: tool-presentation
-            name: '@deepseek-ai/dsh-agent-tool-presentation'
-            config:
-              mode: ptc
+          # 0.2.2 起官方写法 = 直挂 executor（tier-1 同步，2026-11-16）：旧的
+          # `agent-tool-presentation`（mode: ptc）兼容层已标 @deprecated（源码原文
+          # "Mount @deepseek-ai/dsh-tool-executor-native or …-ptc directly"），apply() 只剩
+          # ctx.plugin(config.mode === 'ptc' ? PtcExecutor : NativeExecutor) 一行转发。
+          # 压制语义不变：tools.setExecutor() 按**近层 scope 优先**（core/tools/src/index.ts
+          # selectExecutor），preset 层的 PtcExecutor 覆盖 base 层的 NativeExecutor；
+          # run_code 仍是保留传输（PTC_ONLY_INSTRUCTION 由 executor 自带）。
+          - id: tool-executor-ptc
+            name: '@deepseek-ai/dsh-tool-executor-ptc'
 
           - id: present
             name: '@deepseek-ai/dsh-tool-present'

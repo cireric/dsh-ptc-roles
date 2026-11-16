@@ -679,6 +679,57 @@
     - **边界**：上游 npm 最新 = 已装版本 1.66.8（未修）；本机是 `make deploy` 的 `link:` 装的，没走市场
       安装流程，所以插件还在。若市场改成支持数组，本条的「怎么办」可退回单文件约束。
 
+36. **「包在 ≠ export 在」：preset 引用子路径导出时，包存在性检查防不住 export 被上游移除 —— 挂载
+    broken 而门禁全绿。**
+    [实测] 2026-11-16（dsh 0.2.2-rc.3；本条即当天 ptc-gate 全挂的根因）：
+    - **症状**：GUI / 新会话选 `ptc-gate` 即死（`session-6085287c` 只有 session 头、零事件）；运行中
+      进程里 registry 的 `record.broken` = `tool-subagent-list-agents
+      (@deepseek-ai/dsh-tool-subagent-control/list-agents): never started`。**升级后宿主重启前的
+      老会话全部正常**（11-14~11-15 的 ptc-gate 会话 39 轮跑完）—— 挂载是升级后第一次用 preset 时
+      才发生的，症状出现点滞后于升级点。
+    - **根因**：0.2.2 上游 `4df09d37d5`（register shared control tools together）把 `list_agents`
+      合并进 `@deepseek-ai/dsh-tool-subagent-control` **主包自己注册**；`38c7a9fbf4`（publish 重构）
+      顺手从 package.json 的 exports 里删掉 `./list-agents` 子路径。preset.patch.yml 里的旧行
+      `name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'` ⇒ `ERR_PACKAGE_PATH_NOT_EXPORTED`
+      ⇒ 该行 `never started` ⇒ **agent-preset-registry 的 mountPreset 整体抛错 ⇒ preset 终态
+      broken**（activate() 的 catch；`record.broken` 挂载失败是终态、diagnostic() 每次读取重审）。
+    - **为什么门禁全绿**：`verify-harness-contract.cjs` 的「preset 引用的包都存在」只查**包名**
+      （去掉子路径段），不解析 exports ⇒ 包在、export 没了，它看不见。且该脚本当时只读**归档**
+      ptc-roles 的 yml —— 实挂的 ptc-gate 根本不在契约面里；这次没漏是因为两份副本同坏。
+    - **排障入口（无日志通道下的决定性证据）**：dsh-super-injector 的 staging 工具直读运行中进程：
+      `ctx.get('agentPresets').definitions`（private Map）⇒ 每条 `{broken, hasGeneration}`。
+      `broken: null` + `hasGeneration: true` = 挂载健康。比猜源码快，且是**运行中那一代**的事实。
+    - **修法**：①两份 preset.patch.yml 删掉 `tool-subagent-list-agents` 行（主包自己注册；官方
+      ptc.patch.yml 同形态）②契约脚本补两条：**子路径导出断言**（`presetSubpathRefs` +
+      `subpathExported` 近似 Node exports 解析；变异对照⑥锁死）＋ **契约面扩成两份 yml**
+      （`PRESET_YMLS`）。③修复后的生效：实测**不必宿主重启** —— `dev_reload_package` 的 touch
+      profile patch → include.refresh 路径让 bundle 声明行重新注册（该工具自己的模块重载一步报
+      「缓存中无匹配且磁盘降级失败」，但 preset 行的复活来自它触发的官方重装配，两者要分开读）；
+      **registry 诊断是生效判据**（`broken` 翻 null + `hasGeneration` 翻 true，当场可查）。
+    - **一般规则**：preset 引用 `@scope/pkg/subpath` 时，升级 dsh 后要跑的两条检查缺一不可 ——
+      包在（原有）＋ export 在（本条新增）。上游「重构注册方式」类提交（refactor(x): register …
+      together）是这类断裂的高发信号。
+    - **2026-11-16 追加：Tier 2「底座 + 增量覆盖」方案已证伪，别再提。** 该方案的设想是「不再逐字
+      复制官方 ptc 底座，只声明自己的增量（persona / watchdog / maxDepth），从根上消灭副本漂移」。
+      三条 A 级证据否掉它：
+      - **① 覆盖粒度是 entry，不是 entry 内的 config 子结构。** `vendor/include/src/patch.ts` 的
+        非 insert 分支原文 `target[key] = value`（整体赋值）。内存实验（`applyEntryPatches`，官方编译
+        产物）：基础 3 行 plugins，patch 只给 1 行同 id ⇒ 结果 plugins 数量 = **1**、其余两行**消失**。
+        官方 ptc.patch.yml 头注释「Edits saved from the Web editor override this row's `config.plugins`
+        by id」的真实含义 = **覆盖整个 plugins 数组**（Web 编辑器保存的是完整清单）⇒ 想只改一行就得把
+        138 行全写一遍，漂移风险与手工副本**完全等价**。
+      - **② 没有 preset 继承。** `PresetDefinition` 只有 `{id, name, description, order, plugins}`
+        （`agent-preset-registry/src/definition.ts:5-11`），无 `extends` / `base` / `inherit`。
+        `composeFrom` 是**子代理继承父 agent 的运行时组合**，不是声明式 preset 组合 —— 把两者混为一谈
+        会得出相反结论。
+      - **③ 运行时读官方文件（`!!js` + 包名子路径）只是把手工复制换成运行时耦合**：官方行 id 一改
+        （#36 主案的 list-agents 就是），增量静默对不上，且失败点在**挂载期**（症状与本条主案同形）；
+        还额外引入路径解析 / 版本错配 / `!!js` 求值时机（#31 的 baseUrl 坑）三个新失败面。
+      ⇒ **正确姿态**：保持手工副本 + 契约门禁（子路径 export 断言 + 双 yml 契约面 + 组成契约）——
+      漂移在 `make verify` 当场红，成本是每次升级几分钟。**重启条件**：若将来上游真的删掉
+      `agent-tool-presentation` 兼容层一类**被迫**迁移（即出现真实失败记录），再重新评估；在此之前
+      不得以「消灭副本」为理由重开。
+
 ## C. 排障表（症状 → 原因 → 修法）
 
 | 症状 | 原因 | 修法 |
@@ -717,3 +768,4 @@
 | 证据文件里的 `reproduction` 命令**指向 `.tmp/` 探针**，而 `.tmp/` 是 gitignore 的 | 复现链跨在两个寿命不同的存储上：证据文件入库（永久）、探针在 `.tmp/`（可清理）。[实测] 2026-09-30 清理时发现更早一层退化：探针**依赖的实验工作区**（`~/Project/tests/urlnorm` / `ignorecheck` / `miniql`）**已被删除** ⇒ `probe-urlnorm.mjs` 报 `ERR_MODULE_NOT_FOUND`；这不是清理造成的，是**证据文件早就不能复跑了** | 引用读数前先确认那个工作区还在；要真保住复现链，**探针必须随证据一起入库**（`git add -f`）或在证据里内联命令 —— 只把路径写进 `.tmp/` 等于承诺了一件没人守的事 |
 | persona / 插件契约里出现 `$VAR` 或其它 shell 语法 | 同上一行：#33 的一般规则 —— persona 是散文，不是脚本 | 改成"给取值动作"（跑哪个工具、读哪个字段），别给变量名 |
 | 插件市场里本插件标红「已安装，校验未通过 / Installed, verification failed」，但开关是绿的 | market 的 `declaredBundlePatchFile` **只认字符串**形式的 `dsh.bundle.patch`，manifest 是数组时它读不到任何 patch 行 ⇒ `hasLoadableEntry` 假 ⇒ 判 broken（#35） | manifest 只声明一个 patch 文件（字符串形式）；要两个文件先等上游修（#35） |
+| 升级后新会话选 `ptc-gate` 秒死 / 会话头后零事件，老会话照常 | preset 引用的 `@scope/pkg/subpath` **export 被上游移除**（包还在）⇒ 挂载 broken 是**终态**（#36） | super-injector staging 读 `ctx.get('agentPresets').definitions` 的 `broken` 拿到行号与原因 ⇒ 按官方现役 patch.yml 删/改该行 ⇒ `dev_reload_package` 触发重装配（实测不必宿主重启，#36）；生效判据 = `broken: null` + `hasGeneration: true` |
