@@ -643,6 +643,103 @@ function sameCwd(a, b) {
   return ra === rb
 }
 
+// ── raw-fs 观测（2026-11-04 裁决：只看见、不判违规）────────────────────────────
+//
+// 盲区本身是登记过的：pitfalls #28 —— `run_code` 程序里的 `fs` 写既不经过
+// `tools/pre-execute` 闸门，也不落 `tool/ptc-dispatch` ⇒ 不进 BEHAVIOR_TOOLS 分母。
+// 2026-11-04 grill 后**否决**了原计划的「检测器 + 路径分类 + git 效果对账」三件套：
+//   · 路径分类要求模型在写入前判 tracked / ignored，而判 ignored 只能跑 git ⇒ 规则自指；
+//   · 「正则 linter 判程序文本里有没有 fs」已被 #28② 与 ADR 0003 §3 明确否决，本批不推翻；
+//   · git 对账把「现在的工作树」当「本会话改了什么」，多会话同工作区时无法归因。
+// 留下的只有**一条观察项**：数「程序里出现了几个 fs 写调用」——不判路径、不判违规、不接退出码。
+// 它是**上界**读数，不是违规计数：
+//   · 少算：`const w = fs.writeFile` 这类别名赋值、模板插值里的调用；
+//   · 多算：正则字面量的启发式判定（`/` 前面是 `=` `(` `,` 之类就当正则）在哈希/除法上会判错。
+// 所以它只回答「这一场有没有出现那种形状」，漂移看它，定罪不看它。
+
+/** 把注释 / 字符串 / 模板 / （启发式）正则字面量替换成等长空格，位置不变。 */
+function maskJsLiterals(code) {
+  const out = code.split('')
+  let i = 0
+  while (i < code.length) {
+    const two = code.slice(i, i + 2)
+    if (two === '//') { while (i < code.length && code[i] !== '\n') { out[i] = ' '; i += 1 } continue }
+    if (two === '/*') {
+      out[i] = ' '; out[i + 1] = ' '; i += 2
+      while (i < code.length && code.slice(i, i + 2) !== '*/') { out[i] = ' '; i += 1 }
+      continue
+    }
+    const c = code[i]
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c
+      i += 1
+      while (i < code.length && code[i] !== q) {
+        if (code[i] === '\\') { out[i] = ' '; i += 1 }
+        out[i] = ' '; i += 1
+      }
+      i += 1
+      continue
+    }
+    if (c === '/') {
+      const prev = out.slice(0, i).join('').trimEnd().slice(-1)
+      if (prev === '' || '=(,:!&|?{;[+-*'.includes(prev)) {
+        i += 1
+        while (i < code.length && code[i] !== '/' && code[i] !== '\n') {
+          if (code[i] === '\\') { out[i] = ' '; i += 1 }
+          out[i] = ' '; i += 1
+        }
+        i += 1
+        continue
+      }
+    }
+    i += 1
+  }
+  return out.join('')
+}
+
+/** 写方法名：member 面收全（含短名），裸名面只收无歧义的 —— 裸 `rm(`/`cp(` 会把业务函数算进来。 */
+const RAW_FS_WRITE_NAMES = 'writeFileSync|writeFile|appendFileSync|appendFile|rmSync|unlinkSync|renameSync|mkdirSync|cpSync|copyFileSync|chmodSync|symlinkSync|createWriteStream|truncateSync|rm|unlink|rename|mkdir|cp|copyFile|chmod|symlink'
+const RAW_FS_BARE_NAMES = 'writeFileSync|writeFile|appendFileSync|appendFile|rmSync|unlinkSync|renameSync|mkdirSync|cpSync|copyFileSync|chmodSync|symlinkSync|createWriteStream|truncateSync'
+const RAW_FS_WRITE_MEMBER_RE = new RegExp('\\.\\s*(?:' + RAW_FS_WRITE_NAMES + ')\\s*\\(', 'g')
+const RAW_FS_WRITE_BARE_RE = new RegExp('(?:^|[^\\w$.])(?:' + RAW_FS_BARE_NAMES + ')\\s*\\(', 'g')
+
+/** 一段程序里有没有 fs 写调用的**形状**（上界口径，见上）。 */
+function rawFsWriteish(code) {
+  const masked = maskJsLiterals(code)
+  RAW_FS_WRITE_MEMBER_RE.lastIndex = 0
+  if (RAW_FS_WRITE_MEMBER_RE.test(masked)) return true
+  RAW_FS_WRITE_BARE_RE.lastIndex = 0
+  return RAW_FS_WRITE_BARE_RE.test(masked)
+}
+
+/** 把一个 `tool/call`（run_code）记进观测账：程序数 / 参数解析不出来 / 含写方法名。 */
+function noteRawFsProgram(acc, rawArgs) {
+  acc.programs += 1
+  let args = rawArgs
+  if (typeof args === 'string') { try { args = JSON.parse(args) } catch { args = undefined } }
+  const code = args !== null && typeof args === 'object' && typeof args.code === 'string' ? args.code : undefined
+  // 参数读不出 = 这段程序**没被观测**，不是「干净」：单独计数，绝不静默按 0 算（同 rule 9 的取舍）。
+  if (code === undefined) { acc.argUnknown += 1; return }
+  if (rawFsWriteish(code)) acc.writeishPrograms += 1
+}
+
+/** 负例与正例混排：字符串 / 注释 / 正则字面量里的写方法名不算，别名与解构调用要算。 */
+function rawFsObservationSelfTest() {
+  const cases = [
+    { name: '动态 import + 别名成员写 ⇒ 算', code: "const fs = await import('node:fs/promises'); await fs.writeFile('src/a.ts', x)", want: true },
+    { name: '解构出来的裸名写 ⇒ 算', code: "const { writeFile } = await import('node:fs/promises'); await writeFile('src/a.ts', x)", want: true },
+    { name: '字符串里的写方法名 ⇒ 不算', code: "console.log(\"fs.writeFile('src/a.ts')\")", want: false },
+    { name: '注释里的写方法名 ⇒ 不算', code: "// fs.writeFile('src/a.ts')\nconst x = 1", want: false },
+    { name: '正则字面量里的写调用形状 ⇒ 不算', code: 'const re = /a.writeFile(b)/; re.test(s)', want: false },
+    { name: '模板字面量里的写调用形状 ⇒ 不算', code: "`const s = fs.writeFile('a', x)`", want: false },
+    { name: 'tools.write 调用 ⇒ 不算（那是被观测的路径）', code: "await tools.write({ file_path: 'src/a.ts', content: x })", want: false },
+  ]
+  return cases.map((c) => {
+    const got = rawFsWriteish(c.code)
+    return { name: c.name, ok: got === c.want, detail: '期望 ' + c.want + '，实得 ' + got }
+  })
+}
+
 function analyze(raw) {
   const result = { header: undefined, tools: undefined, model: undefined, role: undefined, ptc: false, systemText: '', lastSystem: undefined, escalations: [], intentTurns: new Map(), unattributable: new Set(),
     /** `agent-preset/selected` 的取值序列（**权威** preset 身份；persona 正文只作 legacy 回退）。 */
@@ -651,6 +748,8 @@ function analyze(raw) {
     denies: [], gateModes: [], deniesUnattributed: 0,
     /** R-A 两条轴里**归不回轮**的写/问调用数（同 deniesUnattributed 的取舍：失败必须可见）。 */
     axesUnattributed: 0,
+    /** raw-fs 观测（2026-11-04）：只数形状，不判路径、不判违规、不接退出码，见 rawFsWriteish 处注释。 */
+    rawFs: { programs: 0, writeishPrograms: 0, argUnknown: 0 },
     /** rootCallId → 该 program 内每个派发**完成**事件的 seq。闸门账用它数「同 program 其余派发」。 */
     dispatchSeqs: new Map(),
     // ── 每会话常备读数（2026-09-20）─────────────────────────────────────────
@@ -755,6 +854,9 @@ function analyze(raw) {
         else noteAxis(recFor(owner.turn), toolName, event.data && event.data.arguments)
       }
     }
+    // raw-fs 观测（2026-11-04）：**故意不放进 turn 守卫** —— 少一个 turn 字段就让整段程序从观测里
+    // 消失，那正是本脚本反复踩过的「静默按 0 算」。program 的 code 就在 tool/call 的 arguments 里。
+    if (event.type === 'tool/call' && toolName === 'run_code') noteRawFsProgram(result.rawFs, event.data && event.data.arguments)
     if (typeof turn === 'number') {
       const rec = recFor(turn)
       if (rec.originSeq === undefined && typeof event.seq === 'number') rec.originSeq = event.seq
@@ -2189,6 +2291,9 @@ function main() {
     scope: all ? 'ALL' : projectCwd,
     会话: [],
   }
+  /** raw-fs 观测合计（2026-11-04）：只并**主 agent 会话**，子代理会话逐场打印但不进合计
+   *  （seeded 会话继承父日志，相加会把父的程序数一遍两遍 —— 同 pitfalls #22③ 的取舍）。 */
+  const rawFsTotal = { sessions: 0, programs: 0, writeishPrograms: 0, argUnknown: 0 }
   /** 进了上面的合计的那些轮次记录 —— 下方成因分类 / 拆读数必须只看这一批，否则与合计行对不上。 */
   const gatedRecs = []
 
@@ -2255,6 +2360,12 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
     if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
     else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
   }
+  // raw-fs 观测计数器的阳性/阴性路径（2026-11-04）：纯函数、不读会话 —— 与会话库无关，故排在扫描之前。
+  console.log('\nraw-fs 观测计数器自测（注释 / 字符串 / 模板 / 正则字面量里的写调用形状不算；别名与解构调用要算）:')
+  for (const t of rawFsObservationSelfTest()) {
+    if (t.ok) { console.log('   ✓ ' + t.name); pass += 1 }
+    else { failLine(t.name, '   ✗ FAIL ' + t.name + '（' + t.detail + '）') }
+  }
 
   const files = findSessionFiles()
   if (files.length === 0) {
@@ -2318,6 +2429,21 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
     const tools = r.tools || []
     console.log('─ ' + kind + '  ' + String(r.header.id).slice(0, 20) + '  role=' + role + '  preset=' + (r.presetKind || '?')
       + '(' + (r.presetKindSource || '?') + ')' + '  model=' + (r.model || '?') + '  ptc=' + (r.ptc ? 'YES' : 'no') + '  tools=' + tools.length)
+    // raw-fs 观测（2026-11-04）：逐场只在**有东西可看**时打印；0 读数由末尾的合计行给。
+    {
+      const rf = r.rawFs || { programs: 0, writeishPrograms: 0, argUnknown: 0 }
+      if (depth === 0 && rf.programs > 0) {
+        rawFsTotal.sessions += 1
+        rawFsTotal.programs += rf.programs
+        rawFsTotal.writeishPrograms += rf.writeishPrograms
+        rawFsTotal.argUnknown += rf.argUnknown
+      }
+      if (rf.programs > 0 && (rf.writeishPrograms > 0 || rf.argUnknown > 0)) {
+        console.log('   raw-fs 观测: 程序 ' + rf.programs + ' 个 / 含 fs 写方法名 ' + rf.writeishPrograms
+          + (rf.argUnknown > 0 ? ' / 参数读不出 ' + rf.argUnknown : '')
+          + '（上界口径：不判路径、不判违规、不接退出码）')
+      }
+    }
     // 身份的两个观察项（都不接退出码）：事件与 persona 标记不一致、以及一场里出现多个不同取值。
     if (r.presetKindMismatch === true) {
       console.log('   ⚠ 事件与 persona 标记不一致：agent-preset/selected=' + r.presetId + ' / persona 标记=' + r.presetMarkerKind
@@ -2586,6 +2712,10 @@ console.log('\ntoken 折叠自测（合成日志 fixture scripts/fixtures/token-
     snapshot.本次运行的判定 = { pass, fail, warn, 整场静默_每轮制: silentSessions, 整场静默_userOpened: silentUserOpenedSessions }
     fs.writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2) + '\n')
   }
+  console.log('raw-fs 观测（主 agent 会话合计' + (all ? '，ALL' : '，本工作区') + '）: 会话 ' + rawFsTotal.sessions
+    + ' / 程序 ' + rawFsTotal.programs + ' / 含 fs 写方法名 ' + rawFsTotal.writeishPrograms
+    + (rawFsTotal.argUnknown > 0 ? ' / 参数读不出 ' + rawFsTotal.argUnknown : '')
+    + '（观察项，不进 ✓/✗；0 是读数不是证明 —— 别名赋值漏检、正则字面量多算）')
   console.log('\n汇总: ✓' + pass + '  ✗' + fail + '  !' + warn)
   if (snapshot !== undefined) console.log('快照: ' + snapshotPath + '（' + snapshot.会话.length + ' 场判定读数；本脚本其余路径全程只读）')
   console.log('提权请求（实测计数）: ptc-roles 主 agent ' + escRoot + ' / ptc-roles 角色子代理 ' + escChild
